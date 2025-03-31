@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tool;
+import "google/protobuf/struct.proto";
+
+message ToolRequest {
+  string tool_name = 1;
+  google.protobuf.Struct params = 2;  // e.g. {"url": "...", "options": {...}}
+}
+message ToolResponse {
+  bool success = 1;
+  string output = 2;                // primary output (text or result)
+  google.protobuf.Struct data = 3;  // optional structured data result
+}
+
+service ToolService {
+  rpc CallTool(ToolRequest) returns (ToolResponse);
+}

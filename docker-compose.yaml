@@ -1,0 +1,47 @@
+version: '3.8'
+services:
+  llm_service:
+    build: ./llm_service
+    container_name: llm_service
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./llm_service/models:/app/models
+      - ./llm_service/llama:/app/llama
+    networks:
+      - rag_net
+
+  chromadb_service:
+    build: ./chromadb_service
+    container_name: chromadb_service
+    ports:
+      - "50052:50052"
+    volumes:
+      - ./chromadb_service/data:/data
+    networks:
+      - rag_net
+
+  tool_service:
+    build: ./tool_service
+    container_name: tool_service
+    ports:
+      - "50053:50053"
+    networks:
+      - rag_net
+
+  agent_service:
+    build:
+      context: .
+      dockerfile: agent_service/Dockerfile
+    container_name: agent_service
+    ports:
+      - "50054:50054"
+    depends_on:
+      - llm_service
+      - chromadb_service
+      - tool_service
+    networks:
+      - rag_net
+
+networks:
+  rag_net:

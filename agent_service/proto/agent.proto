@@ -1,0 +1,12 @@
+syntax = "proto3";
+package agent;
+
+message AgentRequest {
+  string user_query = 1;
+}
+message AgentReply {
+  string final_answer = 1;
+}
+service AgentService {
+  rpc QueryAgent(AgentRequest) returns (AgentReply);
+}
