@@ -1,11 +1,14 @@
+from concurrent import futures
 import grpc
-import agent_pb2
-import agent_pb2_grpc
+import agent_pb2, agent_pb2_grpc
 import llm_pb2, llm_pb2_grpc
 import chroma_pb2, chroma_pb2_grpc
 import tool_pb2, tool_pb2_grpc
+
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
+
+from grpc_reflection.v1alpha import reflection
 
 SYSTEM_PROMPT = "You are a helpful AI assistant with access to external tools."
 
@@ -23,6 +26,14 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
+
+    # Enable reflection for AgentService
+    service_names = (
+        agent_pb2.DESCRIPTOR.services_by_name['AgentService'].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(service_names, server)
+
     server.add_insecure_port("[::]:50054")
     server.start()
     server.wait_for_termination()
