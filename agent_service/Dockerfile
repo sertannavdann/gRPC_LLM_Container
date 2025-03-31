@@ -2,15 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
 COPY agent_service/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy agent service code and its proto files
 COPY agent_service/agent_service.py .
-COPY agent_service/proto/ ./proto/
+COPY agent_service/agent_pb2.py .
+COPY agent_service/agent_pb2_grpc.py .
+COPY agent_service/proto/agent.proto ./proto/
 
-# Copy proto stubs from sibling services (now accessible because build context is the project root)
+# Copy shared proto stubs from other services (if not packaged as a library)
 COPY llm_service/llm_pb2.py .
 COPY llm_service/llm_pb2_grpc.py .
 COPY chromadb_service/chroma_pb2.py .

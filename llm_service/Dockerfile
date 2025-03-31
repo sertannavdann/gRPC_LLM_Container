@@ -2,20 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install build dependencies (if needed for llama-cpp-python)
+# Install build tools
 RUN apt-get update && apt-get install -y cmake build-essential && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
+# Install dependencies
+COPY llm_service/requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy application code and proto files
-COPY llm_service.py .
-COPY proto/ ./proto/
+# Copy entire llm_service folder (ensure llm_pb2.py etc. are inside llm_service/)
+COPY llm_service/ ./
 
-# Copy the llama-cli binary and model files
-COPY llama/ ./llama/
-COPY models/ ./models/
+# Copy your local llama-cli binary from the repository's "llama" directory
+COPY llama /app/llama
 
 EXPOSE 50051
 CMD ["python", "llm_service.py"]
