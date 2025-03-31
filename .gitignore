@@ -9,7 +9,10 @@
 !/llm_service/llama/*
 
 !/agent_service/**
-!/chromadb_service/**
+
+!/chromadb_service/proto/*
+!/chromadb_service/*
+
 !/tool_service/**
 
 !.gitignore

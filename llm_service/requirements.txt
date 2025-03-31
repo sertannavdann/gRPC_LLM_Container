@@ -1,2 +1,4 @@
+llama-cpp-python
 grpcio
 grpcio-tools
+grpcio-reflection

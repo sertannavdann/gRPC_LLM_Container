@@ -1,6 +1,5 @@
-version: '3.8'
-
 services:
+
   llm_service:
     build:
       context: .
@@ -9,7 +8,7 @@ services:
     ports:
       - "50051:50051"
     volumes:
-      - ./llama:/app/llama
+      - ./llm_service/models:/app/models
     networks:
       - rag_net
 
