@@ -7,3 +7,4 @@ cachetools
 blinker==1.4
 selenium
 selenium-wire
+webdriver-manager==4.0.1

@@ -10,7 +10,10 @@ import tool_pb2_grpc
 from grpc_reflection.v1alpha import reflection
 from cachetools import cached, TTLCache
 from selenium.webdriver import ChromeOptions
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from seleniumwire import webdriver
+
 from google.protobuf.struct_pb2 import Struct
 
 # Configuration - Replace with your API credentials
@@ -59,8 +62,12 @@ class ToolServiceServicer(tool_pb2_grpc.ToolServiceServicer):
         options = ChromeOptions()
         options.add_argument("--headless=new")
         options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
         
-        driver = webdriver.Chrome(options=options)
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        
         try:
             driver.get(url)
             return driver.page_source
