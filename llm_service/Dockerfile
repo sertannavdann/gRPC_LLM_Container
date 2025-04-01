@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY llm_service/requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 # Copy service code and generated proto files
 COPY llm_service/llm_service.py .
