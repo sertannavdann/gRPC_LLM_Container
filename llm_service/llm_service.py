@@ -5,63 +5,66 @@ from llama_cpp import Llama
 import llm_pb2
 import llm_pb2_grpc
 from grpc_reflection.v1alpha import reflection
+from functools import lru_cache
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+# Configure structured logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger("llm_service")
 
-# Model file path (ensure the file is available in /app/models/ inside your Linux container)
-MODEL_PATH = "./models/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-
-logger.info("Loading model from %s", MODEL_PATH)
-llm_model = Llama(model_path=MODEL_PATH, n_ctx=2048)
-logger.info("Model loaded successfully.")
+@lru_cache(maxsize=1)
+def load_model():
+    MODEL_PATH = "./models/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+    logger.info("Loading model from %s", MODEL_PATH)
+    return Llama(
+        model_path=MODEL_PATH,
+        n_ctx=2048,
+        n_threads=4,
+        n_batch=512,
+        verbose=False
+    )
 
 class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
     def Generate(self, request, context):
-        prompt = request.prompt
-        max_tokens = request.max_tokens or 512
-        temperature = request.temperature or 0.8
-
-        logger.info("Received prompt: %s", prompt)
-        logger.info("Generation parameters: max_tokens=%d, temperature=%.2f", max_tokens, temperature)
-
-        # Generation parameters (streaming enabled)
-        gen_kwargs = {
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": True
-        }
-        
         try:
-            # Iterate over streaming output from the model.
-            for output in llm_model(prompt, **gen_kwargs):
-                # Log the full output dictionary for debugging.
-                logger.debug("Output dict: %s", output)
-                # Extract the token from the first choice.
-                token_text = output.get("choices", [{}])[0].get("text", "")
-                logger.debug("Generated token: %r", token_text)
-                yield llm_pb2.GenerateResponse(token=token_text, is_final=False)
+            llm = load_model()
+            gen_config = {
+                "max_tokens": min(request.max_tokens, 1024),
+                "temperature": max(0.1, min(request.temperature, 1.0)),
+                "top_p": 0.95,
+                "repeat_penalty": 1.1,
+                "stream": True
+            }
+            
+            for output in llm(request.prompt, **gen_config):
+                if context.is_active():
+                    yield llm_pb2.GenerateResponse(
+                        token=output["choices"][0]["text"],
+                        is_final=False
+                    )
+                else:
+                    logger.warning("Client disconnected, aborting generation")
+                    break
+            
+            yield llm_pb2.GenerateResponse(token="", is_final=True)
+            
         except Exception as e:
-            logger.error("Error during generation: %s", str(e))
-            context.abort(grpc.StatusCode.INTERNAL, str(e))
-        
-        # Final response marker.
-        yield llm_pb2.GenerateResponse(token="", is_final=True)
+            logger.error(f"Generation failed: {str(e)}")
+            context.abort(grpc.StatusCode.INTERNAL, f"Generation error: {str(e)}")
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     llm_pb2_grpc.add_LLMServiceServicer_to_server(LLMServiceServicer(), server)
-
-    # Enable reflection for debugging with grpcurl.
-    service_names = (
+    
+    reflection.enable_server_reflection([
         llm_pb2.DESCRIPTOR.services_by_name['LLMService'].full_name,
-        reflection.SERVICE_NAME,
-    )
-    reflection.enable_server_reflection(service_names, server)
-
+        reflection.SERVICE_NAME
+    ], server)
+    
     server.add_insecure_port("[::]:50051")
-    logger.info("LLM Service starting on port 50051...")
+    logger.info("LLM Service operational on port 50051")
     server.start()
     server.wait_for_termination()
 
