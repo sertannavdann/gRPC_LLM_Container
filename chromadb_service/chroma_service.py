@@ -1,56 +1,79 @@
+# chroma_service.py
 import grpc
-from concurrent import futures
 import chromadb
-from sentence_transformers import SentenceTransformer
+from concurrent import futures
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 import chroma_pb2
 import chroma_pb2_grpc
 from grpc_reflection.v1alpha import reflection
+import threading
 
-
-# Initialize the embedding model.
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-class MyEmbeddingFunction:
-    def __call__(self, input):
-        # 'input' is expected to be a list of strings.
-        return embedder.encode(input).tolist()
-
-embedding_function = MyEmbeddingFunction()
-client = chromadb.PersistentClient(path="/app/data")
-collection = client.get_or_create_collection(
-    name="documents",
-    embedding_function=embedding_function
-)
+class ChromaService:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.embedder = SentenceTransformerEmbeddingFunction(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        self.client = chromadb.PersistentClient(path="/app/data")
+        self.collection = self.client.get_or_create_collection(
+            name="documents",
+            embedding_function=self.embedder,
+            metadata={"hnsw:space": "cosine"}
+        )
 
 class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
+    def __init__(self):
+        self.chroma = ChromaService()
+
     def AddDocument(self, request, context):
-        doc = request.document
-        collection.add(documents=[doc.text], ids=[doc.id] if doc.id else None)
-        return chroma_pb2.AddDocumentResponse(success=True)
+        with self.chroma.lock:
+            try:
+                # Convert protobuf Struct to Python dict
+                metadata = dict(request.document.metadata) if request.document.metadata else {}
+                
+                self.chroma.collection.add(
+                    documents=[request.document.text],
+                    ids=[request.document.id],
+                    metadatas=[metadata]  # Use actual metadata from request
+                )
+                return chroma_pb2.AddDocumentResponse(success=True)
+            except Exception as e:
+                context.abort(grpc.StatusCode.INTERNAL, f"Storage error: {str(e)}")
 
     def Query(self, request, context):
-        results = collection.query(query_texts=[request.query_text], n_results=request.top_k or 5)
-        resp = chroma_pb2.QueryResponse()
-        docs = results.get('documents', [[]])[0]
-        ids = results.get('ids', [[]])[0]
-        for i, text in enumerate(docs):
-            d = resp.results.add()
-            d.id = ids[i] if ids else ""
-            d.text = text
-        return resp
+        try:
+            results = self.chroma.collection.query(
+                query_texts=[request.query_text],
+                n_results=min(request.top_k, 20),
+                include=["documents", "metadatas", "distances"]
+            )
+            response = chroma_pb2.QueryResponse()
+            
+            # Handle empty results
+            if not results['documents']:
+                return response
+                
+            for doc, meta, dist in zip(results['documents'][0],
+                                    results['metadatas'][0],
+                                    results['distances'][0]):
+                entry = response.results.add()
+                entry.text = doc
+                if meta:  # Handle metadata conversion
+                    entry.metadata.update(meta)
+                entry.score = float(1 - dist)
+            return response
+        except Exception as e:
+            context.abort(grpc.StatusCode.INTERNAL, f"Query error: {str(e)}")
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     chroma_pb2_grpc.add_ChromaServiceServicer_to_server(ChromaServiceServicer(), server)
-
-    # Enable reflection for ChromaService
-    service_names = (
-        chroma_pb2.DESCRIPTOR.services_by_name['ChromaService'].full_name,
-        reflection.SERVICE_NAME,
-    )
-    reflection.enable_server_reflection(service_names, server)
     
-
+    reflection.enable_server_reflection([
+        chroma_pb2.DESCRIPTOR.services_by_name['ChromaService'].full_name,
+        reflection.SERVICE_NAME
+    ], server)
+    
     server.add_insecure_port("[::]:50052")
     server.start()
     server.wait_for_termination()

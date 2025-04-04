@@ -3,3 +3,8 @@ beautifulsoup4
 grpcio
 grpcio-tools
 grpcio-reflection
+cachetools==5.3.3
+blinker==1.4
+selenium==4.18.1
+selenium-wire==5.1.0
+webdriver-manager==4.0.1
