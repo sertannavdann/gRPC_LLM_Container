@@ -1,3 +1,4 @@
+# Chromadb gRPC service Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -5,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 COPY chromadb_service/requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 COPY chromadb_service/chroma_service.py .
 COPY chromadb_service/chroma_pb2.py .
