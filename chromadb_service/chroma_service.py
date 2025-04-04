@@ -1,3 +1,4 @@
+# chroma_service.py
 import grpc
 import chromadb
 from concurrent import futures
@@ -27,10 +28,13 @@ class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
     def AddDocument(self, request, context):
         with self.chroma.lock:
             try:
+                # Convert protobuf Struct to Python dict
+                metadata = dict(request.document.metadata) if request.document.metadata else {}
+                
                 self.chroma.collection.add(
                     documents=[request.document.text],
                     ids=[request.document.id],
-                    metadatas=[{"source": request.document.source}]
+                    metadatas=[metadata]  # Use actual metadata from request
                 )
                 return chroma_pb2.AddDocumentResponse(success=True)
             except Exception as e:
@@ -44,13 +48,19 @@ class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
                 include=["documents", "metadatas", "distances"]
             )
             response = chroma_pb2.QueryResponse()
-            for doc, meta, dist in zip(results['documents'][0], 
-                                      results['metadatas'][0], 
-                                      results['distances'][0]):
+            
+            # Handle empty results
+            if not results['documents']:
+                return response
+                
+            for doc, meta, dist in zip(results['documents'][0],
+                                    results['metadatas'][0],
+                                    results['distances'][0]):
                 entry = response.results.add()
                 entry.text = doc
-                entry.metadata.update(meta)
-                entry.score = float(1 - dist)  # Convert distance to similarity score
+                if meta:  # Handle metadata conversion
+                    entry.metadata.update(meta)
+                entry.score = float(1 - dist)
             return response
         except Exception as e:
             context.abort(grpc.StatusCode.INTERNAL, f"Query error: {str(e)}")

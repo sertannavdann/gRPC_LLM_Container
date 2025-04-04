@@ -6,6 +6,8 @@ message AgentRequest {
 }
 message AgentReply {
   string final_answer = 1;
+  string context_used = 2;
+  string sources = 3;
 }
 service AgentService {
   rpc QueryAgent(AgentRequest) returns (AgentReply);

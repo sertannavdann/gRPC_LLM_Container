@@ -1,234 +1,149 @@
+# tool_service.py
 import grpc
+import os
 import requests
 import random
 from bs4 import BeautifulSoup
-from concurrent import futures
 from urllib.parse import urlparse
-from typing import Dict, List
-import tool_pb2
-import tool_pb2_grpc
-from grpc_reflection.v1alpha import reflection
-from cachetools import cached, TTLCache
+from seleniumwire import webdriver
 from selenium.webdriver import ChromeOptions
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-from seleniumwire import webdriver
-
-from google.protobuf.struct_pb2 import Struct
-
-# Configuration - Replace with your API credentials
-SEARCH_API_KEY = "AIzaSyCkdzWNEowTmSbBxRMxV0R4w9X8nClN6ZM"
-SEARCH_ENGINE_ID = "41b7b35fba4b24f40"
-SEARCH_API_URL = "https://www.googleapis.com/customsearch/v1"
-
-# Trusted domains and TLDs
-CREDIBLE_DOMAINS = {".gov", ".edu", ".ac.", "wikipedia.org", "who.int"}
-TRUSTED_TLDS = {".org", ".gov", ".edu"}
-
-# Rotating user agents
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0"
-]
-
-# Configure caching
-cache = TTLCache(maxsize=1000, ttl=3600)
+from cachetools import cached, TTLCache
+from concurrent import futures
+import tool_pb2
+import tool_pb2_grpc
+from grpc_reflection.v1alpha import reflection
+from typing import Dict, Any
 
 class ToolServiceServicer(tool_pb2_grpc.ToolServiceServicer):
     def __init__(self):
-        self.proxies = self._load_proxies()  # Implement proxy loading logic
+        # Configuration from environment
+        self.search_api_key = os.getenv("SEARCH_API_KEY", "")
+        self.search_engine_id = os.getenv("SEARCH_ENGINE_ID", "")
         
-    def _load_proxies(self) -> List[str]:
-        # Add your proxy rotation logic here
-        return []
+        # Reusable browser configuration
+        self.chrome_options = ChromeOptions()
+        self._configure_browser()
+        
+        # Trust lists from notebook
+        self.credible_domains = {".gov", ".edu", ".ac.", "wikipedia.org", "who.int"}
+        self.trusted_tlds = {".org", ".gov", ".edu"}
+        
+        # User agents from notebook
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0"
+        ]
 
-    @cached(cache)
-    def _safe_fetch(self, url: str) -> str:
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-        try:
-            resp = requests.get(
-                url,
-                headers=headers,
-                proxies={'http': random.choice(self.proxies)} if self.proxies else None,
-                timeout=10
-            )
-            resp.raise_for_status()
-            return resp.text
-        except requests.RequestException as e:
-            raise ValueError(f"HTTP error: {str(e)}")
+    def _configure_browser(self):
+        """Direct port of notebook's browser setup"""
+        self.chrome_options.add_argument("--headless=new")
+        self.chrome_options.add_argument("--no-sandbox")
+        self.chrome_options.add_argument("--disable-dev-shm-usage")
+        self.chrome_options.add_argument("--remote-debugging-port=9222")
+        self.chrome_options.add_argument("--disable-gpu")
+        if os.path.exists('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'):
+            self.chrome_options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
-    def _scrape_with_selenium(self, url: str) -> str:
-        options = ChromeOptions()
-        options.add_argument("--headless=new")
-        options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        
+    def _selenium_scrape(self, url: str) -> str:
+        """Direct port of notebook's test_selenium_scrape"""
         try:
-            driver.get(url)
-            return driver.page_source
-        finally:
-            driver.quit()
+            self.chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
+            service = Service(ChromeDriverManager().install())
+            
+            with webdriver.Chrome(service=service, options=self.chrome_options) as driver:
+                driver.get(url)
+                return driver.page_source
+        except Exception as e:
+            raise RuntimeError(f"Selenium failed: {str(e)}")
 
     def _sanitize_content(self, html: str) -> str:
-        soup = BeautifulSoup(html, 'lxml')
+        """Direct port of notebook's sanitization logic"""
+        try:
+            soup = BeautifulSoup(html, 'lxml')
+        except Exception:
+            soup = BeautifulSoup(html, 'html.parser')
+            
         for element in soup(["script", "style", "nav", "footer", "iframe", "noscript"]):
             element.decompose()
+            
         return soup.get_text(separator='\n', strip=True)[:15000]
 
-    def _is_credible_source(self, url: str) -> bool:
-        parsed = urlparse(url)
-        return any(tld in parsed.netloc for tld in TRUSTED_TLDS) or \
-               any(domain in parsed.netloc for domain in CREDIBLE_DOMAINS)
-
-    def _search_engine_query(self, query: str, max_results: int = 5) -> List[Dict]:
-        params = {
-            "key": SEARCH_API_KEY,
-            "cx": SEARCH_ENGINE_ID,
-            "q": query,
-            "num": max_results,
-            "safe": "active"
-        }
-        
-        try:
-            resp = requests.get(SEARCH_API_URL, params=params, timeout=10)
-            resp.raise_for_status()
-            results = resp.json().get('items', [])
-            return [{
-                "title": item.get("title"),
-                "link": item.get("link"),
-                "snippet": item.get("snippet")
-            } for item in results]
-        except Exception as e:
-            raise ValueError(f"Search API error: {str(e)}")
-
     def CallTool(self, request, context):
-        result = tool_pb2.ToolResponse()
+        response = tool_pb2.ToolResponse()
         try:
+            params = {k: v.string_value for k, v in request.params.fields.items()}
+            
             if request.tool_name == "web_scrape":
-                return self._handle_basic_scrape(request, context)
-            elif request.tool_name == "search_scrape":
-                return self._handle_search_scrape(request, context)
-            elif request.tool_name == "advanced_scrape":
-                return self._handle_advanced_scrape(request, context)
-            else:
-                raise ValueError(f"Unknown tool: {request.tool_name}")
+                if not (url := params.get("url")):
+                    context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                    response.output = "Missing URL parameter"
+                    return response
                 
-        except ValueError as e:
-            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
-            result.output = f"Validation error: {str(e)}"
-            result.success = False
+                if not urlparse(url).scheme:
+                    context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                    response.output = "Invalid URL format"
+                    return response
+
+                # Direct port of notebook's test_basic_scrape logic
+                try:
+                    headers = {"User-Agent": random.choice(self.user_agents)}
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    html = resp.text
+                except requests.RequestException:
+                    html = self._selenium_scrape(url)
+                
+                response.output = self._sanitize_content(html)
+                response.success = True
+
+            elif request.tool_name == "web_search":
+                if not self.search_api_key:
+                    context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                    response.output = "Search API not configured"
+                    return response
+                
+                # Direct port of notebook's test_search logic
+                params = {
+                    "key": self.search_api_key,
+                    "cx": self.search_engine_id,
+                    "q": params.get("query", ""),
+                    "num": min(int(params.get("max_results", 3)), 10),
+                    "safe": "active"
+                }
+                
+                results = requests.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params=params,
+                    timeout=15
+                ).json()
+                
+                response.output = "\n".join(
+                    f"{item['title']}\n{item['link']}\n{item['snippet']}" 
+                    for item in results.get('items', [])
+                )
+                response.success = True
+
+            elif request.tool_name == "credibility_check":
+                # Direct port of notebook's test_credible_source
+                parsed = urlparse(params.get("url", ""))
+                response.output = str(
+                    any(tld in parsed.netloc for tld in self.trusted_tlds) or
+                    any(domain in parsed.netloc for domain in self.credible_domains)
+                )
+                response.success = True
+
+            else:
+                context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                response.output = f"Unknown tool: {request.tool_name}"
+
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
-            result.output = f"Processing error: {str(e)}"
-            result.success = False
+            response.output = f"Tool error: {str(e)}"
+            response.success = False
             
-        return result
-
-    def _handle_basic_scrape(self, request, context) -> tool_pb2.ToolResponse:
-        result = tool_pb2.ToolResponse()
-        url_field = request.params.fields.get("url")
-        
-        if not url_field or url_field.WhichOneof('kind') != 'string_value':
-            raise ValueError("Missing or invalid URL parameter")
-        
-        url = url_field.string_value
-        if not urlparse(url).scheme:
-            raise ValueError("Invalid URL scheme")
-        
-        content = self._safe_fetch(url)
-        result.output = self._sanitize_content(content)
-        result.success = True
-        return result
-
-    def _handle_search_scrape(self, request, context) -> tool_pb2.ToolResponse:
-        result = tool_pb2.ToolResponse()
-        params = request.params.fields
-        
-        query_field = params.get("query")
-        if not query_field or query_field.WhichOneof('kind') != 'string_value':
-            raise ValueError("Missing search query")
-            
-        max_results = int(params.get("max_results", 3).number_value or 3)
-        credibility_threshold = float(params.get("credibility", 0.7).number_value or 0.7)
-        
-        # Execute search engine query
-        search_results = self._search_engine_query(query_field.string_value, max_results)
-        
-        # Filter and process results
-        combined_content = []
-        structured_data = []
-        
-        for item in search_results:
-            if not self._is_credible_source(item["link"]):
-                continue
-                
-            try:
-                content = self._safe_fetch(item["link"])
-                sanitized = self._sanitize_content(content)
-                
-                combined_content.append(f"Source: {item['title']}\n\n{sanitized}")
-                structured_data.append({
-                    "title": item["title"],
-                    "url": item["link"],
-                    "snippet": item["snippet"],
-                    "content_length": len(sanitized)
-                })
-            except Exception as e:
-                continue
-
-        if combined_content:
-            result.output = "\n\n---\n\n".join(combined_content)
-            result.success = True
-            
-            # Add structured data to response
-            result.data.CopyFrom(Struct())
-            result.data.update({"sources": structured_data})
-        else:
-            result.output = "No credible sources found"
-            result.success = False
-            
-        return result
-
-    def _handle_advanced_scrape(self, request, context) -> tool_pb2.ToolResponse:
-        result = tool_pb2.ToolResponse()
-        params = request.params.fields
-        
-        url_field = params.get("url")
-        if not url_field or url_field.WhichOneof('kind') != 'string_value':
-            raise ValueError("Missing URL parameter")
-            
-        use_js = params.get("use_js", False).bool_value or False
-        extract_metadata = params.get("metadata", True).bool_value or True
-        
-        try:
-            html = self._scrape_with_selenium(url_field.string_value) if use_js \
-                else self._safe_fetch(url_field.string_value)
-                
-            soup = BeautifulSoup(html, 'lxml')
-            result.output = self._sanitize_content(html)
-            
-            if extract_metadata:
-                metadata = Struct()
-                metadata.update({
-                    "title": soup.title.string if soup.title else "",
-                    "description": soup.find("meta", {"name": "description"})["content"] 
-                                if soup.find("meta", {"name": "description"}) else "",
-                    "keywords": soup.find("meta", {"name": "keywords"})["content"].split(",") 
-                                if soup.find("meta", {"name": "keywords"}) else [],
-                    "links": [a["href"] for a in soup.find_all("a", href=True)]
-                })
-                result.data.CopyFrom(metadata)
-                
-            result.success = True
-        except Exception as e:
-            raise RuntimeError(f"Advanced scrape failed: {str(e)}")
-            
-        return result
+        return response
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
