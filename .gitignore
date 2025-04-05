@@ -1,18 +1,11 @@
 **
-!/agent_service/
-!/chromadb_service/
-!/llm_service/
-!/tool_service/
+
+!/shared
 
 !/llm_service/*
-!/llm_service/proto/*
 !/llm_service/llama/*
-
-!/agent_service/**
-
-!/chromadb_service/proto/*
+!/agent_service/*
 !/chromadb_service/*
-
 !/tool_service/**
 
 !.gitignore
