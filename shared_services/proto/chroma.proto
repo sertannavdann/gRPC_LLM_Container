@@ -1,0 +1,29 @@
+syntax = "proto3";
+package chroma;
+import "google/protobuf/struct.proto";
+
+message Document {
+  string id = 1;
+  string text = 2;
+  google.protobuf.Struct metadata = 3;
+}
+
+message AddDocumentRequest {
+  Document document = 1;
+}
+message AddDocumentResponse {
+  bool success = 1;
+}
+
+message QueryRequest {
+  string query_text = 1;
+  uint32 top_k = 2;
+}
+message QueryResponse {
+  repeated Document results = 1;   // top matching documents with their text & metadata
+}
+
+service ChromaService {
+  rpc AddDocument(AddDocumentRequest) returns (AddDocumentResponse);
+  rpc Query(QueryRequest) returns (QueryResponse);
+}

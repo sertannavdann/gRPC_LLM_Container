@@ -1,20 +1,30 @@
-# Chromadb gRPC service Dockerfile
 FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    python3-grpcio-tools \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+COPY shared/proto/chroma.proto ./proto/
+
+RUN python -m grpc_tools.protoc \
+    -I ./proto \
+    --python_out=. \
+    --grpc_python_out=. \
+    proto/chroma.proto
 
 COPY chromadb_service/requirements.txt .
-RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+RUN rm -rf ./proto
 
 COPY chromadb_service/chroma_service.py .
-COPY chromadb_service/chroma_pb2.py .
-COPY chromadb_service/chroma_pb2_grpc.py .
-COPY chromadb_service/proto/chroma.proto ./proto/
 
-# Create directory for persistent data
-RUN mkdir -p /app/data
+# Persistent storage
+VOLUME /app/data
 
 EXPOSE 50052
 CMD ["python", "chroma_service.py"]

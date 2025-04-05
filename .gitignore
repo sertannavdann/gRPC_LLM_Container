@@ -1,13 +1,24 @@
+# Ignore everything
 **
 
-!/shared
+# Except the following directories and their contents
+!/shared_services/
+!/shared_services/**
 
-!/llm_service/*
-!/llm_service/llama/*
-!/agent_service/*
+!/llm_service/
+!/llm_service/llama/
+!/llm_service/llama/**
+
+!/agent_service/
+!/agent_service/**
+
+!/chromadb_service/
 !/chromadb_service/*
+
+!/tool_service/
 !/tool_service/**
 
+# Except specific file types and files
 !.gitignore
 !MakeFile
 !*.yaml
