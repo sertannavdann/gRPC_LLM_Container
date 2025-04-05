@@ -1,6 +1,6 @@
 # Environment setup
 PROTO_DIR := shared/proto
-SERVICES := agent_service chromadb_service llm_service tool_service
+SERVICES := agent_service chroma_service llm_service tool_service
 
 # Build automation
 .PHONY: all proto-gen build up down clean
