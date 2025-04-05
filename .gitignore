@@ -2,8 +2,8 @@
 **
 
 # Except the following directories and their contents
-!/shared_services/
-!/shared_services/**
+!/shared/
+!/shared/**
 
 !/llm_service/
 !/llm_service/llama/
@@ -12,8 +12,8 @@
 !/agent_service/
 !/agent_service/**
 
-!/chromadb_service/
-!/chromadb_service/*
+!/chroma_service/
+!/chroma_service/*
 
 !/tool_service/
 !/tool_service/**
