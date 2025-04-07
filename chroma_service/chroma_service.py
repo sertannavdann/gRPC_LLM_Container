@@ -5,8 +5,16 @@ from concurrent import futures
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 import chroma_pb2
 import chroma_pb2_grpc
-from grpc_reflection.v1alpha import reflection
+
 import threading
+import logging
+
+from grpc_reflection.v1alpha import reflection
+from grpc_health.v1 import health_pb2
+from grpc_health.v1 import health_pb2_grpc
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("chroma_service")
 
 class ChromaService:
     def __init__(self):
@@ -28,16 +36,15 @@ class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
     def AddDocument(self, request, context):
         with self.chroma.lock:
             try:
-                # Convert protobuf Struct to Python dict
                 metadata = dict(request.document.metadata) if request.document.metadata else {}
-                
                 self.chroma.collection.add(
                     documents=[request.document.text],
                     ids=[request.document.id],
-                    metadatas=[metadata]  # Use actual metadata from request
+                    metadatas=[metadata]
                 )
                 return chroma_pb2.AddDocumentResponse(success=True)
             except Exception as e:
+                logger.error(f"Document add failed: {str(e)}")
                 context.abort(grpc.StatusCode.INTERNAL, f"Storage error: {str(e)}")
 
     def Query(self, request, context):
@@ -49,7 +56,6 @@ class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
             )
             response = chroma_pb2.QueryResponse()
             
-            # Handle empty results
             if not results['documents']:
                 return response
                 
@@ -58,24 +64,34 @@ class ChromaServiceServicer(chroma_pb2_grpc.ChromaServiceServicer):
                                     results['distances'][0]):
                 entry = response.results.add()
                 entry.text = doc
-                if meta:  # Handle metadata conversion
+                if meta:
                     entry.metadata.update(meta)
                 entry.score = float(1 - dist)
             return response
         except Exception as e:
+            logger.error(f"Query failed: {str(e)}")
             context.abort(grpc.StatusCode.INTERNAL, f"Query error: {str(e)}")
+
+class HealthServicer(health_pb2_grpc.HealthServicer):
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     chroma_pb2_grpc.add_ChromaServiceServicer_to_server(ChromaServiceServicer(), server)
+    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     
     reflection.enable_server_reflection([
         chroma_pb2.DESCRIPTOR.services_by_name['ChromaService'].full_name,
+        health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
         reflection.SERVICE_NAME
     ], server)
     
     server.add_insecure_port("[::]:50052")
     server.start()
+    logger.info("ChromaDB Service running on port 50052")
     server.wait_for_termination()
 
 if __name__ == "__main__":

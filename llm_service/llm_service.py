@@ -7,8 +7,9 @@ import llm_pb2
 import llm_pb2_grpc
 from grpc_reflection.v1alpha import reflection
 from functools import lru_cache
+from grpc_health.v1 import health_pb2
+from grpc_health.v1 import health_pb2_grpc
 
-# Configure structured logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -50,17 +51,24 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
                     break
             
             yield llm_pb2.GenerateResponse(token="", is_final=True)
-            
         except Exception as e:
             logger.error(f"Generation failed: {str(e)}")
             context.abort(grpc.StatusCode.INTERNAL, f"Generation error: {str(e)}")
 
+class HealthServicer(health_pb2_grpc.HealthServicer):
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
+
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     llm_pb2_grpc.add_LLMServiceServicer_to_server(LLMServiceServicer(), server)
+    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     
     reflection.enable_server_reflection([
         llm_pb2.DESCRIPTOR.services_by_name['LLMService'].full_name,
+        health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
         reflection.SERVICE_NAME
     ], server)
     
