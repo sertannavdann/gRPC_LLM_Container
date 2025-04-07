@@ -1,30 +1,31 @@
+# Updated Agent Service Dockerfile
 FROM python:3.11-slim
-
-RUN apt-get update && apt-get install -y \
-    protobuf-compiler \
-    python3-grpcio-tools \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY shared/proto/chroma.proto ./proto/
+# Install system dependencies
+RUN apt-get update && apt-get install -y protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
 
+# Copy requirements first for caching
+COPY agent_service/requirements.txt .
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+
+# Copy shared components
+COPY shared/ ./shared/
+COPY shared/proto/ ./proto/
+
+# Generate protobuf stubs
 RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=. \
     --grpc_python_out=. \
-    proto/chroma.proto
+    proto/*.proto
 
-COPY chromadb_service/requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy application code
+COPY agent_service/agent_service.py .
 
-RUN rm -rf ./proto
+ENV PYTHONPATH="${PYTHONPATH}:/app"
 
-COPY chromadb_service/chroma_service.py .
-
-# Persistent storage
-VOLUME /app/data
-
-EXPOSE 50052
-CMD ["python", "chroma_service.py"]
+EXPOSE 50054
+CMD ["python", "agent_service.py"]

@@ -2,6 +2,11 @@ syntax = "proto3";
 package tool;
 import "google/protobuf/struct.proto";
 
+message WebSearchResult {
+  string title = 1;
+  string url = 2;
+  string snippet = 3;
+}
 
 message ToolRequest {
   string tool_name = 1;
@@ -10,8 +15,9 @@ message ToolRequest {
 
 message ToolResponse {
   bool success = 1;
-  string output = 2;
-  google.protobuf.Struct data = 3;
+  string message = 2;
+  repeated WebSearchResult results = 3;
+  map<string, string> metadata = 4;
 }
 
 service ToolService {

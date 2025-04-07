@@ -8,11 +8,14 @@ import logging
 import agent_pb2
 import agent_pb2_grpc
 
-from shared_services.clients.llm_client import LLMClient
-from shared_services.clients.chroma_client import ChromaClient
-from shared_services.clients.tool_client import ToolClient
+from shared.clients.llm_client import LLMClient
+from shared.clients.chroma_client import ChromaClient
+from shared.clients.tool_client import ToolClient
 
 from langgraph.graph import StateGraph, END
+
+from grpc_health.v1 import health, health_pb2_grpc
+from grpc_health.v1 import health_pb2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +35,13 @@ Use this context to answer the question:
 {context}
 """
 
+
+class HealthServicer(health.HealthServicer):
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
+    
 class AgentOrchestrator:
     def __init__(self):
         self.llm = LLMClient()
@@ -138,23 +148,26 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    
+    # Add your main service
     agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
     
-    # Health check service
-    from grpc_health.v1 import health_pb2_grpc
-    from grpc_health.v1 import health_pb2
-    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
+    # Add health service
+    health_servicer = HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
     
-    reflection.enable_server_reflection((
+    # Enable reflection
+    from grpc_reflection.v1alpha import reflection
+    SERVICE_NAMES = (
         agent_pb2.DESCRIPTOR.services_by_name['AgentService'].full_name,
         health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
         reflection.SERVICE_NAME,
-    ), server)
+    )
+    reflection.enable_server_reflection(SERVICE_NAMES, server)
     
-    server.add_insecure_port("[::]:50054")
+    server.add_insecure_port('[::]:50054')
     server.start()
-    logger.info("Agent Service running on port 50054")
     server.wait_for_termination()
-
+    
 if __name__ == "__main__":
     serve()
