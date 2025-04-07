@@ -3,10 +3,13 @@
 !/chromadb_service/
 !/llm_service/
 !/tool_service/
+!/testing_tool/
 
 !/llm_service/*
 !/llm_service/proto/*
 !/llm_service/llama/*
+
+!/testing_tool/*
 
 !/agent_service/**
 
