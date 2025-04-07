@@ -1,4 +1,3 @@
-# agent_service.py
 from typing import TypedDict, Optional
 from grpc_reflection.v1alpha import reflection
 import grpc
@@ -8,14 +7,15 @@ import logging
 
 import agent_pb2
 import agent_pb2_grpc
-import llm_pb2
-import llm_pb2_grpc
-import chroma_pb2
-import chroma_pb2_grpc
-import tool_pb2
-import tool_pb2_grpc
+
+from shared.clients.llm_client import LLMClient
+from shared.clients.chroma_client import ChromaClient
+from shared.clients.tool_client import ToolClient
 
 from langgraph.graph import StateGraph, END
+
+from grpc_health.v1 import health, health_pb2_grpc
+from grpc_health.v1 import health_pb2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,111 +35,81 @@ Use this context to answer the question:
 {context}
 """
 
-def create_grpc_channel(service_name: str, port: int) -> grpc.Channel:
-    """Reusable gRPC channel factory with connection pooling"""
-    return grpc.insecure_channel(f"{service_name}:{port}")
-
+class HealthServicer(health.HealthServicer):
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
+    
 class AgentOrchestrator:
     def __init__(self):
-        # Initialize gRPC channels
-        self.tool_channel = create_grpc_channel("tool_service", 50053)
-        self.llm_channel = create_grpc_channel("llm_service", 50051)
-        self.chroma_channel = create_grpc_channel("chromadb_service", 50052)
+        self.llm = LLMClient(host="llm_service", port=50051)
+        self.chroma = ChromaClient()
+        self.tools = ToolClient()
         
-        # Initialize stubs with retry policies
-        self.tool_stub = tool_pb2_grpc.ToolServiceStub(self.tool_channel)
-        self.llm_stub = llm_pb2_grpc.LLMServiceStub(self.llm_channel)
-        self.chroma_stub = chroma_pb2_grpc.ChromaServiceStub(self.chroma_channel)
-
     def requires_external_data(self, query: str) -> bool:
-        """Determine if real-time data needed"""
         triggers = ["current", "latest", "recent", "today's"]
         return any(trigger in query.lower() for trigger in triggers)
 
     def retrieve_vector_context(self, state: AgentState) -> dict:
         try:
-            response = self.chroma_stub.Query(
-                chroma_pb2.QueryRequest(
-                    query_text=state["user_query"], top_k=3
-                )
-            )
-            logger.debug(f"Vector Context Retrieved: {state['vector_context'][:200]}...")
-            return {"vector_context": "\n".join(doc.text for doc in response.results)}
-        except grpc.RpcError as e:
-            logger.error(f"Vector retrieval failed: {e.details()}")
-            return {"error": f"Vector DB error: {e.details()}"}
+            results = self.chroma.query(state["user_query"], top_k=3)
+            context = "\n".join(doc['text'] for doc in results)
+            logger.debug(f"Vector Context: {context[:200]}...")
+            return {"vector_context": context}
+        except Exception as e:
+            logger.error(f"Vector retrieval failed: {str(e)}")
+            return {"error": f"Vector DB error: {str(e)}"}
 
     def gather_external_data(self, state: AgentState) -> dict:
         try:
-            # First try web search
-            search_response = self.tool_stub.CallTool(
-                tool_pb2.ToolRequest(
-                    tool_name="web_search",
-                    params={"query": state["user_query"], "max_results": "3"}
-                )
-            )
-            
-            if search_response.success:
-                logger.debug(f"Web Search: External Context Sources: {state['external_context'][:200]}...")
-                return {"external_context": search_response.output}
-            
-            # Fallback to direct scraping
-            scrape_response = self.tool_stub.CallTool(
-                tool_pb2.ToolRequest(
-                    tool_name="web_scrape",
-                    params={"url": self.find_relevant_source(state["user_query"])}
-                )
-            )
-            logger.debug(f"Web Scrape: External Context Sources: {state['external_context'][:200]}...")
-            return {"external_context": scrape_response.output[:5000]}
-        except grpc.RpcError as e:
-            logger.error(f"Tool service error: {e.details()}")
-            return {"error": f"Tool service error: {e.details()}"}
+            if self.requires_external_data(state["user_query"]):
+                search_results = self.tools.web_search(state["user_query"])
+                logger.debug(f"External Context: {search_results[:200]}...")
+                return {"external_context": search_results}
+            return {"external_context": ""}
+        except Exception as e:
+            logger.error(f"Tool service error: {str(e)}")
+            return {"error": f"Tool error: {str(e)}"}
 
     def construct_prompt(self, state: AgentState) -> dict:
         context_sections = [
-            f"ctx_int:\n{state['vector_context']}",
-            f"ctx_ext:\n{state['external_context']}"
+            f"Vector Context:\n{state['vector_context']}",
+            f"External Context:\n{state['external_context']}"
         ]
         full_context = "\n\n".join(context_sections)
-        logger.info("Final Prompt:\n%s", state["enriched_query"])
-        return {"enriched_query": SYSTEM_PROMPT.format(context=full_context) + state["user_query"]}
+        prompt = SYSTEM_PROMPT.format(context=full_context) + state["user_query"]
+        logger.info("Constructed Prompt:\n%s", prompt[:500] + "...")
+        return {"enriched_query": prompt}
 
     def generate_response(self, state: AgentState) -> dict:
         try:
-            answer = []
-            for resp in self.llm_stub.Generate(
-                llm_pb2.GenerateRequest(prompt=state["enriched_query"], max_tokens=512)
-            ):
-                if resp.is_final:
-                    break
-                answer.append(resp.token)
-            logger.info(
-                f"LLM Response: {''.join(answer)[:200]}..."
-                f" (length: {len(answer)})"
+            response = self.llm.generate(
+                state["enriched_query"], 
+                max_tokens=512,
+                temperature=0.7
             )
-            return {"llm_response": "".join(answer)}
-        except grpc.RpcError as e:
-            logger.error(f"LLM service error: {e.details()}")
-            return {"error": f"LLM service error: {e.details()}"}
+            if not response:
+                return {"error": "Empty LLM response"}
+            return {"llm_response": response}
+        except Exception as e:
+            logger.error(f"LLM generation failed: {str(e)}")
+            return {"error": f"LLM error: {str(e)}"}
 
 def create_workflow() -> StateGraph:
     workflow = StateGraph(AgentState)
     orchestrator = AgentOrchestrator()
     
-    # Define nodes
     workflow.add_node("retrieve_vector", orchestrator.retrieve_vector_context)
     workflow.add_node("gather_external", orchestrator.gather_external_data)
     workflow.add_node("construct_prompt", orchestrator.construct_prompt)
     workflow.add_node("generate_response", orchestrator.generate_response)
     
-    # Conditional edges
     workflow.add_conditional_edges(
         "retrieve_vector",
         lambda state: "gather_external" if orchestrator.requires_external_data(state["user_query"]) else "construct_prompt"
     )
     
-    # Normal edges
     workflow.add_edge("gather_external", "construct_prompt")
     workflow.add_edge("construct_prompt", "generate_response")
     workflow.set_entry_point("retrieve_vector")
@@ -150,8 +120,8 @@ def create_workflow() -> StateGraph:
 class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
     def __init__(self):
         self.workflow = create_workflow().compile()
-        self.request_counter = 0  # Simple metric tracking
-        
+        self.request_counter = 0
+
     def QueryAgent(self, request, context):
         self.request_counter += 1
         start_time = time.time()
@@ -171,9 +141,9 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
             logger.info(f"Request {self.request_counter} completed in {latency:.2f}s")
             
             return agent_pb2.AgentReply(
-                final_answer=result["llm_response"],
-                context_used=result["vector_context"][:1000],
-                sources=result["external_context"][:1000]
+                final_answer=result.get("llm_response", "No response generated"),
+                context_used=result.get("vector_context", "")[:1000],
+                sources=result.get("external_context", "")[:1000]
             )
         except Exception as e:
             logger.error(f"Workflow failed: {str(e)}")
@@ -182,24 +152,26 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    
+    # Add your main service
     agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(), server)
     
-    # Reflection setup
-    services = tuple(
-        pb.DESCRIPTOR.services_by_name[service].full_name 
-        for pb, service in [
-            (agent_pb2, "AgentService"),
-            (llm_pb2, "LLMService"),
-            (chroma_pb2, "ChromaService"),
-            (tool_pb2, "ToolService")
-        ]
-    ) + (reflection.SERVICE_NAME,)
+    # Add health service
+    health_servicer = HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
     
-    reflection.enable_server_reflection(services, server)
-    server.add_insecure_port("[::]:50054")
+    # Enable reflection
+    from grpc_reflection.v1alpha import reflection
+    SERVICE_NAMES = (
+        agent_pb2.DESCRIPTOR.services_by_name['AgentService'].full_name,
+        health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(SERVICE_NAMES, server)
+    
+    server.add_insecure_port('[::]:50054')
     server.start()
-    logger.info("Agent Service running on port 50054")
     server.wait_for_termination()
-
+    
 if __name__ == "__main__":
     serve()

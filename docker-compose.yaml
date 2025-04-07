@@ -11,18 +11,28 @@ services:
       - ./llm_service/models:/app/models
     networks:
       - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  chromadb_service:
+  chroma_service:
     build:
       context: .
-      dockerfile: chromadb_service/Dockerfile
-    container_name: chromadb_service
+      dockerfile: chroma_service/Dockerfile
+    container_name: chroma_service
     ports:
       - "50052:50052"
     volumes:
-      - ./chromadb_service/data:/app/data
+      - ./chroma_service/data:/app/data
     networks:
       - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   tool_service:
     build:
@@ -35,6 +45,13 @@ services:
       - rag_net
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      - SERPER_API_KEY=181ce15a80794f6fb5be7c4256e481664b46ede4
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   agent_service:
     build:
@@ -45,10 +62,15 @@ services:
       - "50054:50054"
     depends_on:
       - llm_service
-      - chromadb_service
+      - chroma_service
       - tool_service
     networks:
       - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   rag_net:

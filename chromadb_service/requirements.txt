@@ -1,5 +1,0 @@
-chromadb
-sentence-transformers
-grpcio
-grpcio-tools
-grpcio-reflection
