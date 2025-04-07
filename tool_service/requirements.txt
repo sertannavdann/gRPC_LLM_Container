@@ -1,7 +1,9 @@
 requests
 beautifulsoup4
-grpcio
-grpcio-tools
+grpcio==1.62.1
+grpcio-tools==1.62.1
+protobuf==4.25.3
+python-dotenv==1.0.1
 grpcio-reflection
 cachetools==5.3.3
 blinker==1.4
