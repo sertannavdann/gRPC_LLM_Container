@@ -35,7 +35,6 @@ Use this context to answer the question:
 {context}
 """
 
-
 class HealthServicer(health.HealthServicer):
     def Check(self, request, context):
         return health_pb2.HealthCheckResponse(
@@ -44,7 +43,7 @@ class HealthServicer(health.HealthServicer):
     
 class AgentOrchestrator:
     def __init__(self):
-        self.llm = LLMClient()
+        self.llm = LLMClient(host="llm_service", port=50051)
         self.chroma = ChromaClient()
         self.tools = ToolClient()
         
@@ -85,8 +84,13 @@ class AgentOrchestrator:
 
     def generate_response(self, state: AgentState) -> dict:
         try:
-            response = self.llm.generate(state["enriched_query"], max_tokens=512)
-            logger.info(f"LLM Response: {response[:200]}... (length: {len(response)})")
+            response = self.llm.generate(
+                state["enriched_query"], 
+                max_tokens=512,
+                temperature=0.7
+            )
+            if not response:
+                return {"error": "Empty LLM response"}
             return {"llm_response": response}
         except Exception as e:
             logger.error(f"LLM generation failed: {str(e)}")
