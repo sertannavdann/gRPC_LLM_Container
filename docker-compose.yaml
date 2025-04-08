@@ -12,7 +12,7 @@ services:
     networks:
       - rag_net
     healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -29,7 +29,7 @@ services:
     networks:
       - rag_net
     healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      test: ["CMD", "grpc_health_probe", "-addr=:50052"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -50,7 +50,7 @@ services:
     environment:
       - SERPER_API_KEY=${SERPER_API_KEY}
     healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      test: ["CMD", "grpc_health_probe", "-addr=:50053"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -69,7 +69,7 @@ services:
     networks:
       - rag_net
     healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
+      test: ["CMD", "grpc_health_probe", "-addr=:50054"]
       interval: 10s
       timeout: 5s
       retries: 3

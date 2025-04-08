@@ -11,17 +11,17 @@ class LLMClient(BaseClient):
     def __init__(self, host: str = "llm_service", port: int = 50051):
         super().__init__(host, port)
         self.stub = llm_pb2_grpc.LLMServiceStub(self.channel)
-        self._stream_timeout = 30  # seconds
+        self._stream_timeout = 30
 
-    def generate(self, prompt: str, max_tokens: int = 512) -> str:
+    def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
         try:
             responses = self.stub.Generate(
                 llm_pb2.GenerateRequest(
                     prompt=prompt,
                     max_tokens=min(max_tokens, 2048),
-                    temperature=0.7
+                    temperature=temperature
                 ),
-                timeout=10
+                timeout=30
             )
             output = ""
             for response in responses:
