@@ -5,10 +5,8 @@ from concurrent import futures
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 import chroma_pb2
 import chroma_pb2_grpc
-
 import threading
 import logging
-
 from grpc_reflection.v1alpha import reflection
 from grpc_health.v1 import health_pb2
 from grpc_health.v1 import health_pb2_grpc
@@ -22,6 +20,7 @@ class ChromaService:
         self.embedder = SentenceTransformerEmbeddingFunction(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
+        # Simplified client initialization for latest Chroma
         self.client = chromadb.PersistentClient(path="/app/data")
         self.collection = self.client.get_or_create_collection(
             name="documents",
