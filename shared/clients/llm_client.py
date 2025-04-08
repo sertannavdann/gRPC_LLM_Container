@@ -14,16 +14,21 @@ class LLMClient(BaseClient):
         self._stream_timeout = 30  # seconds
 
     def generate(self, prompt: str, max_tokens: int = 512) -> str:
-        """Synchronous text generation with validation"""
         try:
-            response = self.stub.GenerateText(
-                llm_pb2.GenerationRequest(
+            responses = self.stub.Generate(
+                llm_pb2.GenerateRequest(
                     prompt=prompt,
-                    max_tokens=min(max_tokens, 2048)
+                    max_tokens=min(max_tokens, 2048),
+                    temperature=0.7
                 ),
                 timeout=10
             )
-            return response.generated_text.strip()
+            output = ""
+            for response in responses:
+                output += response.token
+                if response.is_final:
+                    break
+            return output.strip()
         except grpc.RpcError as e:
             logger.error(f"Generation failed: {e.code().name}")
             return f"LLM Service Error: {e.details()}"

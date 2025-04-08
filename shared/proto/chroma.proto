@@ -6,6 +6,7 @@ message Document {
   string id = 1;
   string text = 2;
   google.protobuf.Struct metadata = 3;
+  float score = 4;
 }
 
 message AddDocumentRequest {
