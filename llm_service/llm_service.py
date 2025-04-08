@@ -40,8 +40,10 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
                 "stream": True
             }
             
+            token_produced = False
             for output in llm(request.prompt, **gen_config):
                 if context.is_active():
+                    token_produced = True
                     yield llm_pb2.GenerateResponse(
                         token=output["choices"][0]["text"],
                         is_final=False
@@ -49,6 +51,9 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
                 else:
                     logger.warning("Client disconnected, aborting generation")
                     break
+            
+            if not token_produced:
+                logger.warning("No tokens produced during generation")
             
             yield llm_pb2.GenerateResponse(token="", is_final=True)
         except Exception as e:
