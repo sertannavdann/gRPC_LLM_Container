@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x63hroma.proto\x12\x06\x63hroma\x1a\x1cgoogle/protobuf/struct.proto\"O\n\x08\x44ocument\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"8\n\x12\x41\x64\x64\x44ocumentRequest\x12\"\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x10.chroma.Document\"&\n\x13\x41\x64\x64\x44ocumentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"1\n\x0cQueryRequest\x12\x12\n\nquery_text\x18\x01 \x01(\t\x12\r\n\x05top_k\x18\x02 \x01(\r\"2\n\rQueryResponse\x12!\n\x07results\x18\x01 \x03(\x0b\x32\x10.chroma.Document2\x8d\x01\n\rChromaService\x12\x46\n\x0b\x41\x64\x64\x44ocument\x12\x1a.chroma.AddDocumentRequest\x1a\x1b.chroma.AddDocumentResponse\x12\x34\n\x05Query\x12\x14.chroma.QueryRequest\x1a\x15.chroma.QueryResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x63hroma.proto\x12\x06\x63hroma\x1a\x1cgoogle/protobuf/struct.proto\"^\n\x08\x44ocument\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\r\n\x05score\x18\x04 \x01(\x02\"8\n\x12\x41\x64\x64\x44ocumentRequest\x12\"\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\x10.chroma.Document\"&\n\x13\x41\x64\x64\x44ocumentResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\"1\n\x0cQueryRequest\x12\x12\n\nquery_text\x18\x01 \x01(\t\x12\r\n\x05top_k\x18\x02 \x01(\r\"2\n\rQueryResponse\x12!\n\x07results\x18\x01 \x03(\x0b\x32\x10.chroma.Document2\x8d\x01\n\rChromaService\x12\x46\n\x0b\x41\x64\x64\x44ocument\x12\x1a.chroma.AddDocumentRequest\x1a\x1b.chroma.AddDocumentResponse\x12\x34\n\x05Query\x12\x14.chroma.QueryRequest\x1a\x15.chroma.QueryResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -23,15 +23,15 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'chroma_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   _globals['_DOCUMENT']._serialized_start=54
-  _globals['_DOCUMENT']._serialized_end=133
-  _globals['_ADDDOCUMENTREQUEST']._serialized_start=135
-  _globals['_ADDDOCUMENTREQUEST']._serialized_end=191
-  _globals['_ADDDOCUMENTRESPONSE']._serialized_start=193
-  _globals['_ADDDOCUMENTRESPONSE']._serialized_end=231
-  _globals['_QUERYREQUEST']._serialized_start=233
-  _globals['_QUERYREQUEST']._serialized_end=282
-  _globals['_QUERYRESPONSE']._serialized_start=284
-  _globals['_QUERYRESPONSE']._serialized_end=334
-  _globals['_CHROMASERVICE']._serialized_start=337
-  _globals['_CHROMASERVICE']._serialized_end=478
+  _globals['_DOCUMENT']._serialized_end=148
+  _globals['_ADDDOCUMENTREQUEST']._serialized_start=150
+  _globals['_ADDDOCUMENTREQUEST']._serialized_end=206
+  _globals['_ADDDOCUMENTRESPONSE']._serialized_start=208
+  _globals['_ADDDOCUMENTRESPONSE']._serialized_end=246
+  _globals['_QUERYREQUEST']._serialized_start=248
+  _globals['_QUERYREQUEST']._serialized_end=297
+  _globals['_QUERYRESPONSE']._serialized_start=299
+  _globals['_QUERYRESPONSE']._serialized_end=349
+  _globals['_CHROMASERVICE']._serialized_start=352
+  _globals['_CHROMASERVICE']._serialized_end=493
 # @@protoc_insertion_point(module_scope)
