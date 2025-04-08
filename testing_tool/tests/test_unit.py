@@ -44,7 +44,10 @@ def test_chroma_basic_operations(chroma_client):
 
 def test_tool_service_search(tool_client):
     params = Struct()
-    params.update({"query": "test", "max_results": "1"})
+    fields = {}
+    fields["query"] = {"stringValue": "grpcurl test"}
+    fields["max_results"] = {"stringValue": "5"}
+    params.update({"fields": fields})
     
     response = tool_client.call(
         "CallTool",
