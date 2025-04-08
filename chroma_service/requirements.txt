@@ -1,8 +1,10 @@
-chromadb==0.4.24
-sentence-transformers==2.7.0
-transformers==4.40.2
-torch==2.3.0
-grpcio
-grpcio-tools
+chromadb>=0.4.15
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
 grpcio-reflection
 grpcio-health-checking
+sentence-transformers>=2.2.2
+langchain>=0.1.0
+protobuf>=3.20.3
+transformers==4.40.2
+torch==2.3.0

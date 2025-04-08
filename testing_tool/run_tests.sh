@@ -18,7 +18,7 @@ python -m grpc_tools.protoc -I shared/proto \
     
 # Run services and tests
 docker-compose up -d
-sleep 30  # Wait for services to initialize
+sleep 15  # Wait for services to initialize
 
 echo "Running unit tests..."
 pytest "${PROJECT_ROOT}/testing_tool/tests/test_unit.py" -v

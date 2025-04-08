@@ -45,8 +45,10 @@ services:
       - rag_net
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    env_file: 
+      - .env
     environment:
-      - SERPER_API_KEY=181ce15a80794f6fb5be7c4256e481664b46ede4
+      - SERPER_API_KEY=${SERPER_API_KEY}
     healthcheck:
       test: ["CMD", "grpc_health_probe", "-addr=:PORT"]
       interval: 10s
