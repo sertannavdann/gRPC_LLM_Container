@@ -39,6 +39,7 @@ class ChromaClient(BaseClient):
                     top_k=min(top_k, 20)
                 )
             )
+            # Filter out low-score results and empty texts
             return [
                 {
                     "text": doc.text,
@@ -46,7 +47,8 @@ class ChromaClient(BaseClient):
                     "score": doc.score
                 }
                 for doc in response.results
-            ]
+                if doc.score > 0.2 and doc.text.strip()
+            ][:top_k]  # Ensure we don't return more than requested
         except grpc.RpcError as e:
             self.logger.error(f"Vector query failed: {e.code().name}")
             return []

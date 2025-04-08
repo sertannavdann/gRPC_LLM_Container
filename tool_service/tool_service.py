@@ -5,14 +5,21 @@ from grpc_reflection.v1alpha import reflection
 from concurrent import futures
 from google.protobuf.struct_pb2 import Struct
 import requests
-import time
 from dotenv import load_dotenv
 
 import tool_pb2
 import tool_pb2_grpc
 
+from grpc_health.v1 import health, health_pb2_grpc, health_pb2
+
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+class HealthServicer(health.HealthServicer):
+    def Check(self, request, context):
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
 
 class ToolService(tool_pb2_grpc.ToolServiceServicer):
     def __init__(self):
@@ -43,8 +50,25 @@ class ToolService(tool_pb2_grpc.ToolServiceServicer):
             )
 
     def _handle_web_search(self, params):
-        query = params.get("query", "").string_value
-        max_results = int(params.get("max_results", "5").string_value)
+        # Access the values correctly from the request params
+        query_field = params.get("query")
+        max_results_field = params.get("max_results")
+        
+        # Extract the actual values based on the type
+        if isinstance(query_field, dict) and "stringValue" in query_field:
+            query = query_field["stringValue"]
+        elif isinstance(query_field, dict) and "str" in query_field:
+            query = query_field["str"]
+        else:
+            query = str(query_field)
+        
+        # Handle max_results similarly
+        if isinstance(max_results_field, dict) and "stringValue" in max_results_field:
+            max_results = int(max_results_field["stringValue"])
+        elif isinstance(max_results_field, dict) and "str" in max_results_field:
+            max_results = int(max_results_field["str"])
+        else:
+            max_results = int(max_results_field) if max_results_field else 5
         
         for attempt in range(3):
             try:
@@ -78,7 +102,7 @@ class ToolService(tool_pb2_grpc.ToolServiceServicer):
             success=False,
             message="Search API unavailable"
         )
-
+        
     def _format_search_results(self, data):
         results = []
         for result in data.get('organic', [])[:10]:
@@ -101,16 +125,21 @@ def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     tool_pb2_grpc.add_ToolServiceServicer_to_server(ToolService(), server)
     
+    # Add health service
+    health_servicer = HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    
     service_names = (
         tool_pb2.DESCRIPTOR.services_by_name['ToolService'].full_name,
+        health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
         reflection.SERVICE_NAME,
     )
     reflection.enable_server_reflection(service_names, server)
     
     server.add_insecure_port('[::]:50053')
     logger.info("Server started on port 50053")
+    server.start()  # Add this line
     server.wait_for_termination()
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
+if __name__ == "__main__":
     serve()
