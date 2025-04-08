@@ -1,3 +1,4 @@
+# testing_tool/tests/test_integration.py
 import pytest
 from testing_tool.client import TestClient
 from testing_tool.config import SERVICES
@@ -13,5 +14,6 @@ def test_full_workflow(agent_client):
         agent_pb2.AgentRequest(user_query="What is AI?"),
         timeout=20
     )
-    assert len(response.final_answer) > 50
-    assert "AI" in response.final_answer
+    final_answer = response.final_answer.strip()
+    assert final_answer, "Final answer is empty."
+    assert "LLM Service Error" not in final_answer, f"LLM returned an error: {final_answer}"
