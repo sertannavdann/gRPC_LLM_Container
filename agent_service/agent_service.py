@@ -41,18 +41,15 @@ class AgentState(TypedDict):
     start_time: float
 
 # --- System Prompt ---
-SYSTEM_PROMPT_TEMPLATE = """You are an expert AI assistant with access to real-time information and tools.
-Follow these steps:
-1. Analyze the user query and available context. The user's latest message is the last message in the history.
-2. Decide if any tools are needed based *only* on the latest user query and conversation history. Use web_search for current info, recent events, or time-sensitive topics.
-3. If tools are needed, call them. If not, proceed to generate the final answer.
-4. Use the conversation history and tool results to provide a comprehensive and accurate final answer. Cite sources from the context where applicable.
+SYSTEM_PROMPT_TEMPLATE = \
+"""
+You are an expert AI assistant with access to real-time tools:
+For time and location base queries use web_search
+Concise and on point
 
-Available Tools:
-{tools}
+Available Tools: {web_search}
 
-Current Context (from previous steps or database):
-{context}
+Current Context: {context}
 
 Current Time: {timestamp}
 """
@@ -84,16 +81,15 @@ def format_messages_to_prompt(messages: List[Any]) -> str:
     
     return formatted_prompt.strip()
 
+# --- Function Call Extraction ---
 def extract_function_call_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Extract function call information from LLM response text."""
     import re
     
-    # Pattern to match function calls like: "I want to call web_search("quantum computing")" or similar variations
+    # Pattern to match function calls like: "call web_search("quantum computing")" or similar variations
     patterns = [
-        r'call\s+(\w+)\s*\(\s*[\'"](.+?)[\'"]\s*\)',  # call web_search("query")
-        r'use\s+(\w+)\s*\(\s*[\'"](.+?)[\'"]\s*\)',   # use web_search("query")
-        r'invoke\s+(\w+)\s*\(\s*[\'"](.+?)[\'"]\s*\)', # invoke web_search("query")
-        r'(\w+)\s*\(\s*[\'"](.+?)[\'"]\s*\)'          # web_search("query")
+        r'(web_search|search)\s*[:\(]\s*["\']?(.+?)["\']?',
+        r'Searching for:\s*["\']?(.+?)["\']?'
     ]
     
     for pattern in patterns:
@@ -210,7 +206,7 @@ class EnhancedAgentOrchestrator:
                 max_tokens=1024,
                 temperature=0.7
             )
-            
+
             logger.debug(f"LLM raw response received: {response_text[:100]}...")
 
             if not isinstance(response_text, str):
@@ -279,11 +275,16 @@ class EnhancedAgentOrchestrator:
                 "timestamp": datetime.now().isoformat()
             })
 
+            # After successful tool execution
+            if "tools_used" not in state:
+                state["tools_used"] = []
+            state["tools_used"].append(tool_name)  # Add this line
+
             return {"messages": [FunctionMessage(content=result_str, name=tool_name)]}
 
         except Exception as e:
-            logger.exception(f"Tool node error for tool '{tool_name}': {str(e)}")
-            if "errors" not in state or state["errors"] is None:
+            # Existing error handling
+            if "errors" not in state:
                 state["errors"] = []
             state["errors"].append(f"ToolNodeError ({tool_name}): {str(e)}")
             return {"messages": [FunctionMessage(content=f"Error executing tool '{tool_name}': {str(e)}", name=tool_name)]}
@@ -334,7 +335,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
         logger.info(f"[Req ID: {request_id}] Received QueryAgent request: '{request.user_query}'")
 
         try:
-            # Initial context retrieval
+            # Initial context retrieval from Chroma
             initial_context = []
             try:
                 chroma_results = self.orchestrator.chroma.query(request.user_query)
@@ -379,7 +380,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
 
             logger.info(f"[Req ID: {request_id}] Workflow stream finished.")
 
-            # Extract final answer
+            # Extract final answer, trimming to 500 characters maximum
             final_answer = "Sorry, I couldn't generate a response."
             messages = final_state.get("messages", [])
             if messages:
@@ -404,7 +405,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
             # Truncate context content for reply
             truncated_context = [
                 {"source": c.get("source", "unknown"), "content": str(c.get("content", ""))[:150] + "..."}
-                for c in context_list
+                for c in final_state.get("context", [])
             ]
 
             return agent_pb2.AgentReply(
@@ -428,6 +429,7 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 sources=json.dumps({"errors": [f"UnexpectedWorkflowError: {str(e)}"], "request_id": request_id})
             )
 
+# --- gRPC Server Setup ---
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     servicer = AgentServiceServicer()
