@@ -1,14 +1,19 @@
+// shared/proto/agent.proto
 syntax = "proto3";
 package agent;
 
 message AgentRequest {
   string user_query = 1;
+  bool debug_mode = 2;  // New field for extended debugging
 }
+
 message AgentReply {
   string final_answer = 1;
   string context_used = 2;
   string sources = 3;
+  string execution_graph = 4;
 }
+
 service AgentService {
   rpc QueryAgent(AgentRequest) returns (AgentReply);
 }
