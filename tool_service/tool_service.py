@@ -1,9 +1,10 @@
 import os
 import logging
+from sympy import sympify, SympifyError
 import grpc
 from grpc_reflection.v1alpha import reflection
 from concurrent import futures
-from google.protobuf.struct_pb2 import Struct
+
 import requests
 from dotenv import load_dotenv
 
@@ -37,6 +38,8 @@ class ToolService(tool_pb2_grpc.ToolServiceServicer):
             if request.tool_name == "web_search":
                 params = {k: v for k, v in request.params.fields.items()}
                 return self._handle_web_search(params)
+            if request.tool_name == "math_solver":
+                return self._handle_math(request.params)
             else:
                 return tool_pb2.ToolResponse(
                     success=False,
@@ -102,7 +105,24 @@ class ToolService(tool_pb2_grpc.ToolServiceServicer):
             success=False,
             message="Search API unavailable"
         )
-        
+    
+    def _handle_math(self, params):
+        try:
+            expr = str(params.get("expression"))
+            result = float(sympify(expr))
+            return tool_pb2.ToolResponse(
+                success=True,
+                message=f"Solved: {expr}",
+                results=[tool_pb2.WebSearchResult(
+                    title="Math Result",
+                    snippet=str(result)
+                )]
+            )
+        except SympifyError as e:
+            return tool_pb2.ToolResponse(
+                success=False,
+                message=f"Math error: {str(e)}")
+
     def _format_search_results(self, data):
         results = []
         for result in data.get('organic', [])[:10]:
