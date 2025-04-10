@@ -1,169 +1,357 @@
 # agent_service.py
 import uuid
-from typing import TypedDict, Optional, Annotated, List, Dict, Any
-from grpc_reflection.v1alpha import reflection
 import grpc
-from concurrent import futures
-import time
-import logging
 import json
-from datetime import datetime
-import sqlite3
-import atexit
+import logging
+import time
 
+from datetime import datetime
+from typing import Any, Dict, List, Optional, TypedDict
+from concurrent import futures
+from grpc_reflection.v1alpha import reflection
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+from pydantic import BaseModel, ValidationError
+from collections import defaultdict
+
+# Protobuf imports
 import agent_pb2
 import agent_pb2_grpc
+from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
-from shared.clients.llm_client import LLMClient
-from shared.clients.chroma_client import ChromaClient
-from shared.clients.tool_client import ToolClient
-
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
-from langgraph.checkpoint.sqlite import SqliteSaver
+# Local imports
+from shared.clients import LLMClient, ChromaClient, ToolClient
 from langchain_core.messages import HumanMessage, AIMessage, FunctionMessage, SystemMessage
-from langchain_core.utils.function_calling import convert_to_openai_function
-from langchain.tools import tool
-
-from grpc_health.v1 import health, health_pb2_grpc
-from grpc_health.v1 import health_pb2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("agent_service")
 
-# --- State Definition ---
+# --------------------------
+# Data Models
+# --------------------------
+class ToolConfig(BaseModel):
+    name: str
+    description: str
+    circuit_breaker: bool = False
+    failure_count: int = 0
+
+class AgentMetrics(BaseModel):
+    tool_usage: Dict[str, int] = defaultdict(int)
+    tool_errors: Dict[str, int] = defaultdict(int)
+    llm_calls: int = 0
+    avg_response_time: float = 0.0
+
 class AgentState(TypedDict):
-    messages: Annotated[List[HumanMessage | AIMessage | FunctionMessage | SystemMessage], add_messages]
+    messages: List[HumanMessage | AIMessage | FunctionMessage | SystemMessage]
     context: List[dict]
     tools_used: List[str]
     errors: List[str]
     start_time: float
 
-# --- System Prompt ---
-SYSTEM_PROMPT_TEMPLATE = \
-"""
-You are an expert AI assistant with access to real-time tools:
-For time and location base queries use web_search
-Concise and on point
+class WorkflowConfig(BaseModel):
+    max_retries: int = 3
+    context_window: int = 3
+    error_window: int = 2
 
-Available Tools: {web_search}
+class ToolResponse(BaseModel):
+    content: str
+    success: bool
+    error: Optional[str] = None
 
-Current Context: {context}
-
-Current Time: {timestamp}
-"""
-
-# --- Health Check ---
-class HealthServicer(health.HealthServicer):
-    def Check(self, request, context):
-        return health_pb2.HealthCheckResponse(
-            status=health_pb2.HealthCheckResponse.SERVING
-        )
-
-# --- Helper Functions ---
-def format_messages_to_prompt(messages: List[Any]) -> str:
-    """Convert LangChain message objects to a single prompt string for the LLM client."""
-    formatted_prompt = ""
-    for msg in messages:
-        if hasattr(msg, "type") and hasattr(msg, "content"):
-            role = "System" if msg.type == "system" else "User" if msg.type == "human" else "Assistant" if msg.type == "ai" else "Function"
-            formatted_prompt += f"\n\n{role}: {msg.content}"
-            
-            # Add function call information if available
-            if msg.type == "ai" and hasattr(msg, "additional_kwargs") and msg.additional_kwargs.get("function_call"):
-                fn_call = msg.additional_kwargs["function_call"]
-                formatted_prompt += f"\n[Function Call: {fn_call.get('name')}({fn_call.get('arguments', '{}')})]"
-            
-            # Add function result information
-            if msg.type == "function" and hasattr(msg, "name"):
-                formatted_prompt += f" [Function: {msg.name}]"
-    
-    return formatted_prompt.strip()
-
-# --- Function Call Extraction ---
-def extract_function_call_from_text(text: str) -> Optional[Dict[str, Any]]:
-    """Extract function call information from LLM response text."""
-    import re
-    
-    # Pattern to match function calls like: "call web_search("quantum computing")" or similar variations
-    patterns = [
-        r'(web_search|search)\s*[:\(]\s*["\']?(.+?)["\']?',
-        r'Searching for:\s*["\']?(.+?)["\']?'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            function_name = match.group(1)
-            function_args = match.group(2)
-            return {
-                "name": function_name,
-                "arguments": json.dumps({"query": function_args})
-            }
-    
-    # Check if any available tool is explicitly mentioned
-    tool_names = ["web_search"]  # Update with all available tools
-    for tool in tool_names:
-        if f"I need to use {tool}" in text or f"I should use {tool}" in text or f"Let me search" in text:
-            # Extract a query from the text
-            query = text.split("for")[-1].strip().strip('."\'')[:100]  # Simple extraction
-            if query:
-                return {
-                    "name": tool,
-                    "arguments": json.dumps({"query": query})
-                }
-    
-    return None
-
-# --- Agent Orchestrator ---
-class EnhancedAgentOrchestrator:
+# --------------------------
+# Core Components
+# --------------------------
+class ToolRegistry:
     def __init__(self):
-        # Initialize clients
+        self.tools: Dict[str, callable] = {}
+        self.configs: Dict[str, ToolConfig] = {}
+    
+    def register(self, name: str, func: callable, description: str):
+        self.tools[name] = func
+        self.configs[name] = ToolConfig(
+            name=name,
+            description=description
+        )
+    
+    def get_tool(self, name: str) -> Optional[callable]:
+        config = self.configs.get(name)
+        if config and not config.circuit_breaker:
+            return self.tools.get(name)
+        return None
+    
+    def record_failure(self, name: str):
+        if name in self.configs:
+            self.configs[name].failure_count += 1
+            if self.configs[name].failure_count >= 3:
+                self.configs[name].circuit_breaker = True
+
+    def get_available_tools(self) -> List[str]:
+        return [name for name, config in self.configs.items() if not config.circuit_breaker]
+
+    def reset_circuit_breaker(self, tool_name: str):
+        if tool_name in self.configs:
+            self.configs[tool_name].circuit_breaker = False
+            self.configs[tool_name].failure_count = 0
+
+class WorkflowBuilder:
+# Orchestrates the sequential execution steps of an agent system, 
+# Determining when to use tools and when to terminate processing
+    def __init__(self, memory: SqliteSaver):
+        self.graph = StateGraph(AgentState)
+        self.memory = memory
+    
+    def build(self, agent_node: callable, tool_node: callable) -> StateGraph:
+        self.graph.add_node("agent", agent_node)
+        self.graph.add_node("tool", tool_node)
+        
+        self.graph.set_entry_point("agent")
+        self.graph.add_conditional_edges(
+            "agent",
+            self._should_continue,
+            {"tool": "tool", END: END}
+        )
+        self.graph.add_edge("tool", "agent")
+        
+        return self.graph.compile(checkpointer=self.memory)
+
+    @staticmethod
+    def _should_continue(state: AgentState) -> str:
+        last_msg = state["messages"][-1]
+        if isinstance(last_msg, AIMessage) and last_msg.additional_kwargs.get("function_call"):
+            return "tool"
+        return END
+
+class ResponseValidator:
+    def process_response(self, response: str, state: AgentState) -> Dict:
+        """Process and validate the response from the LLM."""
+        try:
+            # Try to parse the JSON response
+            if isinstance(response, str):
+                try:
+                    parsed = json.loads(response)
+                except json.JSONDecodeError:
+                    # If response is not valid JSON, wrap it in a basic structure
+                    parsed = {"content": response}
+            else:
+                parsed = response
+                
+            # Check if the parsed response has a tool call
+            if "function_call" in parsed or "tool_call" in parsed:
+                tool_call = parsed.get("function_call") or parsed.get("tool_call")
+                
+                # Update state with pending tool call
+                state["pending_tool"] = {
+                    "name": tool_call.get("name"),
+                    "arguments": tool_call.get("arguments")
+                }
+                
+                # Return AIMessage with function_call
+                return {
+                    "messages": [
+                        AIMessage(
+                            content="",
+                            additional_kwargs={"function_call": tool_call}
+                        )
+                    ]
+                }
+            else:
+                # Return a regular AIMessage with content
+                content = parsed.get("content", parsed)
+                if isinstance(content, dict):
+                    content = json.dumps(content)
+                    
+                return {
+                    "messages": [AIMessage(content=content)]
+                }
+                
+        except Exception as e:
+            # Handle any error in response processing
+            error_msg = f"Error processing LLM response: {str(e)}"
+            if "errors" not in state:
+                state["errors"] = []
+            state["errors"].append(error_msg)
+            
+            # Return a basic error message
+            return {
+                "messages": [
+                    AIMessage(content=f"I encountered an error processing the request. {error_msg}")
+                ]
+            }
+
+class LLMOrchestrator:
+    SYSTEM_PROMPT = """..."""  # Your prompt template
+    
+    def __init__(self, llm_client: LLMClient):
+        self.llm = llm_client
+        self.validator = ResponseValidator()
+    
+    def generate_response(self, state: AgentState, tools: List[str]) -> Dict:
+        prompt = self._build_prompt(state, tools)
+        response = self.llm.generate(prompt, response_format="json")
+        return self.validator.process_response(response, state)
+    
+    def _build_prompt(self, state: AgentState, tools: List[str]) -> str:
+        """Enhanced prompt construction with dynamic context handling"""
+        context_items = state.get("context", [])[-self.config.context_window:]
+        error_items = state.get("errors", [])[-self.config.error_window:]
+        
+        return self.SYSTEM_PROMPT.format(
+            tool_descriptions="\n".join(
+                f"- {name}: {self.tool_registry.configs[name].description}"
+                for name in tools
+            ),
+            context="\n".join(
+                f"[{ctx.get('source', 'unknown')}] {str(ctx.get('content', ''))[:200]}..."
+                for ctx in context_items
+            ),
+            errors="\n- ".join(error_items),
+            history=format_messages_to_prompt(state["messages"][-4:]),
+            query=state["messages"][-1].content,
+            timestamp=datetime.now().isoformat()
+        )
+    
+class ToolExecutor:
+    def __init__(self, registry: ToolRegistry, metrics: AgentMetrics):
+        self.registry = registry
+        self.metrics = metrics
+    
+    def execute(self, state: AgentState) -> Dict:
+        tool_call = state.get("pending_tool")
+        if not tool_call:
+            return self._handle_error("Missing tool call", state)
+        
+        tool_name = tool_call.get("name")
+        if not self.registry.get_tool(tool_name):
+            return self._handle_error(f"Disabled tool: {tool_name}", state)
+        
+        try:
+            result = self._run_tool(tool_name, tool_call["arguments"])
+            self._update_metrics(tool_name, success=True)
+            return self._format_result(result, tool_name, state)
+        except Exception as e:
+            self._update_metrics(tool_name, success=False)
+            return self._handle_error(str(e), state, tool_name)
+    
+    def _handle_error(self, error_msg: str, state: AgentState, tool_name: str = None) -> Dict:
+        """Handle tool execution errors"""
+        if "errors" not in state:
+            state["errors"] = []
+        
+        error_message = f"Tool error: {error_msg}"
+        state["errors"].append(error_message)
+        
+        if tool_name:
+            self.registry.record_failure(tool_name)
+        
+        return {
+            "messages": [
+                FunctionMessage(
+                    content=error_message,
+                    name=tool_name if tool_name else "tool_error"
+                )
+            ]
+        }
+    
+    def _run_tool(self, tool_name: str, arguments: Dict) -> Any:
+        """Execute the tool with provided arguments"""
+        tool_func = self.registry.get_tool(tool_name)
+        if not tool_func:
+            raise ValueError(f"Tool '{tool_name}' not found or disabled")
+        
+        # Handle both string and dict argument formats
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                raise ValueError(f"Invalid JSON arguments: {arguments}")
+        
+        return tool_func(**arguments)
+    
+    def _update_metrics(self, tool_name: str, success: bool) -> None:
+        """Update usage metrics for the tool"""
+        self.metrics.tool_usage[tool_name] = self.metrics.tool_usage.get(tool_name, 0) + 1
+        
+        if not success:
+            self.metrics.tool_errors[tool_name] = self.metrics.tool_errors.get(tool_name, 0) + 1
+    
+    def _format_result(self, result: Any, tool_name: str, state: AgentState) -> Dict:
+        """Format tool execution result"""
+        # Add tool to list of used tools
+        if "tools_used" not in state:
+            state["tools_used"] = []
+        if tool_name not in state["tools_used"]:
+            state["tools_used"].append(tool_name)
+        
+        # Add result to context if not already there
+        if "context" not in state:
+            state["context"] = []
+        
+        # Convert result to string if not JSON serializable
+        result_content = result
+        try:
+            json.dumps(result)  # Test if serializable
+        except (TypeError, ValueError):
+            result_content = str(result)
+        
+        # Add to context
+        state["context"].append({
+            "source": tool_name,
+            "content": result_content,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Return function message with result
+        return {
+            "messages": [
+                FunctionMessage(
+                    content=json.dumps(result) if not isinstance(result, str) else result,
+                    name=tool_name
+                )
+            ]
+        }
+
+# --------------------------
+# Main Service
+# --------------------------
+class AgentOrchestrator:
+    def __init__(self):
         self.llm = LLMClient(host="llm_service", port=50051)
         self.chroma = ChromaClient()
         self.tool_client = ToolClient()
-
-        # Setup SQLite checkpointer
-        self.db_connection = sqlite3.connect(":memory:", check_same_thread=False)
-        atexit.register(self._close_db_connection)
-        self.memory = SqliteSaver(conn=self.db_connection)
-
-        # Verify the checkpointer
-        logger.info(f"Initialized checkpointer. Type: {type(self.memory)}")
-        if not isinstance(self.memory, SqliteSaver):
-            raise TypeError(f"Checkpointer is not of type SqliteSaver, got {type(self.memory)} instead!")
-
-        # Initialize tool registry
-        self._initialize_tools()
-
-        # Compile the workflow
-        self.workflow = self._create_workflow()
-
-    def _close_db_connection(self):
-        """Close the SQLite connection when the application exits."""
-        if self.db_connection:
-            logger.info("Closing SQLite database connection.")
-            self.db_connection.close()
-            self.db_connection = None
-
-    def _initialize_tools(self):
-        """Initialize all available tools."""
-        # Register tools in a dictionary for easy access
-        self.tools = {
-            "web_search": self.web_search,
-            # Add other tools here as needed
-        }
         
-        # Generate formatted tools list for documentation
-        self.formatted_tools = list(self.tools.values())
-        
-        logger.info(f"Initialized {len(self.tools)} tools: {', '.join(self.tools.keys())}")
-
-    @tool
-    def web_search(self, query: str) -> List[dict]:
-        """Search the web for current information. Use for questions about recent events, real-time data, or time-sensitive topics."""
-        logger.info(f"Executing web_search tool with query: '{query}'")
+        self.metrics = AgentMetrics()
+        self.tool_registry = self._init_tools()
+        self.workflow = self._init_workflow()
+    
+    def _init_tools(self) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register(
+            "web_search",
+            self._web_search,
+            "Web search for real-time information"
+        )
+        registry.register(
+            "math_solver",
+            self._math_solver,
+            "Solve complex math equations"
+        )
+        return registry
+    
+    def _init_workflow(self) -> StateGraph:
+        memory = SqliteSaver(self._init_memory())
+        return WorkflowBuilder(memory).build(
+            self._agent_node,
+            ToolExecutor(self.tool_registry, self.metrics).execute
+        )
+    
+    def _agent_node(self, state: AgentState) -> Dict:
+        return LLMOrchestrator(self.llm).generate_response(
+            state, 
+            list(self.tool_registry.tools.keys())
+        )
+    
+    def _web_search(self, query: str) -> List[dict]:
         try:
             results = self.tool_client.web_search(query)
             if not isinstance(results, list):
@@ -173,190 +361,45 @@ class EnhancedAgentOrchestrator:
         except Exception as e:
             logger.exception(f"Web search tool failed: {str(e)}")
             return [{"error": f"Web search tool failed: {str(e)}"}]
-
-    def _agent_node(self, state: AgentState):
-        """Invokes the LLM to determine the next action or generate a response."""
-        logger.debug(f"Agent node running. Current state messages count: {len(state.get('messages', []))}")
+    
+    def _math_solver(self, expression: str) -> float:
         try:
-            # Prepare context string
-            context_str = "\n".join(
-                f"[{c.get('source', 'unknown')}] {str(c.get('content', ''))[:200]}..."
-                for c in state.get("context", [])
-            )
-            
-            # Build system prompt
-            system_prompt_content = SYSTEM_PROMPT_TEMPLATE.format(
-                tools="\n".join(f"- {t.name}: {t.description}" for t in self.formatted_tools),
-                context=context_str or "No context available yet.",
-                timestamp=datetime.now().isoformat()
-            )
-            
-            # Prepare messages for LLM
-            messages_for_llm = [SystemMessage(content=system_prompt_content)]
-            messages_for_llm.extend(state["messages"][-6:])  # Last 6 messages for context
-            
-            # Format messages to a single prompt string
-            formatted_prompt = format_messages_to_prompt(messages_for_llm)
-            
-            logger.debug(f"Sending prompt to LLM (length: {len(formatted_prompt)}).")
-            
-            # Call LLM with properly formatted string prompt
-            response_text = self.llm.generate(
-                prompt=formatted_prompt,
-                max_tokens=1024,
-                temperature=0.7
-            )
-
-            logger.debug(f"LLM raw response received: {response_text[:100]}...")
-
-            if not isinstance(response_text, str):
-                raise TypeError(f"LLM returned unexpected type: {type(response_text)}.")
-
-            # Process LLM response - extract function call if present
-            ai_message_args = {"content": response_text}
-            function_call = extract_function_call_from_text(response_text)
-            
-            if function_call:
-                ai_message_args["additional_kwargs"] = {"function_call": function_call}
-                fn_name = function_call.get("name")
-                logger.info(f"LLM requested function call: {fn_name}")
-                if fn_name:
-                    if "tools_used" not in state or state["tools_used"] is None:
-                        state["tools_used"] = []
-                    state["tools_used"].append(fn_name)
-
-            return {"messages": [AIMessage(**ai_message_args)]}
-
+            return self.tool_client.math_solver(expression)
         except Exception as e:
-            logger.exception(f"Agent node error: {str(e)}")
-            if "errors" not in state or state["errors"] is None:
-                state["errors"] = []
-            state["errors"].append(f"AgentNodeError: {str(e)}")
-            return {"messages": [AIMessage(content=f"Sorry, I encountered an internal error: {str(e)}")]}
+            return {"error": str(e)}
 
-    def _tool_node(self, state: AgentState):
-        """Invokes the requested tool with the provided arguments."""
-        logger.debug("Tool node running.")
-        tool_name = "unknown_tool"
-        try:
-            last_msg = state["messages"][-1]
-            if not isinstance(last_msg, AIMessage) or not last_msg.additional_kwargs.get("function_call"):
-                raise ValueError("Tool node reached without a valid function call in the last message.")
-
-            tool_call = last_msg.additional_kwargs["function_call"]
-            tool_name = tool_call["name"]
-            tool_args_str = tool_call.get("arguments", "{}")
-
-            try:
-                tool_args = json.loads(tool_args_str) if tool_args_str else {}
-            except json.JSONDecodeError as json_err:
-                logger.error(f"Failed JSON decode for tool '{tool_name}' args: {tool_args_str}. Error: {json_err}")
-                raise ValueError(f"Invalid arguments format for tool {tool_name}: {json_err}")
-
-            if tool_name not in self.tools:
-                raise ValueError(f"Unknown tool requested: {tool_name}")
-
-            logger.info(f"Invoking tool '{tool_name}' with args: {tool_args}")
-            result = self.tools[tool_name](**tool_args)
-
-            # Ensure result is JSON serializable
-            try:
-                result_str = json.dumps(result)
-            except TypeError:
-                logger.warning(f"Tool '{tool_name}' result not JSON serializable, converting to string.")
-                result_str = str(result)
-
-            # Add result to context
-            if "context" not in state or state["context"] is None:
-                state["context"] = []
-            state["context"].append({
-                "content": result_str,
-                "source": tool_name,
-                "timestamp": datetime.now().isoformat()
-            })
-
-            # After successful tool execution
-            if "tools_used" not in state:
-                state["tools_used"] = []
-            state["tools_used"].append(tool_name)  # Add this line
-
-            return {"messages": [FunctionMessage(content=result_str, name=tool_name)]}
-
-        except Exception as e:
-            # Existing error handling
-            if "errors" not in state:
-                state["errors"] = []
-            state["errors"].append(f"ToolNodeError ({tool_name}): {str(e)}")
-            return {"messages": [FunctionMessage(content=f"Error executing tool '{tool_name}': {str(e)}", name=tool_name)]}
-
-    def _should_continue(self, state: AgentState):
-        """Determines whether to continue the loop or end."""
-        last_msg = state["messages"][-1]
-        if isinstance(last_msg, AIMessage) and last_msg.additional_kwargs.get("function_call"):
-            logger.debug("Decision: Continue to invoke tool.")
-            return "invoke_tool"
-        logger.debug("Decision: End workflow.")
-        return END
-
-    def _create_workflow(self) -> StateGraph:
-        """Builds and compiles the LangGraph StateGraph."""
-        workflow = StateGraph(AgentState)
-        workflow.add_node("agent", self._agent_node)
-        workflow.add_node("invoke_tool", self._tool_node)
-        workflow.set_entry_point("agent")
-        workflow.add_conditional_edges(
-            "agent",
-            self._should_continue,
-            {"invoke_tool": "invoke_tool", END: END}
-        )
-        workflow.add_edge("invoke_tool", "agent")
-
-        logger.info(f"Compiling workflow with checkpointer. Type: {type(self.memory)}")
-        if not hasattr(self.memory, 'get_next_version'):
-            logger.error(f"Checkpointer object {self.memory!r} lacks get_next_version method before compile!")
-            raise AttributeError("Checkpointer is missing required 'get_next_version' method.")
-
-        compiled_workflow = workflow.compile(checkpointer=self.memory)
-        logger.info("LangGraph workflow compiled successfully.")
-        return compiled_workflow
-
-# --- gRPC Server ---
-class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
+# --------------------------
+# gRPC Service Implementation
+# --------------------------
+class AgentService(agent_pb2_grpc.AgentServiceServicer):
     def __init__(self):
-        self.orchestrator = EnhancedAgentOrchestrator()
-        self.request_counter = 0
-        self.error_counter = 0
-        logger.info("AgentServiceServicer initialized.")
-
+        self.orchestrator = AgentOrchestrator()
+        self.metrics = AgentMetrics()
+    
     def QueryAgent(self, request, context):
-        self.request_counter += 1
         request_id = str(uuid.uuid4())
         start_time = time.time()
-        logger.info(f"[Req ID: {request_id}] Received QueryAgent request: '{request.user_query}'")
-
+        logger.info(f"[Req ID: {request_id}] Received query: '{request.user_query}'")
+        
         try:
-            # Initial context retrieval from Chroma
+            # Retrieve relevant context from vector store
             initial_context = []
             try:
-                chroma_results = self.orchestrator.chroma.query(request.user_query)
-                if chroma_results and isinstance(chroma_results, list):
+                results = self.orchestrator.chroma.query(request.user_query)
+                if results and isinstance(results, list):
                     initial_context = [
                         {
                             "content": doc.get("text", ""),
                             "source": "vector_db",
-                            "score": doc.get("score", 0.0),
-                            "timestamp": datetime.now().isoformat()
+                            "metadata": doc.get("metadata", {})
                         }
-                        for doc in chroma_results[:3] if isinstance(doc, dict)
+                        for doc in results[:3] if isinstance(doc, dict)
                     ]
-                    logger.info(f"[Req ID: {request_id}] Retrieved {len(initial_context)} initial context docs from Chroma.")
-                else:
-                    logger.warning(f"[Req ID: {request_id}] Chroma query returned unexpected result or empty list: {chroma_results}")
-
-            except Exception as chroma_err:
-                logger.exception(f"[Req ID: {request_id}] Chroma query failed: {chroma_err}")
-                initial_context = []
-
+                    logger.info(f"[Req ID: {request_id}] Retrieved {len(initial_context)} context docs")
+            except Exception as e:
+                logger.warning(f"[Req ID: {request_id}] Context retrieval failed: {str(e)}")
+            
+            # Set up initial state for workflow
             initial_state = AgentState(
                 messages=[HumanMessage(content=request.user_query)],
                 context=initial_context,
@@ -364,93 +407,99 @@ class AgentServiceServicer(agent_pb2_grpc.AgentServiceServicer):
                 errors=[],
                 start_time=start_time
             )
-
+            
+            # Execute the workflow
             config = {"configurable": {"thread_id": request_id}}
-            logger.info(f"[Req ID: {request_id}] Starting workflow stream.")
-
             final_state = None
+            
             for step in self.orchestrator.workflow.stream(initial_state, config=config):
-                last_node = list(step.keys())[0]
-                logger.debug(f"[Req ID: {request_id}] Workflow step: Node='{last_node}'")
-                final_state = step[last_node]
-
+                node = list(step.keys())[0]
+                final_state = step[node]
+                
             if not final_state:
-                logger.error(f"[Req ID: {request_id}] Workflow stream finished without producing a final state.")
-                raise RuntimeError("Workflow did not return a final state.")
-
-            logger.info(f"[Req ID: {request_id}] Workflow stream finished.")
-
-            # Extract final answer, trimming to 500 characters maximum
+                raise RuntimeError("Workflow returned empty state")
+                
+            # Extract final answer from messages
             final_answer = "Sorry, I couldn't generate a response."
             messages = final_state.get("messages", [])
-            if messages:
-                final_ai_message = next(
-                    (m for m in reversed(messages)
-                     if isinstance(m, AIMessage) and not m.additional_kwargs.get("function_call")),
-                    None
-                )
-                if final_ai_message and final_ai_message.content:
-                    final_answer = final_ai_message.content
-
-            # Prepare context and sources for reply
-            context_list = final_state.get("context", [])
-            sources_dict = {
-                "tools_used": final_state.get("tools_used", []),
-                "errors": final_state.get("errors", []),
-            }
-
-            processing_time = time.time() - start_time
-            logger.info(f"[Req ID: {request_id}] Sending final answer (Length: {len(final_answer)}). Processing time: {processing_time:.2f}s")
-
-            # Truncate context content for reply
-            truncated_context = [
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and msg.content and not msg.additional_kwargs.get("function_call"):
+                    final_answer = msg.content
+                    break
+                    
+            # Prepare sources and context for response
+            used_context = [
                 {"source": c.get("source", "unknown"), "content": str(c.get("content", ""))[:150] + "..."}
-                for c in final_state.get("context", [])
+                for c in final_state.get("context", []) if c.get("content")
             ]
-
+            
+            sources = {
+                "tools_used": final_state.get("tools_used", []),
+                "errors": final_state.get("errors", [])
+            }
+            
+            processing_time = time.time() - start_time
+            logger.info(f"[Req ID: {request_id}] Completed in {processing_time:.2f}s")
+            
             return agent_pb2.AgentReply(
                 final_answer=final_answer,
-                context_used=json.dumps(truncated_context),
-                sources=json.dumps(sources_dict)
+                context_used=json.dumps(used_context),
+                sources=json.dumps(sources)
             )
-
+            
         except Exception as e:
-            self.error_counter += 1
-            processing_time = time.time() - start_time
-            logger.exception(f"[Req ID: {request_id}] Unhandled exception in QueryAgent after {processing_time:.2f}s: {str(e)}")
-            try:
-                context.set_details(f"Internal server error occurred. Please contact support if persists. Request ID: {request_id}")
-                context.set_code(grpc.StatusCode.INTERNAL)
-            except Exception as grpc_err:
-                logger.error(f"[Req ID: {request_id}] Failed to set gRPC error details: {grpc_err}")
-
+            logger.exception(f"[Req ID: {request_id}] Error processing request: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(f"Internal error processing request. ID: {request_id}")
+            
             return agent_pb2.AgentReply(
-                final_answer=f"System error: An unexpected error occurred while processing your request. (Request ID: {request_id})",
-                sources=json.dumps({"errors": [f"UnexpectedWorkflowError: {str(e)}"], "request_id": request_id})
+                final_answer=f"I'm sorry, but an error occurred while processing your request. (Request ID: {request_id})",
+                sources=json.dumps({"error": str(e), "request_id": request_id})
             )
 
-# --- gRPC Server Setup ---
+    def GetMetrics(self, request, context):
+        return agent_pb2.MetricsResponse(
+            tool_usage=json.dumps(self.metrics.tool_usage),
+            avg_response_time=self.metrics.avg_response_time
+        )
+
+# --------------------------
+# Enhanced Error Handling
+# --------------------------
+class ErrorHandler:
+    @staticmethod
+    def handle_llm_error(state: AgentState, error: Exception) -> Dict:
+        error_msg = f"LLM Error: {str(error)}"
+        state["errors"].append(error_msg)
+        return {"messages": [AIMessage(content=error_msg)]}
+
+    @staticmethod
+    def handle_tool_error(state: AgentState, tool_name: str, error: str) -> Dict:
+        error_msg = f"Tool Error ({tool_name}): {error}"
+        state["errors"].append(error_msg)
+        return {"messages": [FunctionMessage(content=error_msg, name=tool_name)]}
+
+# --------------------------
+# Server Setup
+# --------------------------
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    servicer = AgentServiceServicer()
-    agent_pb2_grpc.add_AgentServiceServicer_to_server(servicer, server)
-
-    health_servicer = HealthServicer()
-    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-
-    SERVICE_NAMES = (
+    agent_pb2_grpc.add_AgentServiceServicer_to_server(AgentService(), server)
+    
+    # Health check setup
+    health_pb2_grpc.add_HealthServicer_to_server(health.HealthServicer(), server)
+    
+    # Reflection setup
+    service_names = (
         agent_pb2.DESCRIPTOR.services_by_name['AgentService'].full_name,
         health_pb2.DESCRIPTOR.services_by_name['Health'].full_name,
         reflection.SERVICE_NAME,
     )
-    reflection.enable_server_reflection(SERVICE_NAMES, server)
-
-    listen_addr = '[::]:50054'
-    server.add_insecure_port(listen_addr)
-    logger.info(f"Agent Service starting on {listen_addr}")
+    reflection.enable_server_reflection(service_names, server)
+    
+    server.add_insecure_port('[::]:50054')
     server.start()
-    logger.info("Agent Service started successfully.")
     server.wait_for_termination()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     serve()
