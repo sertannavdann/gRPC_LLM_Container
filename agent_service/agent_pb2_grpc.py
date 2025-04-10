@@ -19,12 +19,23 @@ class AgentServiceStub(object):
                 request_serializer=agent__pb2.AgentRequest.SerializeToString,
                 response_deserializer=agent__pb2.AgentReply.FromString,
                 )
+        self.GetMetrics = channel.unary_unary(
+                '/agent.AgentService/GetMetrics',
+                request_serializer=agent__pb2.GetMetricsRequest.SerializeToString,
+                response_deserializer=agent__pb2.MetricsResponse.FromString,
+                )
 
 
 class AgentServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def QueryAgent(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetMetrics(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -37,6 +48,11 @@ def add_AgentServiceServicer_to_server(servicer, server):
                     servicer.QueryAgent,
                     request_deserializer=agent__pb2.AgentRequest.FromString,
                     response_serializer=agent__pb2.AgentReply.SerializeToString,
+            ),
+            'GetMetrics': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMetrics,
+                    request_deserializer=agent__pb2.GetMetricsRequest.FromString,
+                    response_serializer=agent__pb2.MetricsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -62,5 +78,22 @@ class AgentService(object):
         return grpc.experimental.unary_unary(request, target, '/agent.AgentService/QueryAgent',
             agent__pb2.AgentRequest.SerializeToString,
             agent__pb2.AgentReply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetMetrics(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/agent.AgentService/GetMetrics',
+            agent__pb2.GetMetricsRequest.SerializeToString,
+            agent__pb2.MetricsResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
