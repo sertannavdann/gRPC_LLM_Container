@@ -66,6 +66,7 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
                 "max_tokens": min(request.max_tokens, 1024),
                 "temperature": max(0.1, min(request.temperature, 1.0)),
                 "grammar": self._get_json_grammar() if request.response_format == "json" else None,
+                "stream": True
             }
             
             # Generation loop with JSON validation
@@ -74,6 +75,7 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             for output in llm(request.prompt, **gen_config):
                 token = output["choices"][0]["text"]
                 output_buffer += token
+                
                 
                 # Validate JSON incrementally
                 if request.response_format == "json":
