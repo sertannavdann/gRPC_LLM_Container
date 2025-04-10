@@ -5,13 +5,16 @@ import json
 import logging
 import time
 
+import sqlite3
+import atexit
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 from concurrent import futures
 from grpc_reflection.v1alpha import reflection
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
-from pydantic import BaseModel, ValidationError
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, SystemMessage
+from pydantic import BaseModel
 from collections import defaultdict
 
 # Protobuf imports
@@ -20,8 +23,9 @@ import agent_pb2_grpc
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports
-from shared.clients import LLMClient, ChromaClient, ToolClient
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, SystemMessage
+from shared.clients.llm_client import LLMClient
+from shared.clients.chroma_client import ChromaClient
+from shared.clients.tool_client import ToolClient
 import os
 from pathlib import Path
 
@@ -400,39 +404,33 @@ class AgentOrchestrator:
         return registry
     
     def _init_memory(self) -> SqliteSaver:
-        """Initializes the SQLite database for persistent memory storage
-        Returns:
-            SqliteSaver: Configured memory system for the agent workflow
-        """
-        
-        # Use a consistent path for the SQLite database
+        """Initializes the SQLite database for persistent memory storage"""
         db_path = os.path.abspath("agent_memory.sqlite")
         
-        # Check if database exists and log appropriate message
-        db_file = Path(db_path)
-        if db_file.exists():
-            logger.info(f"Using existing SQLite memory at: {db_path}")
-        else:
-            logger.info(f"Creating new SQLite memory at: {db_path}")
-            # Ensure the directory exists
-            db_file.parent.mkdir(parents=True, exist_ok=True)
-        
         try:
-            # Initialize the SqliteSaver with proper error handling
-            memory = SqliteSaver.from_conn_string(db_path)
+            # Create SQLite connection directly
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")  # Enable Write-Ahead Logging
+            atexit.register(self._close_db_connection, conn)
             
-            # Basic validation to ensure the memory system is working
-            if memory:
-                logger.info("Memory system initialized successfully")
-            else:
-                logger.warning("Memory system initialized but may not be functioning correctly")
-                
+            # Initialize SqliteSaver with raw connection
+            memory = SqliteSaver(conn=conn)
+            logger.info("Memory system initialized successfully")
             return memory
             
         except Exception as e:
             logger.error(f"Failed to initialize memory system: {str(e)}")
             logger.warning("Falling back to in-memory database")
-            return SqliteSaver.from_conn_string(":memory:")
+            return SqliteSaver(conn=sqlite3.connect(":memory:", check_same_thread=False))
+
+    def _close_db_connection(self, conn):
+        """Close the SQLite connection properly"""
+        if conn:
+            logger.info("Closing SQLite database connection")
+            try:
+                conn.close()
+            except Exception as e:
+                logger.error(f"Error closing connection: {str(e)}")
 
     def _init_workflow(self) -> StateGraph:
         """Initializes the agent workflow with memory and execution nodes.
@@ -440,16 +438,10 @@ class AgentOrchestrator:
         Returns:
             StateGraph: Compiled workflow graph for agent execution
         """
-        # Initialize persistent memory
         memory = self._init_memory()
-        
-        # Create workflow builder with the memory system
         builder = WorkflowBuilder(memory)
-        
-        # Initialize tool executor
         tool_executor = ToolExecutor(self.tool_registry, self.metrics)
         
-        # Build and return the workflow graph
         return builder.build(
             agent_node=self._agent_node,
             tool_node=tool_executor.execute
