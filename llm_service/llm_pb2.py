@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tllm.proto\x12\x03llm\"J\n\x0fGenerateRequest\x12\x0e\n\x06prompt\x18\x01 \x01(\t\x12\x12\n\nmax_tokens\x18\x02 \x01(\x05\x12\x13\n\x0btemperature\x18\x03 \x01(\x02\"3\n\x10GenerateResponse\x12\r\n\x05token\x18\x01 \x01(\t\x12\x10\n\x08is_final\x18\x02 \x01(\x08\x32G\n\nLLMService\x12\x39\n\x08Generate\x12\x14.llm.GenerateRequest\x1a\x15.llm.GenerateResponse0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tllm.proto\x12\x03llm\"c\n\x0fGenerateRequest\x12\x0e\n\x06prompt\x18\x01 \x01(\t\x12\x12\n\nmax_tokens\x18\x02 \x01(\x05\x12\x13\n\x0btemperature\x18\x03 \x01(\x02\x12\x17\n\x0fresponse_format\x18\x04 \x01(\t\"J\n\x10GenerateResponse\x12\r\n\x05token\x18\x01 \x01(\t\x12\x10\n\x08is_final\x18\x02 \x01(\x08\x12\x15\n\ris_valid_json\x18\x03 \x01(\x08\x32G\n\nLLMService\x12\x39\n\x08Generate\x12\x14.llm.GenerateRequest\x1a\x15.llm.GenerateResponse0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -22,9 +22,9 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'llm_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   _globals['_GENERATEREQUEST']._serialized_start=18
-  _globals['_GENERATEREQUEST']._serialized_end=92
-  _globals['_GENERATERESPONSE']._serialized_start=94
-  _globals['_GENERATERESPONSE']._serialized_end=145
-  _globals['_LLMSERVICE']._serialized_start=147
-  _globals['_LLMSERVICE']._serialized_end=218
+  _globals['_GENERATEREQUEST']._serialized_end=117
+  _globals['_GENERATERESPONSE']._serialized_start=119
+  _globals['_GENERATERESPONSE']._serialized_end=193
+  _globals['_LLMSERVICE']._serialized_start=195
+  _globals['_LLMSERVICE']._serialized_end=266
 # @@protoc_insertion_point(module_scope)
