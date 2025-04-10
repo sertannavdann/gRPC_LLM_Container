@@ -21,7 +21,9 @@ from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports
 from shared.clients import LLMClient, ChromaClient, ToolClient
-from langchain_core.messages import HumanMessage, AIMessage, FunctionMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, SystemMessage
+import os
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -180,36 +182,86 @@ class ResponseValidator:
             }
 
 class LLMOrchestrator:
-    SYSTEM_PROMPT = """..."""  # Your prompt template
-    
-    def __init__(self, llm_client: LLMClient):
+    # Define a concrete system prompt template
+    SYSTEM_PROMPT = \
+"""You are a helpful assistant designed to answer user queries accurately and concisely.
+You have access to the following tools:
+{tool_descriptions}
+
+Conversation History:
+{history}
+
+Context relevant to the query:
+{context}
+
+Recent Errors (if any):
+{errors}
+
+Current Request Timestamp: {timestamp}
+
+Based on the history, context, errors, and the user's latest query, decide the next step.
+1. If you can answer the query directly using the history and context, provide the final answer in JSON format: {{"content": "Your answer here."}}
+2. If you need to use a tool, respond with a JSON object specifying the tool call: {{"function_call": {{"name": "tool_name", "arguments": {{"arg1": "value1", ...}}}}}}
+   - Available tools: {tool_names}
+   - Only use the tools listed. Ensure arguments are correctly formatted.
+3. If the query is unclear or you cannot proceed, explain the issue: {{"content": "Explanation here."}}
+
+User Query: {query}
+Your JSON Response:"""
+
+    def __init__(self, llm_client: LLMClient, config: WorkflowConfig, tool_registry: ToolRegistry):
         self.llm = llm_client
         self.validator = ResponseValidator()
-    
-    def generate_response(self, state: AgentState, tools: List[str]) -> Dict:
-        prompt = self._build_prompt(state, tools)
-        response = self.llm.generate(prompt, response_format="json")
-        return self.validator.process_response(response, state)
-    
-    def _build_prompt(self, state: AgentState, tools: List[str]) -> str:
+        self.config = config # Store config
+        self.tool_registry = tool_registry # Store tool registry
+
+    def generate_response(self, state: AgentState) -> Dict:
+        # Pass necessary info to _build_prompt
+        prompt = self._build_prompt(state)
+        self.metrics.llm_calls += 1 # Increment LLM calls metric
+
+        # Assume llm.generate returns a string which might be JSON
+        raw_response = self.llm.generate(
+            prompt,
+            max_tokens=1024, # Example: Adjust as needed
+            temperature=0.5, # Example: Adjust as needed
+            # Request JSON format from the LLM service if supported by your model/service
+            # response_format="json" # Uncomment if llm_service supports this param
+        )
+        # Validate and structure the response
+        return self.validator.process_response(raw_response, state)
+
+    def _build_prompt(self, state: AgentState) -> str:
         """Enhanced prompt construction with dynamic context handling"""
+        # Get available tools that are not circuit-broken
+        available_tools = self.tool_registry.get_available_tools()
+        tool_descriptions = "\n".join(
+            f"- {name}: {self.tool_registry.configs[name].description}"
+            for name in available_tools
+        ) if available_tools else "No tools available."
+
         context_items = state.get("context", [])[-self.config.context_window:]
         error_items = state.get("errors", [])[-self.config.error_window:]
-        
+
+        # Format history using the helper function
+        history_str = format_messages_to_prompt(state["messages"][:-1]) # Exclude the latest query
+
         return self.SYSTEM_PROMPT.format(
-            tool_descriptions="\n".join(
-                f"- {name}: {self.tool_registry.configs[name].description}"
-                for name in tools
-            ),
+            tool_descriptions=tool_descriptions,
+            tool_names=", ".join(available_tools) or "none",
             context="\n".join(
                 f"[{ctx.get('source', 'unknown')}] {str(ctx.get('content', ''))[:200]}..."
                 for ctx in context_items
-            ),
-            errors="\n- ".join(error_items),
-            history=format_messages_to_prompt(state["messages"][-4:]),
+            ) or "No context available.",
+            errors="\n- ".join(error_items) or "No recent errors.",
+            history=history_str or "No history.",
             query=state["messages"][-1].content,
             timestamp=datetime.now().isoformat()
         )
+
+    # Add metrics attribute (or receive it) if LLM calls are tracked here
+    def set_metrics_tracker(self, metrics: AgentMetrics):
+         self.metrics = metrics
     
 class ToolExecutor:
     def __init__(self, registry: ToolRegistry, metrics: AgentMetrics):
@@ -316,12 +368,21 @@ class ToolExecutor:
 # --------------------------
 class AgentOrchestrator:
     def __init__(self):
+        # Initialize clients and components
         self.llm = LLMClient(host="llm_service", port=50051)
         self.chroma = ChromaClient()
         self.tool_client = ToolClient()
         
+        # Initialize tool registry and metrics
         self.metrics = AgentMetrics()
+        self.config = WorkflowConfig() # Instantiate the config
         self.tool_registry = self._init_tools()
+
+        # Pass dependencies to LLMOrchestrator
+        self.llm_orchestrator = LLMOrchestrator(self.llm, self.config, self.tool_registry)
+        self.llm_orchestrator.set_metrics_tracker(self.metrics) # Pass metrics tracker
+
+        # Initialize the workflow
         self.workflow = self._init_workflow()
     
     def _init_tools(self) -> ToolRegistry:
@@ -338,18 +399,64 @@ class AgentOrchestrator:
         )
         return registry
     
+    def _init_memory(self) -> SqliteSaver:
+        """Initializes the SQLite database for persistent memory storage
+        Returns:
+            SqliteSaver: Configured memory system for the agent workflow
+        """
+        
+        # Use a consistent path for the SQLite database
+        db_path = os.path.abspath("agent_memory.sqlite")
+        
+        # Check if database exists and log appropriate message
+        db_file = Path(db_path)
+        if db_file.exists():
+            logger.info(f"Using existing SQLite memory at: {db_path}")
+        else:
+            logger.info(f"Creating new SQLite memory at: {db_path}")
+            # Ensure the directory exists
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Initialize the SqliteSaver with proper error handling
+            memory = SqliteSaver.from_conn_string(db_path)
+            
+            # Basic validation to ensure the memory system is working
+            if memory:
+                logger.info("Memory system initialized successfully")
+            else:
+                logger.warning("Memory system initialized but may not be functioning correctly")
+                
+            return memory
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize memory system: {str(e)}")
+            logger.warning("Falling back to in-memory database")
+            return SqliteSaver.from_conn_string(":memory:")
+
     def _init_workflow(self) -> StateGraph:
-        memory = SqliteSaver(self._init_memory())
-        return WorkflowBuilder(memory).build(
-            self._agent_node,
-            ToolExecutor(self.tool_registry, self.metrics).execute
+        """Initializes the agent workflow with memory and execution nodes.
+        
+        Returns:
+            StateGraph: Compiled workflow graph for agent execution
+        """
+        # Initialize persistent memory
+        memory = self._init_memory()
+        
+        # Create workflow builder with the memory system
+        builder = WorkflowBuilder(memory)
+        
+        # Initialize tool executor
+        tool_executor = ToolExecutor(self.tool_registry, self.metrics)
+        
+        # Build and return the workflow graph
+        return builder.build(
+            agent_node=self._agent_node,
+            tool_node=tool_executor.execute
         )
     
     def _agent_node(self, state: AgentState) -> Dict:
-        return LLMOrchestrator(self.llm).generate_response(
-            state, 
-            list(self.tool_registry.tools.keys())
-        )
+        return self.llm_orchestrator.generate_response(state)
     
     def _web_search(self, query: str) -> List[dict]:
         try:
@@ -367,6 +474,32 @@ class AgentOrchestrator:
             return self.tool_client.math_solver(expression)
         except Exception as e:
             return {"error": str(e)}
+
+def format_messages_to_prompt(messages: List[BaseMessage]) -> str:
+    """Formats a list of LangChain messages into a simple string prompt."""
+    prompt_str = ""
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            role = "User"
+            content = msg.content
+        elif isinstance(msg, AIMessage):
+            role = "Assistant"
+            content = msg.content
+            if msg.additional_kwargs.get("function_call"):
+                fc = msg.additional_kwargs["function_call"]
+                content += f"\n(Wants to call function '{fc.get('name')}' with args: {fc.get('arguments')}) "
+        elif isinstance(msg, FunctionMessage):
+            role = "Function"
+            content = f"({msg.name}): {msg.content}"
+        elif isinstance(msg, SystemMessage):
+            role = "System"
+            content = msg.content
+        else:
+            role = "Unknown"
+            content = str(msg) # Fallback
+
+        prompt_str += f"{role}: {content}\n"
+    return prompt_str.strip()
 
 # --------------------------
 # gRPC Service Implementation
@@ -440,11 +573,18 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             
             processing_time = time.time() - start_time
             logger.info(f"[Req ID: {request_id}] Completed in {processing_time:.2f}s")
-            
+
+            # Update metrics (crude average)
+            # A more robust approach would store individual times and calculate average
+            current_total_time = self.orchestrator.metrics.avg_response_time * (self.orchestrator.metrics.llm_calls -1) # Approx total time before this call
+            new_avg = (current_total_time + processing_time) / self.orchestrator.metrics.llm_calls if self.orchestrator.metrics.llm_calls > 0 else processing_time
+            self.orchestrator.metrics.avg_response_time = new_avg
+
             return agent_pb2.AgentReply(
                 final_answer=final_answer,
                 context_used=json.dumps(used_context),
                 sources=json.dumps(sources)
+                # execution_graph=... # Still needs implementation if desired
             )
             
         except Exception as e:
@@ -458,9 +598,12 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             )
 
     def GetMetrics(self, request, context):
-        return agent_pb2.MetricsResponse(
-            tool_usage=json.dumps(self.metrics.tool_usage),
-            avg_response_time=self.metrics.avg_response_time
+        metrics_data = self.orchestrator.metrics                        # Get metrics from orchestrator
+        return agent_pb2.MetricsResponse(                               # Assuming MetricsResponse exists in proto
+            tool_usage=json.dumps(dict(metrics_data.tool_usage)),       # Convert defaultdict
+            tool_errors=json.dumps(dict(metrics_data.tool_errors)),     # Convert defaultdict
+            llm_calls=metrics_data.llm_calls,
+            avg_response_time=metrics_data.avg_response_time
         )
 
 # --------------------------
