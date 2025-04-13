@@ -130,61 +130,29 @@ class WorkflowBuilder:
 
 class ResponseValidator:
     def process_response(self, response: str, state: AgentState) -> Dict:
-        """Process and validate the response from the LLM."""
         try:
-            # Try to parse the JSON response
-            if isinstance(response, str):
-                try:
-                    parsed = json.loads(response)
-                except json.JSONDecodeError:
-                    # If response is not valid JSON, wrap it in a basic structure
-                    parsed = {"content": response}
-            else:
-                parsed = response
-                
-            # Check if the parsed response has a tool call
-            if "function_call" in parsed or "tool_call" in parsed:
-                tool_call = parsed.get("function_call") or parsed.get("tool_call")
-                
-                # Update state with pending tool call
+            parsed = json.loads(response) if isinstance(response, str) else response
+            # Centralized check for tool/function calls:
+            tool_call = parsed.get("function_call") or parsed.get("tool_call")
+            if tool_call:
                 state["pending_tool"] = {
                     "name": tool_call.get("name"),
                     "arguments": tool_call.get("arguments")
                 }
-                
-                # Return AIMessage with function_call
-                return {
-                    "messages": [
-                        AIMessage(
-                            content="",
-                            additional_kwargs={"function_call": tool_call}
-                        )
-                    ]
-                }
-            else:
-                # Return a regular AIMessage with content
-                content = parsed.get("content", parsed)
-                if isinstance(content, dict):
-                    content = json.dumps(content)
-                    
-                return {
-                    "messages": [AIMessage(content=content)]
-                }
-                
-        except Exception as e:
-            # Handle any error in response processing
-            error_msg = f"Error processing LLM response: {str(e)}"
-            if "errors" not in state:
-                state["errors"] = []
-            state["errors"].append(error_msg)
-            
-            # Return a basic error message
-            return {
-                "messages": [
-                    AIMessage(content=f"I encountered an error processing the request. {error_msg}")
-                ]
-            }
+                return {"messages": [AIMessage(content="", additional_kwargs={"function_call": tool_call})]}
+            content = parsed.get("content", parsed)
+            if isinstance(content, dict):
+                content = json.dumps(content)
+            return {"messages": [AIMessage(content=content)]}
+        except (ValueError, ValidationError) as e:
+            error_msg = f"LLM Error: {str(e)}"
+            state.setdefault("errors", []).append(error_msg)
+            return {"messages": [AIMessage(content=error_msg)]}
 
+
+# --------------------------
+# LLM Orchestrator
+# --------------------------
 class LLMOrchestrator:
     # Define a concrete system prompt template
     SYSTEM_PROMPT = \
