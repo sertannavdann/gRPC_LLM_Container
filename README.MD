@@ -9,6 +9,7 @@ A production-grade distributed system implementing Retrieval-Augmented Generatio
   - Vector DB Service (Chroma)
   - LLM Service (Local GGUF models)
   - Tool Service (Web Search/Math)
+  - Native App Intents Package (Siri/Shortcuts integrations)
   
 - **Production-Ready Features**
   - Circuit breakers for tool reliability
@@ -110,6 +111,13 @@ Check service health:
 ```bash
 make health-check
 ```
+
+## Roadmap Snapshot
+
+- **Sprint 1 (current):** Deliver shared Swift `AppIntentsPackage` with `ScheduleMeetingIntent` and unit tests (`swift test`).
+- **Sprint 2:** Extend `cpp_llm.proto` with intent RPCs and wire Objective-C++ handlers to App Intents.
+- **Sprint 3:** Register new agent tools, add OpenTelemetry interceptors, and expose observability dashboards.
+- **Sprint 4:** Ship end-to-end tests (XCTest + Python harness) and prep beta rollout.
 
 ## Customization Guide
 

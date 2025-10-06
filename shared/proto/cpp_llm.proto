@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package cpp_llm;
+
+service CppLLMService {
+  rpc RunInference (InferenceRequest) returns (InferenceResponse);
+}
+
+message InferenceRequest {
+  string input = 1;
+}
+
+message InferenceResponse {
+  string output = 1;
+  string intent_payload = 2;
+}

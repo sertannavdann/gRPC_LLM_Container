@@ -14,7 +14,7 @@ from grpc_reflection.v1alpha import reflection
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, SystemMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from collections import defaultdict
 
 # Protobuf imports
@@ -24,6 +24,7 @@ from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports
 from shared.clients.llm_client import LLMClient
+from shared.clients.cpp_llm_client import CppLLMClient
 from shared.clients.chroma_client import ChromaClient
 from shared.clients.tool_client import ToolClient
 import os
@@ -342,6 +343,7 @@ class AgentOrchestrator:
     def __init__(self):
         # Initialize clients and components
         self.llm = LLMClient(host="llm_service", port=50051)
+        self.cpp_llm = CppLLMClient()
         self.chroma = ChromaClient()
         self.tool_client = ToolClient()
         
@@ -368,6 +370,11 @@ class AgentOrchestrator:
             "math_solver",
             self._math_solver,
             "Solve complex math equations"
+        )
+        registry.register(
+            "cpp_llm_inference",
+            self._cpp_llm_inference,
+            "Low-latency deterministic inference via native C++ microservice"
         )
         return registry
     
@@ -434,6 +441,33 @@ class AgentOrchestrator:
             return self.tool_client.math_solver(expression)
         except Exception as e:
             return {"error": str(e)}
+
+    def _cpp_llm_inference(self, prompt: str, return_intent: bool = True) -> Dict[str, str]:
+        start_time = time.time()
+        result = self.cpp_llm.run_inference(prompt)
+        duration = time.time() - start_time
+        logger.info(
+            "cpp-llm tool executed",
+            extra={
+                "prompt": prompt,
+                "duration_ms": int(duration * 1000),
+                "intent_payload": result.get("intent_payload"),
+            }
+        )
+
+        # Update rolling average response time for observability
+        call_count = max(self.metrics.llm_calls, 1)
+        self.metrics.avg_response_time = (
+            (self.metrics.avg_response_time * (call_count - 1)) + duration
+        ) / call_count
+
+        if return_intent:
+            return result
+
+        return {
+            "output": result.get("output", ""),
+            "intent_payload": result.get("intent_payload", ""),
+        }
 
 def format_messages_to_prompt(messages: List[BaseMessage]) -> str:
     """Formats a list of LangChain messages into a simple string prompt."""

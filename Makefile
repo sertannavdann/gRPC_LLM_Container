@@ -16,6 +16,12 @@ proto-gen:
 			--grpc_python_out=$$service \
 			$(PROTO_DIR)/$$(echo $$service | cut -d'_' -f1).proto; \
 	done
+	@mkdir -p shared/generated
+	@python -m grpc_tools.protoc \
+		-I$(PROTO_DIR) \
+		--python_out=shared/generated \
+		--grpc_python_out=shared/generated \
+		$(PROTO_DIR)/cpp_llm.proto
 	@echo "Protobuf generation complete"
 
 build:
