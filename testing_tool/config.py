@@ -1,4 +1,7 @@
-import llm_pb2_grpc, chroma_pb2_grpc, tool_pb2_grpc, agent_pb2_grpc
+from llm_service import llm_pb2_grpc
+from chroma_service import chroma_pb2_grpc
+from tool_service import tool_pb2_grpc
+from agent_service import agent_pb2_grpc
 
 SERVICES = {
     "llm": {

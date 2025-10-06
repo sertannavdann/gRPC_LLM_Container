@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import cpp_llm_pb2 as cpp__llm__pb2
+from . import cpp_llm_pb2 as cpp__llm__pb2
 
 GRPC_GENERATED_VERSION = '1.71.0'
 GRPC_VERSION = grpc.__version__
@@ -39,12 +39,23 @@ class CppLLMServiceStub(object):
                 request_serializer=cpp__llm__pb2.InferenceRequest.SerializeToString,
                 response_deserializer=cpp__llm__pb2.InferenceResponse.FromString,
                 _registered_method=True)
+        self.TriggerScheduleMeeting = channel.unary_unary(
+                '/cpp_llm.CppLLMService/TriggerScheduleMeeting',
+                request_serializer=cpp__llm__pb2.ScheduleMeetingRequest.SerializeToString,
+                response_deserializer=cpp__llm__pb2.ScheduleMeetingResponse.FromString,
+                _registered_method=True)
 
 
 class CppLLMServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def RunInference(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TriggerScheduleMeeting(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -57,6 +68,11 @@ def add_CppLLMServiceServicer_to_server(servicer, server):
                     servicer.RunInference,
                     request_deserializer=cpp__llm__pb2.InferenceRequest.FromString,
                     response_serializer=cpp__llm__pb2.InferenceResponse.SerializeToString,
+            ),
+            'TriggerScheduleMeeting': grpc.unary_unary_rpc_method_handler(
+                    servicer.TriggerScheduleMeeting,
+                    request_deserializer=cpp__llm__pb2.ScheduleMeetingRequest.FromString,
+                    response_serializer=cpp__llm__pb2.ScheduleMeetingResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -86,6 +102,33 @@ class CppLLMService(object):
             '/cpp_llm.CppLLMService/RunInference',
             cpp__llm__pb2.InferenceRequest.SerializeToString,
             cpp__llm__pb2.InferenceResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TriggerScheduleMeeting(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/cpp_llm.CppLLMService/TriggerScheduleMeeting',
+            cpp__llm__pb2.ScheduleMeetingRequest.SerializeToString,
+            cpp__llm__pb2.ScheduleMeetingResponse.FromString,
             options,
             channel_credentials,
             insecure,

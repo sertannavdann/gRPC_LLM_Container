@@ -3,8 +3,8 @@ import grpc
 import chromadb
 from concurrent import futures
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-import chroma_pb2
-import chroma_pb2_grpc
+from . import chroma_pb2
+from . import chroma_pb2_grpc
 import threading
 import logging
 from grpc_reflection.v1alpha import reflection

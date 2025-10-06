@@ -51,3 +51,55 @@ class CppLLMClient(BaseClient):
                 "output": f"[cpp-llm-error] {exc.details()}",
                 "intent_payload": "",
             }
+
+    def trigger_schedule_meeting(
+        self,
+        *,
+        person: str,
+        start_time_iso8601: str,
+        duration_minutes: int = 30,
+    ) -> dict:
+        """Call the native calendar adapter via gRPC."""
+
+        request = cpp_llm_pb2.ScheduleMeetingRequest(
+            person=person,
+            start_time_iso8601=start_time_iso8601,
+            duration_minutes=duration_minutes,
+        )
+
+        logger.info(
+            "cpp-llm-client: trigger schedule meeting",
+            extra={
+                "person": person,
+                "start_time": start_time_iso8601,
+                "duration_minutes": duration_minutes,
+            },
+        )
+
+        try:
+            response = self._stub.TriggerScheduleMeeting(request, timeout=self._timeout)
+            payload = {
+                "success": response.status == cpp_llm_pb2.ScheduleMeetingResponse.STATUS_OK,
+                "status": response.status,
+                "message": response.message,
+                "event_identifier": response.event_identifier,
+            }
+            logger.info(
+                "cpp-llm-client: schedule meeting response",
+                extra=payload,
+            )
+            return payload
+        except grpc.RpcError as exc:
+            logger.error(
+                "cpp-llm-client: schedule meeting failed",
+                extra={
+                    "code": exc.code().name,
+                    "details": exc.details(),
+                },
+            )
+            return {
+                "success": False,
+                "status": cpp_llm_pb2.ScheduleMeetingResponse.STATUS_ERROR,
+                "message": exc.details(),
+                "event_identifier": "",
+            }

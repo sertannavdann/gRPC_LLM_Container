@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rcpp_llm.proto\x12\x07\x63pp_llm\"!\n\x10InferenceRequest\x12\r\n\x05input\x18\x01 \x01(\t\";\n\x11InferenceResponse\x12\x0e\n\x06output\x18\x01 \x01(\t\x12\x16\n\x0eintent_payload\x18\x02 \x01(\t2V\n\rCppLLMService\x12\x45\n\x0cRunInference\x12\x19.cpp_llm.InferenceRequest\x1a\x1a.cpp_llm.InferenceResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rcpp_llm.proto\x12\x07\x63pp_llm\"!\n\x10InferenceRequest\x12\r\n\x05input\x18\x01 \x01(\t\";\n\x11InferenceResponse\x12\x0e\n\x06output\x18\x01 \x01(\t\x12\x16\n\x0eintent_payload\x18\x02 \x01(\t\"^\n\x16ScheduleMeetingRequest\x12\x0e\n\x06person\x18\x01 \x01(\t\x12\x1a\n\x12start_time_iso8601\x18\x02 \x01(\t\x12\x18\n\x10\x64uration_minutes\x18\x03 \x01(\x05\"\xc0\x01\n\x17ScheduleMeetingResponse\x12\x37\n\x06status\x18\x01 \x01(\x0e\x32\'.cpp_llm.ScheduleMeetingResponse.Status\x12\x18\n\x10\x65vent_identifier\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\"A\n\x06Status\x12\x16\n\x12STATUS_UNSPECIFIED\x10\x00\x12\r\n\tSTATUS_OK\x10\x01\x12\x10\n\x0cSTATUS_ERROR\x10\x02\x32\xb3\x01\n\rCppLLMService\x12\x45\n\x0cRunInference\x12\x19.cpp_llm.InferenceRequest\x1a\x1a.cpp_llm.InferenceResponse\x12[\n\x16TriggerScheduleMeeting\x12\x1f.cpp_llm.ScheduleMeetingRequest\x1a .cpp_llm.ScheduleMeetingResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,6 +35,12 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_INFERENCEREQUEST']._serialized_end=59
   _globals['_INFERENCERESPONSE']._serialized_start=61
   _globals['_INFERENCERESPONSE']._serialized_end=120
-  _globals['_CPPLLMSERVICE']._serialized_start=122
-  _globals['_CPPLLMSERVICE']._serialized_end=208
+  _globals['_SCHEDULEMEETINGREQUEST']._serialized_start=122
+  _globals['_SCHEDULEMEETINGREQUEST']._serialized_end=216
+  _globals['_SCHEDULEMEETINGRESPONSE']._serialized_start=219
+  _globals['_SCHEDULEMEETINGRESPONSE']._serialized_end=411
+  _globals['_SCHEDULEMEETINGRESPONSE_STATUS']._serialized_start=346
+  _globals['_SCHEDULEMEETINGRESPONSE_STATUS']._serialized_end=411
+  _globals['_CPPLLMSERVICE']._serialized_start=414
+  _globals['_CPPLLMSERVICE']._serialized_end=593
 # @@protoc_insertion_point(module_scope)

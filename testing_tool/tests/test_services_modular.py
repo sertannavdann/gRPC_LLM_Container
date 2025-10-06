@@ -1,16 +1,38 @@
-import types
-import time
 from types import SimpleNamespace
+import types as pytypes
+from pathlib import Path
+import sys
 
 import grpc
 import pytest
 
-import chroma_pb2
-import llm_pb2
-import tool_pb2
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from agent_service.agent_service import AgentMetrics, AgentOrchestrator
-from chroma_service import chroma_service as chroma_module
+if "llama_cpp" not in sys.modules:
+    stub_module = pytypes.ModuleType("llama_cpp")
+
+    class _StubLlama:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, prompt, **kwargs):
+            return iter(())
+
+    stub_module.Llama = _StubLlama
+    sys.modules["llama_cpp"] = stub_module
+
+from chroma_service import chroma_pb2
+from llm_service import llm_pb2
+from tool_service import tool_pb2
+
+# Optional import: agent service pulls in LangGraph and other heavy deps not always present during unit tests.
+try:
+    from agent_service.agent_service import AgentMetrics, AgentOrchestrator  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - environment fallback
+    AgentMetrics = None  # type: ignore
+    AgentOrchestrator = None  # type: ignore
 from chroma_service.chroma_service import ChromaServiceServicer
 from llm_service import llm_service as llm_module
 from llm_service.llm_service import LLMServiceServicer
@@ -62,6 +84,60 @@ def test_cpp_llm_client_error():
     assert result["intent_payload"] == ""
 
 
+def test_cpp_llm_schedule_meeting_success():
+    client = CppLLMClient.__new__(CppLLMClient)
+    client._timeout = 1
+    client._stub = SimpleNamespace(
+        TriggerScheduleMeeting=lambda request, timeout=None: cpp_llm_pb2.ScheduleMeetingResponse(
+            status=cpp_llm_pb2.ScheduleMeetingResponse.STATUS_OK,
+            message="Event scheduled",
+            event_identifier="abc-123"
+        )
+    )
+
+    result = CppLLMClient.trigger_schedule_meeting(
+        client,
+        person="Alex",
+        start_time_iso8601="2025-10-05T14:00:00Z",
+        duration_minutes=45,
+    )
+
+    assert result["success"] is True
+    assert result["event_identifier"] == "abc-123"
+
+
+def test_cpp_llm_schedule_meeting_error():
+    class FakeRpcError(grpc.RpcError):
+        def __init__(self, code, details):
+            self._code = code
+            self._details = details
+
+        def code(self):
+            return self._code
+
+        def details(self):
+            return self._details
+
+    error = FakeRpcError(grpc.StatusCode.INTERNAL, "calendar failure")
+
+    client = CppLLMClient.__new__(CppLLMClient)
+    client._timeout = 1
+    client._stub = SimpleNamespace(
+        TriggerScheduleMeeting=lambda request, timeout=None: (_ for _ in ()).throw(error)
+    )
+
+    result = CppLLMClient.trigger_schedule_meeting(
+        client,
+        person="Alex",
+        start_time_iso8601="2025-10-05T14:00:00Z",
+        duration_minutes=45,
+    )
+
+    assert result["success"] is False
+    assert result["message"] == "calendar failure"
+
+
+@pytest.mark.skipif(AgentOrchestrator is None, reason="agent_service dependencies unavailable")
 def test_agent_cpp_llm_tool():
     orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
     orchestrator.cpp_llm = SimpleNamespace(
@@ -138,4 +214,3 @@ def test_tool_service_math_solver():
     result = ToolService._handle_math(service, {"expression": "1+2"})
     assert result.success is True
     assert "Math Result" in result.results[0].title
-*** End Patch
