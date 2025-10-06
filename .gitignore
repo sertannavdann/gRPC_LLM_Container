@@ -52,3 +52,8 @@ testing_tool/tests/__pycache__/
 llm_service/llama/
 llm_service/models/
 *.gguf
+
+# Generated protobufs (regenerate via `make proto-gen`)
+**/*_pb2.py
+**/*_pb2.pyi
+**/*_pb2_grpc.py
