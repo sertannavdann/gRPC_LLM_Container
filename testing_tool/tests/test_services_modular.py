@@ -153,6 +153,27 @@ def test_agent_cpp_llm_tool():
     assert orchestrator.metrics.avg_response_time >= 0.0
 
 
+@pytest.mark.skipif(AgentOrchestrator is None, reason="agent_service dependencies unavailable")
+def test_agent_schedule_meeting_bridge():
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator.cpp_llm = SimpleNamespace(
+        trigger_schedule_meeting=lambda **kwargs: {
+            "success": True,
+            "message": "Event scheduled",
+            "event_identifier": "evt-123",
+        }
+    )
+    payload = AgentOrchestrator._schedule_meeting(
+        orchestrator,
+        person="Alex",
+        start_time_iso8601="2025-10-05T14:00:00Z",
+        duration_minutes="45",
+    )
+    assert payload["status"] == "scheduled"
+    assert payload["event_identifier"] == "evt-123"
+    assert payload["duration_minutes"] == 45
+
+
 def test_llm_service_generate_stream(monkeypatch):
     class DummyLLM:
         def __call__(self, prompt, **kwargs):

@@ -18,8 +18,8 @@ from pydantic import BaseModel, ValidationError
 from collections import defaultdict
 
 # Protobuf imports
-import agent_pb2
-import agent_pb2_grpc
+from . import agent_pb2
+from . import agent_pb2_grpc
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports
@@ -60,11 +60,6 @@ class WorkflowConfig(BaseModel):
     max_retries: int = 3
     context_window: int = 3
     error_window: int = 2
-
-class ToolResponse(BaseModel):
-    content: str
-    success: bool
-    error: Optional[str] = None
 
 # --------------------------
 # Core Components
@@ -140,10 +135,14 @@ class ResponseValidator:
                     "name": tool_call.get("name"),
                     "arguments": tool_call.get("arguments")
                 }
-                return {"messages": [AIMessage(content="", additional_kwargs={"function_call": tool_call})]}
+                return {
+                    "messages": [AIMessage(content="", additional_kwargs={"function_call": tool_call})],
+                    "pending_tool": state["pending_tool"],
+                }
             content = parsed.get("content", parsed)
             if isinstance(content, dict):
                 content = json.dumps(content)
+            state.pop("pending_tool", None)
             return {"messages": [AIMessage(content=content)]}
         except (ValueError, ValidationError) as e:
             error_msg = f"LLM Error: {str(e)}"
@@ -244,6 +243,17 @@ class ToolExecutor:
     def execute(self, state: AgentState) -> Dict:
         tool_call = state.get("pending_tool")
         if not tool_call:
+            last_message = state.get("messages", [])[-1] if state.get("messages") else None
+            if isinstance(last_message, AIMessage):
+                fn_call = last_message.additional_kwargs.get("function_call")
+                if fn_call:
+                    tool_call = {
+                        "name": fn_call.get("name"),
+                        "arguments": fn_call.get("arguments"),
+                    }
+                    state["pending_tool"] = tool_call
+
+        if not tool_call:
             return self._handle_error("Missing tool call", state)
         
         tool_name = tool_call.get("name")
@@ -253,9 +263,11 @@ class ToolExecutor:
         try:
             result = self._run_tool(tool_name, tool_call["arguments"])
             self._update_metrics(tool_name, success=True)
+            state.pop("pending_tool", None)
             return self._format_result(result, tool_name, state)
         except Exception as e:
             self._update_metrics(tool_name, success=False)
+            state.pop("pending_tool", None)
             return self._handle_error(str(e), state, tool_name)
     
     def _handle_error(self, error_msg: str, state: AgentState, tool_name: str = None) -> Dict:
@@ -376,6 +388,11 @@ class AgentOrchestrator:
             self._cpp_llm_inference,
             "Low-latency deterministic inference via native C++ microservice"
         )
+        registry.register(
+            "schedule_meeting",
+            self._schedule_meeting,
+            "Schedule calendar events via native C++ adapter (requires person, start_time_iso8601, duration_minutes)"
+        )
         return registry
     
     def _init_memory(self) -> SqliteSaver:
@@ -468,6 +485,60 @@ class AgentOrchestrator:
             "output": result.get("output", ""),
             "intent_payload": result.get("intent_payload", ""),
         }
+
+    def _schedule_meeting(
+        self,
+        *,
+        person: str,
+        start_time_iso8601: str,
+        duration_minutes: int | str = 30,
+    ) -> Dict[str, object]:
+        """Bridge tool that schedules a meeting through the native C++ adapter."""
+
+        if not person:
+            raise ValueError("person is required to schedule a meeting")
+        if not start_time_iso8601:
+            raise ValueError("start_time_iso8601 is required to schedule a meeting")
+
+        try:
+            minutes = int(duration_minutes)
+        except (TypeError, ValueError):
+            raise ValueError("duration_minutes must be an integer") from None
+
+        logger.info(
+            "schedule_meeting tool invoked",
+            extra={
+                "person": person,
+                "start_time_iso8601": start_time_iso8601,
+                "duration_minutes": minutes,
+            },
+        )
+
+        result = self.cpp_llm.trigger_schedule_meeting(
+            person=person,
+            start_time_iso8601=start_time_iso8601,
+            duration_minutes=minutes,
+        )
+
+        if not result.get("success"):
+            message = result.get("message") or "Failed to schedule meeting"
+            logger.error("schedule_meeting tool failed", extra={"error": message})
+            raise RuntimeError(message)
+
+        payload = {
+            "status": "scheduled",
+            "message": result.get("message") or "Meeting scheduled successfully",
+            "event_identifier": result.get("event_identifier", ""),
+            "person": person,
+            "start_time_iso8601": start_time_iso8601,
+            "duration_minutes": minutes,
+        }
+
+        logger.info(
+            "schedule_meeting tool succeeded",
+            extra={"event_identifier": payload["event_identifier"]},
+        )
+        return payload
 
 def format_messages_to_prompt(messages: List[BaseMessage]) -> str:
     """Formats a list of LangChain messages into a simple string prompt."""
@@ -599,22 +670,6 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             llm_calls=metrics_data.llm_calls,
             avg_response_time=metrics_data.avg_response_time
         )
-
-# --------------------------
-# Enhanced Error Handling
-# --------------------------
-class ErrorHandler:
-    @staticmethod
-    def handle_llm_error(state: AgentState, error: Exception) -> Dict:
-        error_msg = f"LLM Error: {str(error)}"
-        state["errors"].append(error_msg)
-        return {"messages": [AIMessage(content=error_msg)]}
-
-    @staticmethod
-    def handle_tool_error(state: AgentState, tool_name: str, error: str) -> Dict:
-        error_msg = f"Tool Error ({tool_name}): {error}"
-        state["errors"].append(error_msg)
-        return {"messages": [FunctionMessage(content=error_msg, name=tool_name)]}
 
 # --------------------------
 # Server Setup
