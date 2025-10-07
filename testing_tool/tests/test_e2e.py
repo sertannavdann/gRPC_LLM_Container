@@ -36,8 +36,18 @@ def get_docker_compose_cmd():
 def test_full_system():
     docker_cmd = get_docker_compose_cmd()
     
+    # Check if Docker daemon is running
     try:
-        subprocess.run(docker_cmd + ["up", "-d"], check=True)
+        result = subprocess.run(docker_cmd + ["ps"], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            pytest.skip("Docker daemon is not running. Please start Docker Desktop.")
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pytest.skip("Docker is not available or not running")
+    
+    try:
+        subprocess.run(docker_cmd + ["up", "-d"], check=True, 
+                      capture_output=True, text=True)
         time.sleep(20)  # increased wait time to ensure LLM is fully operational
 
         channel = grpc.insecure_channel("localhost:50054")
@@ -50,4 +60,5 @@ def test_full_system():
         assert final_answer, "Final answer is empty."
         assert "LLM Service Error" not in final_answer, f"LLM returned an error: {final_answer}"
     finally:
-        subprocess.run(docker_cmd + ["down"])
+        subprocess.run(docker_cmd + ["down"], 
+                      capture_output=True, text=True)
