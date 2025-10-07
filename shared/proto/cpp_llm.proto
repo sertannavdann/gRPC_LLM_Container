@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package cpp_llm;
+
+service CppLLMService {
+  rpc RunInference (InferenceRequest) returns (InferenceResponse);
+  rpc TriggerScheduleMeeting (ScheduleMeetingRequest) returns (ScheduleMeetingResponse);
+}
+
+message InferenceRequest {
+  string input = 1;
+}
+
+message InferenceResponse {
+  string output = 1;
+  string intent_payload = 2;
+}
+
+message ScheduleMeetingRequest {
+  string person = 1;
+  string start_time_iso8601 = 2;
+  int32 duration_minutes = 3;
+}
+
+message ScheduleMeetingResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_OK = 1;
+    STATUS_ERROR = 2;
+  }
+
+  Status status = 1;
+  string event_identifier = 2;
+  string message = 3;
+}

@@ -1,26 +1,59 @@
-# Ignore everything
-**
+# General
+.DS_Store
+Thumbs.db
 
-# Except the following directories and their contents
-!/shared/
-!/shared/**
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-!/llm_service/
-!/llm_service/llama/
-!/llm_service/llama/**
+# Virtual environments and local env files
+.venv/
+.env
+.env.*
 
-!/agent_service/
-!/agent_service/**
+# Build outputs
+build/
+dist/
+*.egg-info/
+*.whl
 
-!/chroma_service/
-!/chroma_service/*
+# SQLite / cache data
+*.sqlite3
+*.db
 
-!/tool_service/
-!/tool_service/**
+# Logs
+*.log
 
-# Except specific file types and files
-!.gitignore
-!MakeFile
-!*.yaml
-!*.py
-!*.MD
+# IDE/editor settings
+.vscode/
+.idea/
+*.swp
+
+# Swift Package Manager artifacts
+external/CppLLM/**/.build/
+external/CppLLM/**/.swiftpm/
+external/CppLLM/**/Package.resolved
+
+# CMake/Ninja build directories
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake-build-debug/
+
+# Local testing artifacts
+testing_tool/tests/__pycache__/
+
+# ignore llm_service/llama and llm_service/models directories
+llm_service/llama/
+llm_service/models/
+*.gguf
+
+# Generated protobufs (regenerate via `make proto-gen`)
+**/*_pb2.py
+**/*_pb2.pyi
+**/*_pb2_grpc.py

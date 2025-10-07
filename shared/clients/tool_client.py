@@ -2,8 +2,8 @@ import grpc
 import logging
 from google.protobuf.struct_pb2 import Struct
 from .base_client import BaseClient
-import tool_pb2
-import tool_pb2_grpc
+from tool_service import tool_pb2
+from tool_service import tool_pb2_grpc
 
 logger = logging.getLogger(__name__)
 

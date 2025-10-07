@@ -14,16 +14,17 @@ from grpc_reflection.v1alpha import reflection
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, FunctionMessage, SystemMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from collections import defaultdict
 
 # Protobuf imports
-import agent_pb2
-import agent_pb2_grpc
+from . import agent_pb2
+from . import agent_pb2_grpc
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports
 from shared.clients.llm_client import LLMClient
+from shared.clients.cpp_llm_client import CppLLMClient
 from shared.clients.chroma_client import ChromaClient
 from shared.clients.tool_client import ToolClient
 import os
@@ -59,11 +60,6 @@ class WorkflowConfig(BaseModel):
     max_retries: int = 3
     context_window: int = 3
     error_window: int = 2
-
-class ToolResponse(BaseModel):
-    content: str
-    success: bool
-    error: Optional[str] = None
 
 # --------------------------
 # Core Components
@@ -130,61 +126,33 @@ class WorkflowBuilder:
 
 class ResponseValidator:
     def process_response(self, response: str, state: AgentState) -> Dict:
-        """Process and validate the response from the LLM."""
         try:
-            # Try to parse the JSON response
-            if isinstance(response, str):
-                try:
-                    parsed = json.loads(response)
-                except json.JSONDecodeError:
-                    # If response is not valid JSON, wrap it in a basic structure
-                    parsed = {"content": response}
-            else:
-                parsed = response
-                
-            # Check if the parsed response has a tool call
-            if "function_call" in parsed or "tool_call" in parsed:
-                tool_call = parsed.get("function_call") or parsed.get("tool_call")
-                
-                # Update state with pending tool call
+            parsed = json.loads(response) if isinstance(response, str) else response
+            # Centralized check for tool/function calls:
+            tool_call = parsed.get("function_call") or parsed.get("tool_call")
+            if tool_call:
                 state["pending_tool"] = {
                     "name": tool_call.get("name"),
                     "arguments": tool_call.get("arguments")
                 }
-                
-                # Return AIMessage with function_call
                 return {
-                    "messages": [
-                        AIMessage(
-                            content="",
-                            additional_kwargs={"function_call": tool_call}
-                        )
-                    ]
+                    "messages": [AIMessage(content="", additional_kwargs={"function_call": tool_call})],
+                    "pending_tool": state["pending_tool"],
                 }
-            else:
-                # Return a regular AIMessage with content
-                content = parsed.get("content", parsed)
-                if isinstance(content, dict):
-                    content = json.dumps(content)
-                    
-                return {
-                    "messages": [AIMessage(content=content)]
-                }
-                
-        except Exception as e:
-            # Handle any error in response processing
-            error_msg = f"Error processing LLM response: {str(e)}"
-            if "errors" not in state:
-                state["errors"] = []
-            state["errors"].append(error_msg)
-            
-            # Return a basic error message
-            return {
-                "messages": [
-                    AIMessage(content=f"I encountered an error processing the request. {error_msg}")
-                ]
-            }
+            content = parsed.get("content", parsed)
+            if isinstance(content, dict):
+                content = json.dumps(content)
+            state.pop("pending_tool", None)
+            return {"messages": [AIMessage(content=content)]}
+        except (ValueError, ValidationError) as e:
+            error_msg = f"LLM Error: {str(e)}"
+            state.setdefault("errors", []).append(error_msg)
+            return {"messages": [AIMessage(content=error_msg)]}
 
+
+# --------------------------
+# LLM Orchestrator
+# --------------------------
 class LLMOrchestrator:
     # Define a concrete system prompt template
     SYSTEM_PROMPT = \
@@ -275,6 +243,17 @@ class ToolExecutor:
     def execute(self, state: AgentState) -> Dict:
         tool_call = state.get("pending_tool")
         if not tool_call:
+            last_message = state.get("messages", [])[-1] if state.get("messages") else None
+            if isinstance(last_message, AIMessage):
+                fn_call = last_message.additional_kwargs.get("function_call")
+                if fn_call:
+                    tool_call = {
+                        "name": fn_call.get("name"),
+                        "arguments": fn_call.get("arguments"),
+                    }
+                    state["pending_tool"] = tool_call
+
+        if not tool_call:
             return self._handle_error("Missing tool call", state)
         
         tool_name = tool_call.get("name")
@@ -284,9 +263,11 @@ class ToolExecutor:
         try:
             result = self._run_tool(tool_name, tool_call["arguments"])
             self._update_metrics(tool_name, success=True)
+            state.pop("pending_tool", None)
             return self._format_result(result, tool_name, state)
         except Exception as e:
             self._update_metrics(tool_name, success=False)
+            state.pop("pending_tool", None)
             return self._handle_error(str(e), state, tool_name)
     
     def _handle_error(self, error_msg: str, state: AgentState, tool_name: str = None) -> Dict:
@@ -374,6 +355,7 @@ class AgentOrchestrator:
     def __init__(self):
         # Initialize clients and components
         self.llm = LLMClient(host="llm_service", port=50051)
+        self.cpp_llm = CppLLMClient()
         self.chroma = ChromaClient()
         self.tool_client = ToolClient()
         
@@ -400,6 +382,16 @@ class AgentOrchestrator:
             "math_solver",
             self._math_solver,
             "Solve complex math equations"
+        )
+        registry.register(
+            "cpp_llm_inference",
+            self._cpp_llm_inference,
+            "Low-latency deterministic inference via native C++ microservice"
+        )
+        registry.register(
+            "schedule_meeting",
+            self._schedule_meeting,
+            "Schedule calendar events via native C++ adapter (requires person, start_time_iso8601, duration_minutes)"
         )
         return registry
     
@@ -466,6 +458,87 @@ class AgentOrchestrator:
             return self.tool_client.math_solver(expression)
         except Exception as e:
             return {"error": str(e)}
+
+    def _cpp_llm_inference(self, prompt: str, return_intent: bool = True) -> Dict[str, str]:
+        start_time = time.time()
+        result = self.cpp_llm.run_inference(prompt)
+        duration = time.time() - start_time
+        logger.info(
+            "cpp-llm tool executed",
+            extra={
+                "prompt": prompt,
+                "duration_ms": int(duration * 1000),
+                "intent_payload": result.get("intent_payload"),
+            }
+        )
+
+        # Update rolling average response time for observability
+        call_count = max(self.metrics.llm_calls, 1)
+        self.metrics.avg_response_time = (
+            (self.metrics.avg_response_time * (call_count - 1)) + duration
+        ) / call_count
+
+        if return_intent:
+            return result
+
+        return {
+            "output": result.get("output", ""),
+            "intent_payload": result.get("intent_payload", ""),
+        }
+
+    def _schedule_meeting(
+        self,
+        *,
+        person: str,
+        start_time_iso8601: str,
+        duration_minutes: int | str = 30,
+    ) -> Dict[str, object]:
+        """Bridge tool that schedules a meeting through the native C++ adapter."""
+
+        if not person:
+            raise ValueError("person is required to schedule a meeting")
+        if not start_time_iso8601:
+            raise ValueError("start_time_iso8601 is required to schedule a meeting")
+
+        try:
+            minutes = int(duration_minutes)
+        except (TypeError, ValueError):
+            raise ValueError("duration_minutes must be an integer") from None
+
+        logger.info(
+            "schedule_meeting tool invoked",
+            extra={
+                "person": person,
+                "start_time_iso8601": start_time_iso8601,
+                "duration_minutes": minutes,
+            },
+        )
+
+        result = self.cpp_llm.trigger_schedule_meeting(
+            person=person,
+            start_time_iso8601=start_time_iso8601,
+            duration_minutes=minutes,
+        )
+
+        if not result.get("success"):
+            message = result.get("message") or "Failed to schedule meeting"
+            logger.error("schedule_meeting tool failed", extra={"error": message})
+            raise RuntimeError(message)
+
+        payload = {
+            "status": "scheduled",
+            "message": result.get("message") or "Meeting scheduled successfully",
+            "event_identifier": result.get("event_identifier", ""),
+            "person": person,
+            "start_time_iso8601": start_time_iso8601,
+            "duration_minutes": minutes,
+        }
+
+        logger.info(
+            "schedule_meeting tool succeeded",
+            extra={"event_identifier": payload["event_identifier"]},
+        )
+        return payload
 
 def format_messages_to_prompt(messages: List[BaseMessage]) -> str:
     """Formats a list of LangChain messages into a simple string prompt."""
@@ -597,22 +670,6 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             llm_calls=metrics_data.llm_calls,
             avg_response_time=metrics_data.avg_response_time
         )
-
-# --------------------------
-# Enhanced Error Handling
-# --------------------------
-class ErrorHandler:
-    @staticmethod
-    def handle_llm_error(state: AgentState, error: Exception) -> Dict:
-        error_msg = f"LLM Error: {str(error)}"
-        state["errors"].append(error_msg)
-        return {"messages": [AIMessage(content=error_msg)]}
-
-    @staticmethod
-    def handle_tool_error(state: AgentState, tool_name: str, error: str) -> Dict:
-        error_msg = f"Tool Error ({tool_name}): {error}"
-        state["errors"].append(error_msg)
-        return {"messages": [FunctionMessage(content=error_msg, name=tool_name)]}
 
 # --------------------------
 # Server Setup

@@ -1,6 +1,6 @@
 from .base_client import BaseClient
-import chroma_pb2
-import chroma_pb2_grpc
+from chroma_service import chroma_pb2
+from chroma_service import chroma_pb2_grpc
 import grpc
 from google.protobuf.struct_pb2 import Struct
 

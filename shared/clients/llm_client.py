@@ -2,8 +2,8 @@ import grpc
 import logging
 from typing import Iterator, Optional
 from .base_client import BaseClient
-import llm_pb2
-import llm_pb2_grpc
+from llm_service import llm_pb2
+from llm_service import llm_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +33,25 @@ class LLMClient(BaseClient):
             logger.error(f"Generation failed: {e.code().name}")
             return f"LLM Service Error: {e.details()}"
 
-    def generate_stream(self, prompt: str, max_tokens: int = 512) -> Iterator[str]:
-        """Streaming response with timeout protection"""
+    def generate_stream(self, prompt: str, max_tokens: int = 512, *, temperature: float = 0.7) -> Iterator[llm_pb2.GenerateResponse]:
+        """Yield streaming `GenerateResponse` messages for real-time consumption."""
+
+        request = llm_pb2.GenerateRequest(
+            prompt=prompt,
+            max_tokens=min(max_tokens, 2048),
+            temperature=temperature,
+        )
+
         try:
-            responses = self.stub.Generate(
-                llm_pb2.GenerationRequest(
-                    prompt=prompt,
-                    max_tokens=min(max_tokens, 2048)
-                ),
-                timeout=self._stream_timeout
-            )
-            
+            responses = self.stub.Generate(request, timeout=self._stream_timeout)
             for response in responses:
-                yield response.token
-                
-        except grpc.RpcError as e:
-            logger.error(f"Stream generation failed: {e.code().name}")
-            yield f"Stream Error: {e.details()}"
+                yield response
+
+        except grpc.RpcError as exc:
+            logger.error("Stream generation failed", extra={"code": exc.code().name, "details": exc.details()})
+            error = llm_pb2.GenerateResponse(
+                token=f"Stream Error: {exc.details()}",
+                is_final=True,
+                is_valid_json=False,
+            )
+            yield error

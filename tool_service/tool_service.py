@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from sympy import sympify, SympifyError
 import grpc
 from grpc_reflection.v1alpha import reflection
@@ -8,8 +9,8 @@ from concurrent import futures
 import requests
 from dotenv import load_dotenv
 
-import tool_pb2
-import tool_pb2_grpc
+from . import tool_pb2
+from . import tool_pb2_grpc
 
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 

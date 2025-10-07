@@ -6,8 +6,8 @@ import json
 from json.decoder import JSONDecodeError
 
 from llama_cpp import Llama
-import llm_pb2
-import llm_pb2_grpc
+from . import llm_pb2
+from . import llm_pb2_grpc
 
 from grpc_reflection.v1alpha import reflection
 from functools import lru_cache
