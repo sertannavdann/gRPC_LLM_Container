@@ -60,3 +60,6 @@ llm_service/models/
 **/*_pb2.py
 **/*_pb2.pyi
 **/*_pb2_grpc.py
+# SQLite databases
+*.sqlite
+*.sqlite3

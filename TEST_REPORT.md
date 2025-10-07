@@ -134,7 +134,6 @@ testing_tool/tests/
 
 ### Run All Tests (without Docker dependencies)
 ```bash
-PYTHONPATH=/Users/sertanavdan/Documents/Software/AI/gRPC_llm:$PYTHONPATH \
 python -m pytest testing_tool/tests/ -v \
 --ignore=testing_tool/tests/test_e2e.py
 ```
@@ -143,7 +142,6 @@ python -m pytest testing_tool/tests/ -v \
 
 ### Run Only Mock Tests (Fastest)
 ```bash
-PYTHONPATH=/Users/sertanavdan/Documents/Software/AI/gRPC_llm:$PYTHONPATH \
 python -m pytest testing_tool/tests/test_agent_mock_flow.py -v
 ```
 
@@ -151,7 +149,6 @@ python -m pytest testing_tool/tests/test_agent_mock_flow.py -v
 
 ### Run Only Modular Tests
 ```bash
-PYTHONPATH=/Users/sertanavdan/Documents/Software/AI/gRPC_llm:$PYTHONPATH \
 python -m pytest testing_tool/tests/test_services_modular.py -v
 ```
 

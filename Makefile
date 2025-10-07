@@ -1,6 +1,8 @@
 # Environment setup
 PROTO_DIR := shared/proto
 SERVICES := agent_service chroma_service llm_service tool_service
+# Docker command - use full path if not in conda PATH
+DOCKER_CMD := $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
 
 # Build automation
 .PHONY: all proto-gen build up down clean
@@ -30,24 +32,24 @@ proto-gen:
 
 build:
 	@echo "Building Docker containers..."
-	docker-compose build --parallel
+	$(DOCKER_CMD) compose build --parallel
 	@echo "Build complete"
 
 up:
 	@echo "Starting services..."
-	docker-compose up --detach
+	$(DOCKER_CMD) compose up --detach
 
 down:
 	@echo "Stopping services..."
-	docker-compose down
+	$(DOCKER_CMD) compose down
 
 logs:
-	docker-compose logs -f
+	$(DOCKER_CMD) compose logs -f
 
 clean:
 	@echo "Cleaning generated files..."
 	@find . -name "*_pb2*.py" -delete
-	@docker-compose down --volumes --rmi local
+	@$(DOCKER_CMD) compose down --volumes --rmi local
 	@echo "Clean complete"
 
 health-check:
