@@ -15,6 +15,8 @@ proto-gen:
 			--python_out=$$service \
 			--grpc_python_out=$$service \
 			$(PROTO_DIR)/$$(echo $$service | cut -d'_' -f1).proto; \
+		echo "Fixing imports in $$service/*_pb2_grpc.py..."; \
+		sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' $$service/*_pb2_grpc.py; \
 	done
 	@mkdir -p shared/generated
 	@python -m grpc_tools.protoc \
@@ -22,6 +24,8 @@ proto-gen:
 		--python_out=shared/generated \
 		--grpc_python_out=shared/generated \
 		$(PROTO_DIR)/cpp_llm.proto
+	@echo "Fixing imports in shared/generated/*_pb2_grpc.py..."
+	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' shared/generated/*_pb2_grpc.py
 	@echo "Protobuf generation complete"
 
 build:
