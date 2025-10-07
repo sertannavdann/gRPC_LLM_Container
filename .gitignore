@@ -27,6 +27,9 @@ dist/
 *.sqlite3
 *.db
 
+# ChromaDB data files
+chroma_service/data/
+
 # Logs
 *.log
 
