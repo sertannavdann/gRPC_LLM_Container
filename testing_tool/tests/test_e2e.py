@@ -4,7 +4,7 @@ import subprocess
 import time
 import pytest
 import grpc
-import agent_pb2, agent_pb2_grpc
+from agent_service import agent_pb2, agent_pb2_grpc
 
 def test_full_system():
     try:
