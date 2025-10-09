@@ -15,6 +15,11 @@
 - [03_APPLE_INTEGRATION.md](./03_APPLE_INTEGRATION.md) - Native macOS/iOS integration
 - [04_N8N_INTEGRATION.md](./04_N8N_INTEGRATION.md) - Workflow automation
 
+**Planning to modernize?** Read:
+- [07_QUICK_START_MODERNIZATION.md](./07_QUICK_START_MODERNIZATION.md) - ADK-style migration guide
+- [06_MODERNIZATION_STRATEGY.md](./06_MODERNIZATION_STRATEGY.md) - Full technical strategy
+- [08_ARCHITECTURE_EVOLUTION.md](./08_ARCHITECTURE_EVOLUTION.md) - Visual diagrams
+
 ## Documentation Structure
 
 ### [00_OVERVIEW.md](./00_OVERVIEW.md)
@@ -242,6 +247,67 @@
 - [App Intents Documentation](https://developer.apple.com/documentation/appintents)
 
 ## Documentation Maintenance
+
+**Key Sections**:
+- Mock client patterns: Lines 45-120
+- Integration test setup: Lines 180-240
+
+---
+
+### [06_MODERNIZATION_STRATEGY.md](./06_MODERNIZATION_STRATEGY.md)
+**Purpose**: Complete technical strategy for evolving to ADK-style patterns
+
+**Topics Covered**:
+- Google ADK learnings and function tool patterns
+- LocalToolRegistry with schema extraction
+- LangChain/CrewAI tool wrappers
+- Agent-as-Tool pattern implementation
+- MCP integration for interoperability
+- iOS optimizations (CoreML, Swift framework)
+- Grafana-inspired telemetry
+- 10-week phased migration roadmap
+
+**Audience**: Architects, senior developers
+
+**Reading Time**: 60 minutes
+
+---
+
+### [07_QUICK_START_MODERNIZATION.md](./07_QUICK_START_MODERNIZATION.md)
+**Purpose**: Fast-track guide for developers starting modernization
+
+**Topics Covered**:
+- Before/after code comparisons
+- Implementation priority and phases
+- Migration path with examples
+- Adding new tools step-by-step
+- Benefits comparison table
+- FAQ and common concerns
+
+**Audience**: Developers ready to code
+
+**Reading Time**: 15 minutes
+
+---
+
+### [08_ARCHITECTURE_EVOLUTION.md](./08_ARCHITECTURE_EVOLUTION.md)
+**Purpose**: Visual diagrams showing system evolution
+
+**Topics Covered**:
+- Current vs target architecture diagrams
+- Tool creation workflow comparison
+- Agent-as-Tool visual explanation
+- iOS deployment flows
+- MCP integration visualization
+- Cost comparison (local vs cloud)
+
+**Audience**: Everyone - visual learners, stakeholders
+
+**Reading Time**: 10 minutes
+
+---
+
+## Quick Reference
 
 ### When to Update
 

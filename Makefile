@@ -1,6 +1,6 @@
 # Environment setup
 PROTO_DIR := shared/proto
-SERVICES := agent_service chroma_service llm_service tool_service
+SERVICES := agent_service chroma_service llm_service
 # Docker command - use full path if not in conda PATH
 DOCKER_CMD := $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
 
@@ -54,7 +54,7 @@ clean:
 
 health-check:
 	@echo "Service Health Status:"
-	@for port in 50051 50052 50053 50054; do \
+	@for port in 50051 50052 50054; do \
 		grpc_health_probe -addr=localhost:$$port -connect-timeout=2s && \
 		echo "Port $$port: Healthy" || echo "Port $$port: Unhealthy"; \
 	done

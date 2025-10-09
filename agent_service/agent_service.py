@@ -26,7 +26,8 @@ from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 from shared.clients.llm_client import LLMClient
 from shared.clients.cpp_llm_client import CppLLMClient
 from shared.clients.chroma_client import ChromaClient
-from shared.clients.tool_client import ToolClient
+# NOTE: ToolClient deprecated - will be replaced with function tools in Phase 2
+# from shared.clients.tool_client import ToolClient
 import os
 from pathlib import Path
 
@@ -357,7 +358,8 @@ class AgentOrchestrator:
         self.llm = LLMClient(host="llm_service", port=50051)
         self.cpp_llm = CppLLMClient()
         self.chroma = ChromaClient()
-        self.tool_client = ToolClient()
+        # TODO: ToolClient deprecated - will be replaced with function tools in Phase 2
+        # self.tool_client = ToolClient()
         
         # Initialize tool registry and metrics
         self.metrics = AgentMetrics()
@@ -443,21 +445,14 @@ class AgentOrchestrator:
         return self.llm_orchestrator.generate_response(state)
     
     def _web_search(self, query: str) -> List[dict]:
-        try:
-            results = self.tool_client.web_search(query)
-            if not isinstance(results, list):
-                logger.warning(f"Web search tool returned unexpected type: {type(results)}")
-                return [{"error": "Web search returned unexpected data format."}]
-            return results
-        except Exception as e:
-            logger.exception(f"Web search tool failed: {str(e)}")
-            return [{"error": f"Web search tool failed: {str(e)}"}]
+        # TODO: Replace with agent_service.tools.web.vertex_search() in Phase 2
+        logger.warning("web_search tool is deprecated and will be replaced")
+        return [{"error": "web_search tool temporarily disabled during refactoring"}]
     
     def _math_solver(self, expression: str) -> float:
-        try:
-            return self.tool_client.math_solver(expression)
-        except Exception as e:
-            return {"error": str(e)}
+        # TODO: Replace with agent_service.tools.math.solve_math() in Phase 2
+        logger.warning("math_solver tool is deprecated and will be replaced")
+        return 0.0  # Placeholder return
 
     def _cpp_llm_inference(self, prompt: str, return_intent: bool = True) -> Dict[str, str]:
         start_time = time.time()
