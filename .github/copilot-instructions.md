@@ -1,19 +1,28 @@
 # gRPC LLM Container - AI Agent Instructions
 
-## Architecture Philosophy
+## Architecture Overview (Phase 1 Restructure)
 
-**Agent-as-Denominator**: The `agent_service` (port 50054) is the orchestrator for all operations. External systems interface only with the agent, which routes to specialized microservices via gRPC. Circuit breakers, retries, and context management happen centrally in the agent.
+This system provides **local LLM inference** with microservices orchestration, following **Google ADK**, **LangGraph**, and **Model Context Protocol (MCP)** patterns.
 
-## Service Communication Pattern
+### Dual Architecture (Transition Period)
+**NEW: Core Framework** (`core/` + `tools/`):
+- Type-safe agent workflows (LangGraph StateGraph)
+- ADK-style function tools with decorators
+- Circuit breakers and SQLite checkpointing
+- MCP integration for cross-system tool sharing
 
-Services communicate via gRPC with health checks and reflection enabled:
-- **LLM Service** (50051): Local llama.cpp inference with Metal acceleration, streaming responses
-- **Chroma Service** (50052): Vector embeddings and semantic search
-- **Tool Service** (50053): Web search (Serper API) and math solver
-- **Agent Service** (50054): LangGraph orchestration with SQLite checkpointing
-- **CppLLM Bridge** (50055): Native macOS/iOS EventKit/Contacts integration
+**LEGACY: gRPC Services** (backward compatible):
+- `agent_service/` (port 50054): LangGraph orchestrator
+- `llm_service/` (port 50051): llama.cpp local inference
+- `chroma_service/` (port 50052): Vector embeddings
+- `external/CppLLM/` (port 50055): Native macOS/iOS integration
 
-All clients inherit from `shared/clients/base_client.py` which manages channel pooling. Docker services use container names as hostnames (e.g., `llm_service:50051`).
+**Key Principle**: Agent-as-denominator pattern—`agent_service` orchestrates all operations via gRPC or direct function calls.
+
+### Service Communication
+- **Docker**: Use container names as hostnames (`llm_service:50051`)
+- **Local dev**: Use `localhost:50051` or `host.docker.internal`
+- All clients inherit from `shared/clients/base_client.py` with retry logic and channel pooling
 
 ## Development Workflows
 
@@ -37,28 +46,43 @@ conda run -n llm python -m testing_tool.mock_agent_flow
 ```
 Uses mock clients to validate agent workflow logic without Docker stack. See `testing_tool/mock_agent_flow.py` for stubbing patterns.
 
-## Critical Agent Service Patterns
+## Core Framework Patterns (Phase 1A - NEW)
 
-### Circuit Breaker Implementation
-Tools fail after 3 consecutive errors (`ToolRegistry.record_failure`). Check `configs[name].circuit_breaker` before routing. Reset manually via `reset_circuit_breaker(tool_name)`.
-
-### LangGraph Workflow State
-`AgentState` (TypedDict in `agent_service.py`) flows through:
-1. `route_to_llm`: Generates response or function call
-2. `route_to_tool`: Executes tool if function_call present
-3. `summarize`: Final response assembly
-
-SQLite checkpointing enables conversation continuity via `SqliteSaver` in `WorkflowBuilder`.
-
-### Tool Registration Pattern
+### State Management (`core/state.py`)
+Type-safe `AgentState` with Annotated reducers:
 ```python
-registry.register(
-    name="web_search",
-    func=tool_client.call_tool,
-    description="Search the web..."
-)
+from langgraph.graph import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]  # Auto-dedup
+    tool_results: list[dict]  # [{tool_name, result, timestamp, latency_ms}]
+    next_action: Literal["llm", "tools", "validate", "end"]  # Routing
 ```
-Tools are callable wrappers around client methods. Available tools list excludes circuit-broken entries.
+
+### LangGraph Workflow (`core/graph.py`)
+Graph flow: `START → llm_node → [tools_node] → validate_node → [END | loop to llm]`
+- Context window limiting prevents token overflow
+- Parallel tool execution (max `config.max_tool_calls_per_turn`)
+- Iteration control prevents infinite loops
+
+### Circuit Breaker (`tools/circuit_breaker.py`)
+Three-state pattern (CLOSED → OPEN → HALF_OPEN):
+```python
+breaker = CircuitBreaker(max_failures=3, failure_window=timedelta(minutes=5))
+if breaker.is_available():
+    result = tool(**args)
+    breaker.record_success()  # Reset on success
+```
+Opens after 3 failures in 5 minutes, enters HALF_OPEN after 1 minute for testing.
+
+### Tool Registration (ADK Pattern)
+**NEW** (`tools/registry.py`):
+```python
+@registry.register
+def web_search(query: str) -> dict:
+    """Search the web. Args: query (str): Search string. Returns: {"status": "success", "results": [...]}"""
+```
+Auto-extracts OpenAI schema from docstrings. **LEGACY** (`agent_service/agent_service.py`): gRPC stub wrappers.
 
 ## LLM Service Specifics
 
@@ -77,31 +101,64 @@ Client usage: `CppLLMClient(host="localhost", port=50055)` in non-containerized 
 
 ## Environment Variables
 
-- `SERPER_API_KEY`: Required for tool_service web search (free tier at serper.dev)
-- `.env` file auto-loaded by `tool_service` only
+**Agent Configuration**:
+- `AGENT_MAX_ITERATIONS=5` - Max tool→LLM cycles before termination
+- `AGENT_TEMPERATURE=0.7` - LLM sampling temperature (0.0-2.0)
+- `AGENT_ENABLE_STREAMING=true` - Token-by-token streaming
+- `AGENT_CONTEXT_WINDOW=3` - Recent messages to include in LLM context
+
+**Local LLM**:
+- `LLM_MODEL_PATH` - Path to GGUF model (default: `inference/models/qwen2.5-0.5b-instruct-q5_k_m.gguf`)
+- `LLM_N_CTX=2048` - Context window size
+- `LLM_N_THREADS=4` - CPU threads for inference
+- `LLM_N_GPU_LAYERS=0` - Layers to offload to Metal GPU (Apple Silicon)
+
+**API Keys**:
+- `SERPER_API_KEY` - Web search (free tier at serper.dev)
+- `GOOGLE_MAPS_API_KEY` - For MCP Google Maps integration
 
 ## Common Pitfalls
 
 1. **Import errors after proto-gen**: Run `make proto-gen` to fix relative imports in `*_grpc.py` files
-2. **Circuit breaker tripped**: Check `agent_service` logs for failure counts; reset via orchestrator method
-3. **Docker host resolution**: Use `host.docker.internal` for host machine access from containers
-4. **Stream timeout**: LLM client uses 30s default; adjust `_stream_timeout` for longer generations
-5. **Context window overflow**: Agent limits to 3 recent messages (`context_window: int = 3` in WorkflowConfig)
+2. **Circuit breaker tripped**: Check `agent_service` logs for failure counts; reset via `breaker.reset()` or wait 1 min for HALF_OPEN
+3. **Docker host resolution**: Use `host.docker.internal` from containers to access host services
+4. **Context window overflow**: Set `AGENT_CONTEXT_WINDOW` lower if hitting token limits (default: 3 messages)
+5. **Type errors in Phase 1**: Minor Literal mismatches in `core/graph.py:174` are non-blocking (runtime works)
+6. **Mixing old/new tools**: Don't register same tool in both `agent_service/agent_service.py` AND `tools/registry.py`
+7. **MCP timeout**: MCPToolset connections default to 15s; increase via `connection_params.timeout` for slow servers
 
 ## Key Files for Modification
 
-- **Add new tool**: Register in `agent_service/agent_service.py` `AgentOrchestrator.__init__`, implement in `tool_service/tool_service.py`
-- **Change LLM behavior**: Modify `llm_service/llm_service.py` generation config or grammar
-- **Adjust agent routing**: Edit `WorkflowBuilder` graph nodes in `agent_service.py`
-- **Update protocols**: Edit `.proto` files in `shared/proto/`, then `make proto-gen`
+**Phase 1 (NEW Framework)**:
+- **Add tool**: Create in `tools/builtin/` with `@registry.register` decorator, follows ADK patterns
+- **Agent workflow**: Edit `core/graph.py` nodes (`_llm_node`, `_tools_node`, `_validate_node`)
+- **Configuration**: Update `.env` or `core/config.py` for environment-based settings
+- **State management**: Modify `core/state.py` TypedDict (impacts graph compatibility)
+
+**Legacy (gRPC Services)**:
+- **Add gRPC tool**: Register in `agent_service/agent_service.py`, implement in `tool_service/tool_service.py`
+- **LLM behavior**: Modify `llm_service/llm_service.py` (generation config, grammar)
+- **Update protocols**: Edit `.proto` in `shared/proto/`, run `make proto-gen`
 
 ## Documentation Map
 
-- `docs/00_OVERVIEW.md`: Architecture philosophy
-- `docs/01_ARCHITECTURE.md`: Component diagrams and data flows
-- `docs/02_AGENT_SERVICE.md`: LangGraph workflow details
-- `docs/03_APPLE_INTEGRATION.md`: C++ bridge and native APIs
-- `docs/05_TESTING.md`: Test harness patterns
+**Phase 1 (NEW)**:
+- `PHASE_1_RESTRUCTURE_PLAN.md` - Complete architecture with directory structure
+- `PHASE_1_ARCHITECTURE_VISUAL.md` - Visual diagrams and flow charts
+- `PHASE_1_QUICK_REFERENCE.md` - Quick start with examples
+- `core/`, `tools/` modules - Inline docstrings follow Google style
+
+**Architecture**:
+- `docs/00_OVERVIEW.md` - System philosophy and design decisions
+- `docs/01_ARCHITECTURE.md` - Component diagrams and data flows
+- `docs/02_AGENT_SERVICE.md` - LangGraph workflow (legacy + new)
+- `docs/06_MODERNIZATION_STRATEGY.md` - ADK/MCP migration strategy
+- `docs/08_ARCHITECTURE_EVOLUTION.md` - Historical context
+
+**Integration**:
+- `docs/03_APPLE_INTEGRATION.md` - C++ bridge for iOS/macOS (EventKit, Contacts)
+- `docs/04_N8N_INTEGRATION.md` - Visual workflow engine patterns
+- `docs/05_TESTING.md` - Test harness and mock patterns
 
 ## Local Inference for iOS
 
@@ -111,35 +168,36 @@ This system uses **llama.cpp** for free local inference instead of cloud APIs. F
 - The microservices can run on-device with local gRPC channels (no Docker)
 - Agent orchestration logic remains identical across cloud/edge deployments
 
-## Modernization Direction (ADK-Inspired)
+## Phase 1 Modernization (In Progress)
 
-The project is evolving toward Google ADK/LangChain patterns while maintaining local inference:
+**Phase 1A** ✅ - Core framework complete:
+- `core/state.py`, `core/graph.py`, `core/checkpointing.py`, `core/config.py`
+- `tools/base.py`, `tools/circuit_breaker.py`
 
-### Function Tools Pattern
-Tools should be Python functions with structured docstrings (not just gRPC stubs):
+**Phase 1B** 🔴 - Tool system (next):
+- Complete `tools/registry.py` with `@tool` decorator
+- Built-in tools: `tools/builtin/{web_search,math_solver,web_loader}.py`
+- Unit tests with 80% coverage target
+
+**Phase 1C** 🔴 - MCP integration:
+- `tools/mcp/client.py` - MCPToolset for external MCP servers (Google Maps example)
+- `tools/mcp/server.py` - Expose ADK tools as MCP server (port 50056)
+- Follows Google ADK lab patterns with StdioConnectionParams
+
+**Phase 1D** 🔴 - Observability:
+- Prometheus metrics in `monitoring/metrics.py`
+- Grafana dashboards (http://localhost:3000)
+- OpenTelemetry tracing
+
+### MCP Integration Pattern
 ```python
-def tool_name(param: str) -> Dict[str, Any]:
-    """Tool description.
-    
-    Args:
-        param (str): Parameter description
-    
-    Returns:
-        Dict with "status" key: {"status": "success", "data": ...}
-    """
+# Use external MCP server
+from tools.mcp import MCPToolset, StdioConnectionParams
+maps = MCPToolset(connection_params=StdioConnectionParams(
+    server_params=StdioServerParameters(command='npx', args=["-y", "@modelcontextprotocol/server-google-maps"]),
+    timeout=15
+))
+registry.register_mcp_toolset(maps)
 ```
 
-### Tool Registry
-New `LocalToolRegistry` in `agent_service/tools/registry.py` supports:
-- Python function tools (ADK-style)
-- LangChain tool wrappers
-- CrewAI tool wrappers
-- Automatic schema extraction from docstrings
-
-### Agent-as-Tool Pattern
-Specialized agents can be used as tools in root orchestrator to solve "mixing search and non-search tools" limitation.
-
-### MCP Integration (Future)
-Port 50056 will expose tools via Model Context Protocol for cross-system agent interoperability.
-
-See `docs/06_MODERNIZATION_STRATEGY.md` for complete migration plan.
+See `PHASE_1_RESTRUCTURE_PLAN.md` and `docs/06_MODERNIZATION_STRATEGY.md` for details.
