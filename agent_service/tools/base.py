@@ -1,5 +1,16 @@
 """
-Base classes and types for the modern tool system.
+Base classes and protocols for the tool system.
+
+.. deprecated:: Phase 1B
+   This module is DEPRECATED. Use the canonical implementation at the root level:
+   ``tools/base.py`` instead. This duplicate will be removed in Phase 2.
+   
+   Migration:
+       OLD: from agent_service.tools.base import BaseTool, ToolResult
+       NEW: from tools.base import BaseTool, ToolResult
+
+Defines the contract for tool implementations and standardized
+result/error formats.
 """
 
 from typing import Dict, Any

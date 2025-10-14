@@ -66,7 +66,19 @@ class WorkflowConfig(BaseModel):
 # Core Components
 # --------------------------
 class ToolRegistry:
+    """
+    Legacy tool registry.
+    
+    .. deprecated:: Phase 1B
+        This class is DEPRECATED and will be removed in Phase 2.
+        Use ``tools.registry.LocalToolRegistry`` instead.
+        
+        Migration:
+            OLD: registry = ToolRegistry()
+            NEW: from tools.registry import registry (singleton instance)
+    """
     def __init__(self):
+        logger.warning("ToolRegistry is deprecated. Use tools.registry.LocalToolRegistry instead.")
         self.tools: Dict[str, callable] = {}
         self.configs: Dict[str, ToolConfig] = {}
     
@@ -98,9 +110,23 @@ class ToolRegistry:
             self.configs[tool_name].failure_count = 0
 
 class WorkflowBuilder:
+    """
+    Legacy workflow builder.
+    
+    .. deprecated:: Phase 1B
+        This class is DEPRECATED and will be removed in Phase 2.
+        Use ``core.graph.AgentWorkflow`` instead.
+        
+        Migration:
+            OLD: builder = WorkflowBuilder(memory)
+                 workflow = builder.build(agent_node, tool_node)
+            NEW: from core.graph import AgentWorkflow
+                 workflow = AgentWorkflow.create(registry, llm_engine, config, checkpointer)
+    """
 # Orchestrates the sequential execution steps of an agent system, 
 # Determining when to use tools and when to terminate processing
     def __init__(self, memory: SqliteSaver):
+        logger.warning("WorkflowBuilder is deprecated. Use core.graph.AgentWorkflow instead.")
         self.graph = StateGraph(AgentState)
         self.memory = memory
     
@@ -126,7 +152,18 @@ class WorkflowBuilder:
         return END
 
 class ResponseValidator:
+    """
+    Legacy response validator.
+    
+    .. deprecated:: Phase 1B
+        This class is DEPRECATED and will be removed in Phase 2.
+        Validation logic is now built into ``core.graph._validate_node()``.
+    """
     def process_response(self, response: str, state: AgentState) -> Dict:
+        logger.warning("ResponseValidator is deprecated. Validation is built into core.graph.")
+        return self._process_response_impl(response, state)
+    
+    def _process_response_impl(self, response: str, state: AgentState) -> Dict:
         try:
             parsed = json.loads(response) if isinstance(response, str) else response
             # Centralized check for tool/function calls:

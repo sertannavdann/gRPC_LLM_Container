@@ -1,6 +1,14 @@
 """
 LocalToolRegistry - ADK-style tool registration with automatic schema extraction.
 
+.. deprecated:: Phase 1B
+   This module is DEPRECATED. Use the canonical implementation at the root level:
+   ``tools/registry.py`` instead. This duplicate will be removed in Phase 2.
+   
+   Migration:
+       OLD: from agent_service.tools.registry import LocalToolRegistry
+       NEW: from tools.registry import LocalToolRegistry
+
 This registry manages Python functions as tools, extracting schemas from
 docstrings and type hints following Google ADK best practices.
 """

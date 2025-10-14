@@ -66,8 +66,11 @@ class CheckpointManager:
             >>> app.invoke(state, config={"thread_id": "conv-123"})
         """
         # SqliteSaver.from_conn_string returns a context manager
-        # We return it directly for use with the compiled graph
-        checkpointer = SqliteSaver.from_conn_string(str(self.db_path))
+        # We use __enter__ to get the actual SqliteSaver instance
+        context_manager = SqliteSaver.from_conn_string(str(self.db_path))
+        checkpointer = context_manager.__enter__()
+        # Initialize database tables
+        checkpointer.setup()
         logger.debug(f"Created checkpointer for {self.db_path}")
         return checkpointer
     

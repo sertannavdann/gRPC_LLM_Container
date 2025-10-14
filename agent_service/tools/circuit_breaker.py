@@ -1,6 +1,14 @@
 """
 Production-grade circuit breaker implementation following Google ADK patterns.
 
+.. deprecated:: Phase 1B
+   This module is DEPRECATED. Use the canonical implementation at the root level:
+   ``tools/circuit_breaker.py`` instead. This duplicate will be removed in Phase 2.
+   
+   Migration:
+       OLD: from agent_service.tools.circuit_breaker import CircuitBreaker
+       NEW: from tools.circuit_breaker import CircuitBreaker
+
 This module provides time-based circuit breakers with exponential backoff,
 half-open recovery, and configurable failure thresholds.
 """
