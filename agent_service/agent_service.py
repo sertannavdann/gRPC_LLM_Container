@@ -18,8 +18,13 @@ from pydantic import BaseModel, ValidationError
 from collections import defaultdict
 
 # Protobuf imports
-from . import agent_pb2
-from . import agent_pb2_grpc
+try:
+    from . import agent_pb2
+    from . import agent_pb2_grpc
+except ImportError:
+    import agent_pb2
+    import agent_pb2_grpc
+
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Local imports

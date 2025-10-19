@@ -21,11 +21,15 @@ proto-gen:
 		sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' $$service/*_pb2_grpc.py; \
 	done
 	@mkdir -p shared/generated
+	@echo "Generating shared protobuf stubs..."
 	@python -m grpc_tools.protoc \
 		-I$(PROTO_DIR) \
 		--python_out=shared/generated \
 		--grpc_python_out=shared/generated \
-		$(PROTO_DIR)/cpp_llm.proto
+		$(PROTO_DIR)/cpp_llm.proto \
+		$(PROTO_DIR)/llm.proto \
+		$(PROTO_DIR)/chroma.proto \
+		$(PROTO_DIR)/agent.proto
 	@echo "Fixing imports in shared/generated/*_pb2_grpc.py..."
 	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' shared/generated/*_pb2_grpc.py
 	@echo "Protobuf generation complete"

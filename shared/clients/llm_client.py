@@ -2,8 +2,22 @@ import grpc
 import logging
 from typing import Iterator, Optional
 from .base_client import BaseClient
-from llm_service import llm_pb2
-from llm_service import llm_pb2_grpc
+
+# Try local import first (when used as a service), fall back to shared/generated
+try:
+    from llm_service import llm_pb2
+    from llm_service import llm_pb2_grpc
+except ModuleNotFoundError:
+    try:
+        # Import from shared/generated when running in agent_service container
+        from shared.generated import llm_pb2, llm_pb2_grpc
+    except ModuleNotFoundError:
+        # Last resort: try relative import
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'generated'))
+        import llm_pb2
+        import llm_pb2_grpc
 
 logger = logging.getLogger(__name__)
 

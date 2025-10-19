@@ -6,13 +6,17 @@ import json
 from json.decoder import JSONDecodeError
 
 from llama_cpp import Llama
-from . import llm_pb2
-from . import llm_pb2_grpc
+
+try:
+    from . import llm_pb2
+    from . import llm_pb2_grpc
+except ImportError:
+    import llm_pb2
+    import llm_pb2_grpc
 
 from grpc_reflection.v1alpha import reflection
 from functools import lru_cache
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
-
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO

@@ -1,6 +1,21 @@
 from .base_client import BaseClient
-from chroma_service import chroma_pb2
-from chroma_service import chroma_pb2_grpc
+
+# Try local import first (when used as a service), fall back to shared/generated
+try:
+    from chroma_service import chroma_pb2
+    from chroma_service import chroma_pb2_grpc
+except ModuleNotFoundError:
+    try:
+        # Import from shared/generated when running in agent_service container
+        from shared.generated import chroma_pb2, chroma_pb2_grpc
+    except ModuleNotFoundError:
+        # Last resort: try relative import
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'generated'))
+        import chroma_pb2
+        import chroma_pb2_grpc
+
 import grpc
 from google.protobuf.struct_pb2 import Struct
 

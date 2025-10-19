@@ -11,16 +11,16 @@ COPY agent_service/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Shared components
+# Shared components (including pre-generated protobuf files)
 COPY shared/ ./shared/
-COPY shared/proto/ ./proto/
 
-# Generate protobuf stubs
+# Generate local protobuf stubs for agent service
+COPY shared/proto/ ./proto/
 RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=. \
     --grpc_python_out=. \
-    proto/*.proto
+    proto/agent.proto
 
 # Application code
 COPY agent_service/agent_service.py .
