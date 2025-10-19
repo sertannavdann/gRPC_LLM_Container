@@ -3,8 +3,8 @@ Unit tests for LocalToolRegistry - Stage 1
 """
 
 import pytest
-from agent_service.tools.registry import LocalToolRegistry
-from agent_service.tools.base import ToolResult, ToolError
+from tools.registry import LocalToolRegistry
+from tools.base import ToolResult, ToolError
 from typing import Dict, Any
 
 
