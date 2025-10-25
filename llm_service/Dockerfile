@@ -12,7 +12,7 @@ WORKDIR /app
 
 COPY llm_service/requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
 COPY shared/proto/llm.proto ./proto/
 

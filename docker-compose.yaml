@@ -57,5 +57,19 @@ services:
       timeout: 5s
       retries: 3
 
+  ui_service:
+    build:
+      context: .
+      dockerfile: ui_service/Dockerfile
+    container_name: ui_service
+    ports:
+      - "5001:5000"
+    depends_on:
+      - agent_service
+    environment:
+      - AGENT_SERVICE_ADDRESS=agent_service:50054
+    networks:
+      - rag_net
+
 networks:
   rag_net:
