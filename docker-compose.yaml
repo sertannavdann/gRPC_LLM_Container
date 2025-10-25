@@ -34,27 +34,6 @@ services:
       timeout: 5s
       retries: 3
 
-  tool_service:
-    build:
-      context: .
-      dockerfile: tool_service/Dockerfile
-    container_name: tool_service
-    ports:
-      - "50053:50053"
-    networks:
-      - rag_net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    env_file: 
-      - .env
-    environment:
-      - SERPER_API_KEY=${SERPER_API_KEY}
-    healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:50053"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   agent_service:
     build:
       context: .
@@ -65,7 +44,12 @@ services:
     depends_on:
       - llm_service
       - chroma_service
-      - tool_service
+    env_file:
+      - .env
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
     networks:
       - rag_net
     healthcheck:
@@ -73,6 +57,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  ui_service:
+    build:
+      context: .
+      dockerfile: ui_service/Dockerfile
+    container_name: ui_service
+    ports:
+      - "5001:5000"
+    depends_on:
+      - agent_service
+    environment:
+      - AGENT_SERVICE_ADDRESS=agent_service:50054
+    networks:
+      - rag_net
 
 networks:
   rag_net:

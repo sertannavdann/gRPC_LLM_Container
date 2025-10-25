@@ -9,21 +9,44 @@ RUN apt-get update && apt-get install -y protobuf-compiler && \
 # Python dependencies
 COPY agent_service/requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
-# Shared components
+# Shared components (including pre-generated protobuf files)
 COPY shared/ ./shared/
-COPY shared/proto/ ./proto/
+
+# Core framework components
+COPY core/ ./core/
+
+# Tools components
+COPY tools/ ./tools/
 
 # Generate protobuf stubs
+COPY shared/proto/ ./proto/
+
+# Generate agent service protobuf
 RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=. \
     --grpc_python_out=. \
-    proto/*.proto
+    proto/agent.proto
+
+# Generate shared protobufs for client imports
+RUN python -m grpc_tools.protoc \
+    -I ./proto \
+    --python_out=./shared/generated \
+    --grpc_python_out=./shared/generated \
+    proto/cpp_llm.proto \
+    proto/llm.proto \
+    proto/chroma.proto \
+    proto/agent.proto
+
+# Fix imports in generated gRPC files
+RUN find ./shared/generated -name "*_pb2_grpc.py" -type f -exec sed -i 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' {} \;
 
 # Application code
 COPY agent_service/agent_service.py .
+COPY agent_service/adapter.py .
+COPY agent_service/llm_wrapper.py .
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 

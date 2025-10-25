@@ -1,58 +1,65 @@
+"""
+DEPRECATED: This client is marked for removal in Stage 4.
+Use agent_service.tools.web.vertex_search() instead.
+
+Legacy tool_service has been removed. This client is kept temporarily
+for backward compatibility with existing tests.
+"""
+import warnings
 import grpc
 import logging
 from google.protobuf.struct_pb2 import Struct
 from .base_client import BaseClient
-from tool_service import tool_pb2
-from tool_service import tool_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-class ToolClient(BaseClient):
-    def __init__(self):
-        super().__init__("tool_service", 50053)
-        self.stub = tool_pb2_grpc.ToolServiceStub(self.channel)
 
-    @BaseClient.retry_decorator()
-    def call_tool(self, tool_name: str, params: dict) -> dict:
-        """Execute tool with structured parameters"""
-        try:
-            struct_params = Struct()
-            struct_params.update(params)
-            
-            response = self.stub.CallTool(
-                tool_pb2.ToolRequest(
-                    tool_name=tool_name,
-                    params=struct_params
-                )
+def deprecated(message):
+    """Decorator to mark functions as deprecated"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            warnings.warn(
+                f"{func.__name__} is deprecated. {message}",
+                category=DeprecationWarning,
+                stacklevel=2
             )
-            
-            return {
-                "success": response.success,
-                "message": response.message,
-                "results": [
-                    {
-                        "title": r.title,
-                        "url": r.url,
-                        "snippet": r.snippet
-                    } for r in response.results
-                ],
-                "metadata": dict(response.metadata)
-            }
-        except grpc.RpcError as e:
-            logger.error(f"Tool call failed: {e.code().name}")
-            return {
-                "success": False,
-                "message": f"RPC Error: {e.details()}",
-                "results": [],
-                "metadata": {}
-            }
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
-    def web_search(self, query: str, max_results: int = 5) -> list:
-        """Execute web search with structured results"""
-        response = self.call_tool(
-            "web_search",
-            {"query": query, "max_results": str(max_results)}
+
+class ToolClient(BaseClient):
+    """
+    DEPRECATED: Legacy tool service client.
+    
+    This class is maintained for backward compatibility only.
+    New code should use function tools in agent_service/tools/.
+    """
+    
+    @deprecated("Use agent_service.tools.web.vertex_search() instead")
+    def __init__(self):
+        warnings.warn(
+            "ToolClient is deprecated and will be removed in Stage 4. "
+            "Use function tools in agent_service/tools/ instead.",
+            DeprecationWarning,
+            stacklevel=2
         )
-        if response["success"]:
-            return response["results"]
-        return []
+        # Note: tool_service no longer exists, this will fail if called
+        # Kept for reference only
+        raise NotImplementedError(
+            "tool_service has been removed. Use agent_service.tools.web.vertex_search() instead."
+        )
+    
+    @deprecated("Use agent_service.tools.web.vertex_search() instead")
+    def call_tool(self, tool_name: str, params: dict) -> dict:
+        """DEPRECATED: Execute tool with structured parameters"""
+        raise NotImplementedError(
+            "tool_service has been removed. Use function tools instead."
+        )
+    
+    @deprecated("Use agent_service.tools.web.vertex_search() instead")
+    def web_search(self, query: str, max_results: int = 5) -> list:
+        """DEPRECATED: Execute web search with structured results"""
+        raise NotImplementedError(
+            "tool_service has been removed. Use agent_service.tools.web.vertex_search() instead."
+        )

@@ -1,0 +1,32 @@
+# Test Requirements for gRPC LLM Container
+# Install with: pip install -r requirements-test.txt
+
+# Core framework dependencies
+langchain>=0.1.0
+langchain-core>=0.1.0
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=0.1.0
+pydantic>=2.0.0
+
+# gRPC and Protocol Buffers
+grpcio>=1.62.1
+grpcio-tools>=1.62.1
+grpcio-reflection>=1.62.1
+grpcio-health-checking>=1.62.1
+protobuf>=4.25.3
+
+# Testing frameworks
+pytest>=8.1.1
+pytest-cov>=4.1.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
+
+# HTTP mocking for tool tests
+requests>=2.31.0
+responses>=0.24.0
+
+# Docker orchestration for integration tests
+docker>=7.0.0
+
+# Utilities
+python-dotenv>=1.0.0

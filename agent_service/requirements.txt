@@ -8,3 +8,5 @@ grpcio-health-checking
 langgraph-checkpoint-sqlite
 scikit-learn
 circuitbreaker
+python-dotenv
+requests
