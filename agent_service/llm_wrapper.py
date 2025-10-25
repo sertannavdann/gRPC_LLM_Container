@@ -134,15 +134,15 @@ class LLMClientWrapper:
         )
         
         try:
-            # Call gRPC service
-            response = self.client.generate(
+            # Call gRPC service - returns a string directly
+            response_text = self.client.generate(
                 prompt=prompt,
                 temperature=temp,
                 max_tokens=max_tok,
             )
             
-            # Extract text from response
-            content = response.get("text", "").strip()
+            # Extract text from response (it's already a string)
+            content = response_text.strip() if isinstance(response_text, str) else ""
             
             # Try to extract function calls from content
             tool_calls = self._extract_tool_calls(content, tools)
@@ -155,7 +155,7 @@ class LLMClientWrapper:
             result = {
                 "content": content,
                 "tool_calls": tool_calls,
-                "model": response.get("model", "unknown"),
+                "model": "qwen2.5",  # Fixed model name
                 "finish_reason": "tool_calls" if tool_calls else "stop",
             }
             

@@ -170,7 +170,27 @@ class ResponseValidator:
     
     def _process_response_impl(self, response: str, state: AgentState) -> Dict:
         try:
-            parsed = json.loads(response) if isinstance(response, str) else response
+            # Try to extract JSON if response contains extra text after valid JSON
+            response_text = response if isinstance(response, str) else str(response)
+            
+            # Try parsing the full response first
+            try:
+                parsed = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                # If there's "Extra data" error, try to extract just the JSON part
+                if "Extra data" in str(e):
+                    logger.warning(f"Extracting JSON from response with extra data")
+                    # Find the first complete JSON object
+                    json_end = self._find_json_end(response_text)
+                    if json_end > 0:
+                        json_part = response_text[:json_end]
+                        logger.info(f"Extracted JSON (first {len(json_part)} chars): {json_part[:200]}")
+                        parsed = json.loads(json_part)
+                    else:
+                        raise
+                else:
+                    raise
+            
             # Centralized check for tool/function calls:
             tool_call = parsed.get("function_call") or parsed.get("tool_call")
             if tool_call:
@@ -187,10 +207,42 @@ class ResponseValidator:
                 content = json.dumps(content)
             state.pop("pending_tool", None)
             return {"messages": [AIMessage(content=content)]}
-        except (ValueError, ValidationError) as e:
+        except (ValueError, ValidationError, json.JSONDecodeError) as e:
+            # Log the actual response for debugging
+            logger.error(f"Failed to parse LLM response: {str(e)}")
+            logger.error(f"Raw response (first 500 chars): {response[:500] if isinstance(response, str) else response}")
             error_msg = f"LLM Error: {str(e)}"
             state.setdefault("errors", []).append(error_msg)
             return {"messages": [AIMessage(content=error_msg)]}
+    
+    def _find_json_end(self, text: str) -> int:
+        """Find the end position of the first complete JSON object in text."""
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        
+        for i, char in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            
+            if not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return i + 1
+        
+        return -1
 
 
 # --------------------------
