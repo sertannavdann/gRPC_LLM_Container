@@ -14,6 +14,12 @@ RUN pip install --upgrade pip && \
 # Shared components (including pre-generated protobuf files)
 COPY shared/ ./shared/
 
+# Core framework components
+COPY core/ ./core/
+
+# Tools components
+COPY tools/ ./tools/
+
 # Generate local protobuf stubs for agent service
 COPY shared/proto/ ./proto/
 RUN python -m grpc_tools.protoc \
@@ -24,6 +30,8 @@ RUN python -m grpc_tools.protoc \
 
 # Application code
 COPY agent_service/agent_service.py .
+COPY agent_service/adapter.py .
+COPY agent_service/llm_wrapper.py .
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 

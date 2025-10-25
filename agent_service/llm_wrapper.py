@@ -234,13 +234,15 @@ class LLMClientWrapper:
             tools: OpenAI-format tool schemas
         
         Returns:
-            str: Formatted tool descriptions
+            str: Formatted tool descriptions with examples
         """
         tool_descriptions = []
+        tool_names = []
         
         for tool in tools:
             func = tool.get("function", {})
             name = func.get("name", "unknown")
+            tool_names.append(name)
             description = func.get("description", "No description")
             parameters = func.get("parameters", {})
             
@@ -264,11 +266,45 @@ class LLMClientWrapper:
         
         tools_text = "\n\n".join(tool_descriptions)
         
-        return f"""Available Tools:
+        # Create concrete examples based on available tools
+        examples = []
+        if "web_search" in tool_names:
+            examples.append(
+                'User: "Search for Python 3.12 release notes"\n'
+                'Assistant: {"function_call": {"name": "web_search", "arguments": {"query": "Python 3.12 release notes official"}}}'
+            )
+        if "math_solver" in tool_names:
+            examples.append(
+                'User: "What is 15 * 234?"\n'
+                'Assistant: {"function_call": {"name": "math_solver", "arguments": {"expression": "15 * 234"}}}'
+            )
+        if "load_web_page" in tool_names:
+            examples.append(
+                'User: "Load https://docs.python.org/3/"\n'
+                'Assistant: {"function_call": {"name": "load_web_page", "arguments": {"url": "https://docs.python.org/3/"}}}'
+            )
+        
+        examples_text = "\n\n".join(examples) if examples else "See below for format."
+        
+        return f"""AVAILABLE TOOLS:
 {tools_text}
 
-To use a tool, respond with a JSON function call in this format:
-{{"function_call": {{"name": "tool_name", "arguments": {{"param": "value"}}}}}}"""
+WHEN TO USE TOOLS:
+- web_search: For current events, recent information, or specific facts you need to look up
+- math_solver: For calculations, equations, or numerical problems
+- load_web_page: For fetching content from specific URLs
+
+HOW TO CALL A TOOL:
+Respond with ONLY this JSON format (no extra text before or after):
+{{"function_call": {{"name": "tool_name", "arguments": {{"param": "value"}}}}}}
+
+EXAMPLES:
+{examples_text}
+
+IMPORTANT: 
+- If you can answer directly without tools, just respond normally
+- If you need a tool, respond ONLY with the JSON (nothing else)
+- Use exact parameter names as shown above"""
     
     def _extract_tool_calls(
         self,

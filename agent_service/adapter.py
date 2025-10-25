@@ -97,9 +97,17 @@ class AgentServiceAdapter:
         
         # System prompt (optional)
         self.system_prompt = system_prompt or (
-            "You are a helpful AI assistant with access to tools. "
-            "When you need to search the web, perform calculations, or load web pages, "
-            "call the appropriate tool. Always provide clear and concise responses."
+            "You are a helpful AI assistant that provides detailed, informative responses. "
+            "When you have information, explain it thoroughly with context and examples.\n\n"
+            "Tool Usage Rules:\n"
+            "1. Use web_search ONLY when you need current or specific information you don't have\n"
+            "2. Use math_solver for calculations, equations, or numerical problems\n"
+            "3. Use load_web_page to fetch content from specific URLs\n\n"
+            "Response Guidelines:\n"
+            "- Provide comprehensive answers with examples and context when appropriate\n"
+            "- If using a tool, synthesize the results into a clear, detailed explanation\n"
+            "- For simple questions or greetings, answer directly and conversationally\n"
+            "- Always be helpful, informative, and thorough in your responses"
         )
         
         # Workflow (initialized after LLM engine is set)

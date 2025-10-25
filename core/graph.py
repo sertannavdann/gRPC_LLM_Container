@@ -7,6 +7,7 @@ for state management and graph construction.
 """
 
 import logging
+import re
 from typing import Literal, Optional
 from datetime import datetime
 
@@ -63,6 +64,66 @@ class AgentWorkflow:
             f"AgentWorkflow initialized: model={config.model_name}, "
             f"max_iterations={config.max_iterations}"
         )
+    
+    def _should_use_tools(self, query: str) -> bool:
+        """
+        Determine if a query requires tool usage.
+        
+        Uses keyword matching and pattern detection to avoid injecting
+        tools into the prompt unnecessarily. This prevents small models
+        from hallucinating fake tool calls.
+        
+        Args:
+            query: User's question or request
+        
+        Returns:
+            bool: True if tools should be available, False otherwise
+        
+        Examples:
+            >>> self._should_use_tools("hey") # False
+            >>> self._should_use_tools("what is 2+2?") # True (math)
+            >>> self._should_use_tools("search for Python") # True (web_search)
+        """
+        query_lower = query.lower()
+        
+        # Keywords indicating tool usage
+        tool_keywords = {
+            # Web search indicators
+            'search', 'find', 'look up', 'google', 'web', 'online',
+            'latest', 'current', 'recent', 'news', 'today',
+            
+            # Math indicators
+            'calculate', 'compute', 'solve', 'math', 'equation',
+            'sum', 'multiply', 'divide', 'subtract', 'add',
+            
+            # Web loading indicators
+            'load', 'fetch', 'get', 'download', 'scrape',
+            'website', 'url', 'page', 'link',
+        }
+        
+        # Check for tool keywords
+        if any(keyword in query_lower for keyword in tool_keywords):
+            logger.info(f"Tool usage detected via keywords")
+            return True
+        
+        # Check for mathematical expressions (e.g., "2+2", "15*23")
+        if re.search(r'\d+\s*[\+\-\*/\^]\s*\d+', query):
+            logger.info(f"Tool usage detected via math expression")
+            return True
+        
+        # Check for URLs
+        if re.search(r'https?://', query_lower):
+            logger.info(f"Tool usage detected via URL")
+            return True
+        
+        # Check for question marks with specific patterns
+        if '?' in query and any(q in query_lower for q in ['when', 'where', 'who', 'how many']):
+            # These often need current information
+            logger.info(f"Tool usage detected via specific question pattern")
+            return True
+        
+        logger.info(f"No tool usage needed for query")
+        return False
     
     def _build_graph(self) -> StateGraph:
         """
@@ -131,8 +192,24 @@ class AgentWorkflow:
         # Apply context window to prevent token overflow
         recent_messages = messages[-self.config.context_window:]
         
-        # Get available (non-circuit-broken) tools
-        tools_schema = self.registry.to_openai_tools()
+        # Extract last user query to determine if tools are needed
+        last_user_message = next(
+            (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
+            ""
+        )
+        # Ensure it's a string
+        if isinstance(last_user_message, list):
+            last_user_message = " ".join(str(item) for item in last_user_message)
+        elif not isinstance(last_user_message, str):
+            last_user_message = str(last_user_message)
+        
+        # Smart tool injection: only include tools if query suggests they're needed
+        if self._should_use_tools(last_user_message):
+            tools_schema = self.registry.to_openai_tools()
+            logger.info(f"Including {len(tools_schema)} tools in prompt")
+        else:
+            tools_schema = []  # No tools for simple queries
+            logger.info("No tools needed - direct answer expected")
         
         logger.debug(f"Calling LLM with {len(recent_messages)} messages, {len(tools_schema)} tools")
         
@@ -140,9 +217,9 @@ class AgentWorkflow:
             # Call local LLM via llama.cpp
             response = self.llm.generate(
                 messages=recent_messages,
-                tools=tools_schema,
+                tools=tools_schema,  # ← Now conditional!
                 temperature=self.config.temperature,
-                max_tokens=512,
+                max_tokens=1024,  # ← Increased from 512 to allow detailed responses
                 stream=self.config.enable_streaming,
             )
             
