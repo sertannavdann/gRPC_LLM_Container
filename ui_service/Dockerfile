@@ -37,6 +37,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy proto files for runtime gRPC
 COPY --from=builder --chown=nextjs:nodejs /app/proto ./proto
+# Copy startup script
+COPY ui_service/start.sh ./start.sh
+RUN chmod +x ./start.sh
 
 USER nextjs
 
@@ -45,4 +48,4 @@ EXPOSE 5000
 ENV PORT=5000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["./start.sh"]

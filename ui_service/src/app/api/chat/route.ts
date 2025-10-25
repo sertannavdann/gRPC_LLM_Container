@@ -16,11 +16,7 @@ export async function POST(request: NextRequest) {
     console.log(`[API] Received message: ${message}`);
 
     // Call agent service via gRPC
-    const response = await executeAgent({
-      session_id: 'ui_session',
-      user_input: message,
-      enable_streaming: false,
-    });
+    const response = await executeAgent(message);
 
     console.log(`[API] Agent response: ${response.final_answer?.substring(0, 100)}...`);
 

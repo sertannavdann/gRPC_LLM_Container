@@ -2,16 +2,39 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
 
-// Handle both development and production paths
-const isDev = process.env.NODE_ENV !== 'production';
-const PROTO_PATH = isDev 
-  ? path.join(process.cwd(), 'proto', 'agent.proto')
-  : path.join(process.cwd(), 'proto', 'agent.proto');
+// Declare process global for TypeScript
+declare const process: {
+  env: { [key: string]: string | undefined };
+  cwd: () => string;
+};
 
-const AGENT_SERVICE_ADDRESS = process.env.AGENT_SERVICE_ADDRESS || 'localhost:50054';
+// Get agent address from environment
+// In Next.js, this needs to be read at runtime, not build time
+// IMPORTANT: Use bracket notation to prevent webpack from replacing at build time
+function getAgentAddress(): string {
+  // Use bracket notation to avoid webpack DefinePlugin optimization
+  const envVarName = 'AGENT_SERVICE_ADDRESS';
+  const agentAddress = process.env[envVarName];
+  
+  console.log('[gRPC Client] getAgentAddress() called');
+  console.log('[gRPC Client] Reading env var:', envVarName);
+  console.log('[gRPC Client] Value from process.env[]:', agentAddress);
+  
+  // Return the environment variable or fallback
+  if (agentAddress) {
+    console.log('[gRPC Client] ✅ Using env var:', agentAddress);
+    return agentAddress;
+  }
+  
+  // Fallback to localhost for development
+  console.log('[gRPC Client] ⚠️ Using fallback: localhost:50054');
+  return 'localhost:50054';
+}
+
+// Handle both development and production paths
+const PROTO_PATH = path.join(process.cwd(), 'proto', 'agent.proto');
 
 console.log('[gRPC Client] Loading proto from:', PROTO_PATH);
-console.log('[gRPC Client] Agent service address:', AGENT_SERVICE_ADDRESS);
 
 // Load protobuf
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -24,45 +47,57 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 
 const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any;
 
-// Access the AgentService from the loaded proto
-const AgentService = protoDescriptor.AgentService;
+// The proto has 'package agent;' so the service is under agent.AgentService
+const AgentService = protoDescriptor.agent?.AgentService;
 
 if (!AgentService) {
   console.error('[gRPC Client] Failed to load AgentService from proto');
+  console.error('[gRPC Client] Available packages:', Object.keys(protoDescriptor));
   throw new Error('AgentService not found in proto definition');
 }
 
 let client: any = null;
 
-export function getAgentClient() {
-  if (!client) {
-    console.log('[gRPC Client] Creating new gRPC client');
-    client = new AgentService(
-      AGENT_SERVICE_ADDRESS,
-      grpc.credentials.createInsecure()
-    );
-  }
-  return client;
+// Get agent client (create new instance each time to ensure fresh env vars)
+function getAgentClient(): any {
+  // Use the helper function to get the address
+  const agentAddress = getAgentAddress();
+  
+  console.log('[gRPC Client] Creating new gRPC client');
+  console.log('[gRPC Client] Final agent service address:', agentAddress);
+  
+  const AgentService = protoDescriptor.agent.AgentService;
+  return new AgentService(
+    agentAddress,
+    grpc.credentials.createInsecure()
+  );
 }
 
 export interface AgentRequest {
-  session_id: string;
-  user_input: string;
-  enable_streaming: boolean;
+  user_query: string;
+  debug_mode: boolean;
 }
 
 export interface AgentResponse {
   final_answer: string;
-  intermediate_steps?: any[];
+  context_used?: string;
+  sources?: string;
+  execution_graph?: string;
 }
 
-export function executeAgent(request: AgentRequest): Promise<AgentResponse> {
+export function executeAgent(message: string): Promise<AgentResponse> {
   return new Promise((resolve, reject) => {
     const client = getAgentClient();
     
-    console.log('[gRPC Client] Executing agent request:', request.user_input);
+    const request: AgentRequest = {
+      user_query: message,
+      debug_mode: false,
+    };
     
-    client.ExecuteAgent(request, (error: grpc.ServiceError | null, response: AgentResponse) => {
+    console.log('[gRPC Client] Executing agent request:', message);
+    
+    // The proto method is QueryAgent, not ExecuteAgent
+    client.QueryAgent(request, (error: grpc.ServiceError | null, response: AgentResponse) => {
       if (error) {
         console.error('[gRPC Client] Error:', error);
         reject(error);

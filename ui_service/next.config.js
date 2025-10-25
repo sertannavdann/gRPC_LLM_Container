@@ -2,8 +2,11 @@
 const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
-  env: {
-    AGENT_SERVICE_ADDRESS: process.env.AGENT_SERVICE_ADDRESS || 'localhost:50054',
+  // Don't bake env vars into the build - let them be read at runtime
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api/**': ['./proto/**/*'],
+    },
   },
 }
 
