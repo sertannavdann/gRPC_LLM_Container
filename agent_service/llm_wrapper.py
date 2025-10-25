@@ -326,66 +326,113 @@ IMPORTANT:
         """
         if not content:
             return []
-        
-        tool_calls = []
-        
-        # Pattern 1: Look for explicit function_call JSON
-        # {"function_call": {"name": "tool_name", "arguments": {...}}}
-        fc_pattern = r'\{"function_call":\s*\{[^}]+\}\}'
-        matches = re.findall(fc_pattern, content, re.DOTALL)
-        
-        for match in matches:
+
+        def normalize_args(args):
+            if isinstance(args, dict):
+                return args
+            if isinstance(args, str):
+                try:
+                    return json.loads(args)
+                except Exception:
+                    return {"input": args}
+            return {}
+
+        # Helper: extract first JSON object if present (tolerate extra text)
+        def extract_first_json(text: str) -> Optional[dict]:
+            start = text.find("{")
+            if start == -1:
+                return None
+            brace = 0
+            in_str = False
+            esc = False
+            for i in range(start, len(text)):
+                ch = text[i]
+                if esc:
+                    esc = False
+                    continue
+                if ch == "\\":
+                    esc = True
+                    continue
+                if ch == '"':
+                    in_str = not in_str
+                    continue
+                if not in_str:
+                    if ch == '{':
+                        brace += 1
+                    elif ch == '}':
+                        brace -= 1
+                        if brace == 0:
+                            try:
+                                return json.loads(text[start:i+1])
+                            except Exception:
+                                return None
+            return None
+
+        tool_calls: List[Dict] = []
+
+        # Try strict JSON forms first
+        parsed = extract_first_json(content)
+        if isinstance(parsed, dict):
+            # OpenAI-style
+            if "function_call" in parsed:
+                fc = parsed["function_call"] or {}
+                name = fc.get("name", "")
+                args = normalize_args(fc.get("arguments", {}))
+                tool_calls.append({
+                    "id": f"call_{abs(hash(name)) % 100000}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                })
+                return tool_calls
+
+            # Non-standard {"tool_name": "...", "arguments": {...}}
+            if "tool_name" in parsed and "arguments" in parsed:
+                name = parsed.get("tool_name", "")
+                args = normalize_args(parsed.get("arguments", {}))
+                tool_calls.append({
+                    "id": f"call_{abs(hash(name)) % 100000}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                })
+                return tool_calls
+
+        # Regex fallback for embedded JSON function_call blocks
+        fc_pattern = r'\{\s*"function_call"\s*:\s*\{.*?\}\s*\}'
+        for match in re.findall(fc_pattern, content, re.DOTALL):
             try:
                 fc_obj = json.loads(match)
-                if "function_call" in fc_obj:
-                    func_call = fc_obj["function_call"]
-                    
-                    # Create OpenAI-format tool call
-                    tool_call = {
-                        "id": f"call_{hash(match) % 100000}",
-                        "type": "function",
-                        "function": {
-                            "name": func_call.get("name", ""),
-                            "arguments": func_call.get("arguments", {}),
-                        },
-                    }
-                    tool_calls.append(tool_call)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse function call: {match}")
-        
-        # Pattern 2: Look for tool_name(args) format
-        # e.g., "math_solver(expression='2+2')"
+                fc = fc_obj.get("function_call", {})
+                name = fc.get("name", "")
+                args = normalize_args(fc.get("arguments", {}))
+                tool_calls.append({
+                    "id": f"call_{abs(hash(match)) % 100000}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                })
+            except Exception:
+                continue
+
+        # Fallback: name(args) textual pattern
         if not tool_calls and tools:
             tool_names = [t["function"]["name"] for t in tools]
             for tool_name in tool_names:
-                # Look for tool_name(...) pattern
-                pattern = rf'{tool_name}\s*\(([^)]+)\)'
-                matches = re.findall(pattern, content)
-                
-                for match in matches:
+                pattern = rf'{tool_name}\s*\(([^)]*)\)'
+                for m in re.findall(pattern, content):
                     try:
-                        # Parse arguments (simple key=value format)
-                        args = {}
-                        for arg in match.split(","):
-                            arg = arg.strip()
-                            if "=" in arg:
-                                key, value = arg.split("=", 1)
-                                key = key.strip()
-                                value = value.strip().strip("'\"")
-                                args[key] = value
-                        
-                        tool_call = {
-                            "id": f"call_{hash(match) % 100000}",
+                        args: Dict[str, str] = {}
+                        if m.strip():
+                            for arg in m.split(","):
+                                if "=" in arg:
+                                    k, v = arg.split("=", 1)
+                                    args[k.strip()] = v.strip().strip("'\"")
+                        tool_calls.append({
+                            "id": f"call_{abs(hash(m)) % 100000}",
                             "type": "function",
-                            "function": {
-                                "name": tool_name,
-                                "arguments": args,
-                            },
-                        }
-                        tool_calls.append(tool_call)
-                    except Exception as e:
-                        logger.warning(f"Failed to parse tool call: {e}")
-        
+                            "function": {"name": tool_name, "arguments": args},
+                        })
+                    except Exception:
+                        continue
+
         return tool_calls
     
     def close(self):

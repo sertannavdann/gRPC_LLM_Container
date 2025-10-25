@@ -9,6 +9,7 @@ import { Bot } from 'lucide-react';
 export function ChatContainer() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [threadId, setThreadId] = useState<string | undefined>(undefined);
 
   const handleSendMessage = async (content: string) => {
     // Add user message
@@ -29,7 +30,7 @@ export function ChatContainer() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({ message: content, threadId }),
       });
 
       const data: ChatResponse = await response.json();
@@ -38,11 +39,17 @@ export function ChatContainer() {
         throw new Error(data.error || 'Failed to get response');
       }
 
+      // Persist/initialize thread id
+      if (data.threadId && data.threadId !== threadId) {
+        setThreadId(data.threadId);
+      }
+
       // Add assistant message
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: data.response,
+        toolsUsed: data.toolsUsed,
         timestamp: new Date(),
       };
 
@@ -73,8 +80,8 @@ export function ChatContainer() {
             <Bot className="h-6 w-6 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold">gRPC LLM Agent</h1>
-            <p className="text-sm text-muted-foreground">Powered by Next.js & gRPC</p>
+            <h1 className="text-lg font-semibold">Locally hosted LLM Orchestrator</h1>
+            <p className="text-sm text-muted-foreground">by SAVDAN</p>
           </div>
         </div>
       </header>

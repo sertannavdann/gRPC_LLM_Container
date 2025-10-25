@@ -65,10 +65,14 @@ class CheckpointManager:
             >>> app = workflow.compile(checkpointer)
             >>> app.invoke(state, config={"thread_id": "conv-123"})
         """
-        # SqliteSaver.from_conn_string returns a context manager
-        # We use __enter__ to get the actual SqliteSaver instance
-        context_manager = SqliteSaver.from_conn_string(str(self.db_path))
-        checkpointer = context_manager.__enter__()
+        # Create a persistent connection with thread safety disabled
+        # This is safe in gRPC since each request gets its own thread
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for concurrency
+        
+        # Create SqliteSaver with the persistent connection
+        checkpointer = SqliteSaver(conn=conn)
+        
         # Initialize database tables
         checkpointer.setup()
         logger.debug(f"Created checkpointer for {self.db_path}")

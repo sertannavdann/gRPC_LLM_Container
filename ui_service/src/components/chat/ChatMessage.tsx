@@ -65,6 +65,18 @@ export function ChatMessage({ message }: ChatMessageProps) {
               >
                 {message.content}
               </ReactMarkdown>
+              {message.toolsUsed && message.toolsUsed.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {message.toolsUsed.map((tool) => (
+                    <span
+                      key={tool}
+                      className="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                    >
+                      Tool: {tool}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

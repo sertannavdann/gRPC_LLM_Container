@@ -85,9 +85,13 @@ export interface AgentResponse {
   execution_graph?: string;
 }
 
-export function executeAgent(message: string): Promise<AgentResponse> {
+export function executeAgent(message: string, threadId?: string): Promise<AgentResponse> {
   return new Promise((resolve, reject) => {
     const client = getAgentClient();
+    const metadata = new grpc.Metadata();
+    if (threadId) {
+      metadata.add('thread-id', threadId);
+    }
     
     const request: AgentRequest = {
       user_query: message,
@@ -97,7 +101,7 @@ export function executeAgent(message: string): Promise<AgentResponse> {
     console.log('[gRPC Client] Executing agent request:', message);
     
     // The proto method is QueryAgent, not ExecuteAgent
-    client.QueryAgent(request, (error: grpc.ServiceError | null, response: AgentResponse) => {
+    client.QueryAgent(request, metadata, (error: grpc.ServiceError | null, response: AgentResponse) => {
       if (error) {
         console.error('[gRPC Client] Error:', error);
         reject(error);

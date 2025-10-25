@@ -116,10 +116,17 @@ class AgentWorkflow:
             logger.info(f"Tool usage detected via URL")
             return True
         
-        # Check for question marks with specific patterns
-        if '?' in query and any(q in query_lower for q in ['when', 'where', 'who', 'how many']):
-            # These often need current information
-            logger.info(f"Tool usage detected via specific question pattern")
+        # Broader factual question detection: question words + entities
+        question_words = ['what', 'when', 'where', 'who', 'why', 'how', 'which']
+        has_question_word = any(w in query_lower for w in question_words)
+        has_question_mark = '?' in query
+
+        # Detect proper nouns (simple heuristic: capitalized tokens not at start of sentence)
+        proper_noun_match = re.search(r'\b[A-Z][a-z]+\b', query)
+
+        # If it's a factual question about specific entities, prefer using tools
+        if (has_question_word or has_question_mark) and proper_noun_match:
+            logger.info(f"Tool usage detected via question+proper noun pattern")
             return True
         
         logger.info(f"No tool usage needed for query")
