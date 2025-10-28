@@ -1,206 +1,179 @@
-# Full Plan: Sync-First Resumable Agent Mesh
+# Master Plan: Sync-First Resumable Agent Architecture
 
-## 0. Guiding Constraints and Success Criteria
-- Honor existing gRPC microservice architecture, LangGraph workflows, SQLite checkpointing, tool registry, and llama.cpp LLM service. No disruptive rewrites.
-- Deliver a sync-first orchestrator that can resume after crashes, expose routing decisions, and operate efficiently for 1-2 local users.
-- Maintain container isolation so each service (Agent, LLM, Chroma, Tools, UI) restarts independently and respects fixed CPU/memory limits.
-- Embed a quantized router model in Agent Service now; design interfaces so a standalone router service can be swapped in later with minimal changes.
-- Support Debug vs Shipping observability modes: Debug enables full OpenTelemetry logs/metrics for 5 minutes post-crash, Shipping keeps spans only.
-- Keep workflows linear initially, then introduce bounded cyclic loops (max 2 review cycles); track remaining hops in state and UI.
-- Add Agent2Agent messaging so roles (e.g., Reviewer, Coder) exchange structured messages while staying resumable via checkpoints.
-- Document correlation IDs, span naming, and message schemas so an event-driven future (Dapr/Solace-style) remains viable.
+## 0. Guiding Principles & Success Criteria
+- **Authoritative Plan**: This document is the single source of truth, superseding all previous planning documents.
+- **Core Architecture**: The system is a **gRPC microservice architecture**. It uses LangGraph for workflow orchestration, SQLite for checkpointing, and a tool registry for capabilities. The "Agent Mesh" is a conceptual influence for patterns like service discovery and observability, not a literal architectural replacement.
+- **MVP First**: The immediate goal is a minimal viable product: a sync-first, resumable orchestrator that is observable and efficient for a single user.
+- **Resumability & Stability**: The orchestrator must resume from the last stable step after a crash. Container isolation ensures services restart independently.
+- **Embedded Router**: A small, quantized model is embedded in the `Agent Service`. Its primary role is to **inform, not decide**. It provides the main arbitrator agent with a structured view of available services and their capabilities, allowing the agent to make the final routing decision.
+- **Progressive Resource Management**: Start with minimal resource monitoring (e.g., using `psutil`) and basic container-level capping. Defer strict C++-style enforcement (memory arenas, fixed thread pools) until the core system is stable.
+- **Simple Workflows First**: Begin with linear workflows, then introduce bounded cyclic workflows (e.g., max 2 review cycles). Defer complex dynamic graphs.
+- **Future-Proofing**: Use correlation IDs and clear schemas to allow for future evolution towards event-driven patterns or more advanced C++ integrations for performance.
 
-## 1. Phase Overview and Timeline Assumptions
-- Phase 1 (Weeks 1-2): Resumable, debug-friendly synchronous mesh with embedded router, tightened checkpointing, and observability toggles.
-- Phase 2 (Weeks 3-5): Agent2Agent protocol, bounded loops, UI visibility upgrades, resource caps, and container hardening.
-- Phase 3 (Weeks 6+ / optional): Async-ready primitives (correlation IDs, idempotent handlers), Dapr/K8s prep, deeper telemetry automation.
+## 1. Phased Rollout (MVP First)
+- **Phase 1 (Weeks 1-2)**: **Core MVP**. Implement a resumable, debug-friendly synchronous agent with an embedded router, reliable checkpointing, and basic observability.
+- **Phase 2 (Weeks 3-5)**: **Collaboration & Hardening**. Introduce Agent-to-Agent messaging, bounded loops, resource monitoring/capping, and UI enhancements.
+- **Phase 3 (Weeks 6+)**: **Future-Proofing & Scale**. Solidify async-ready primitives (correlation IDs, idempotent handlers) and prepare for potential Kubernetes migration.
 
-Assumptions:
-- 3 backend engineers (Agent/Core tooling, LLM/infra, Observability), 1 frontend engineer, 1 SRE shared across phases.
-- Existing CI/CD, Docker Compose, and test harnesses remain available.
-- Each task includes engineering, code review, testing, documentation, and rollout plan.
+**Assumptions**:
+- 3 backend engineers (Agent/Core, LLM/Infra, Observability), 1 frontend engineer.
+- Existing CI/CD, Docker Compose, and test harnesses are functional.
+- Each task includes engineering, code review, testing, and documentation.
 
-## 2. Phase 1: Resumable Sync Mesh (Weeks 1-2)
+## 2. Phase 1: Core MVP (Weeks 1-2)
 
-### Task P1-T1: Embedded Router Model Integration
-- **Context**: Architect recommends embedding a 3B quantized router (e.g., Qwen2.5-3B) inside Agent Service for minimal latency.
+### Task P1-T1: Embedded Router for Agent Guidance
+- **Context**: The arbitrator agent needs structured information to make routing decisions. An embedded 3B quantized model will provide this context.
 - **Objectives**:
-  - Package the router model artifact (quantized) within `agent_service` container.
-  - Extend `agent_service/llm_wrapper.py` to load the router model separately from main inference model.
-  - Implement deterministic, low-temperature prompt template with strict JSON schema (decision + confidence + fallback).
-  - Expose router decisions via structured log/span attributes and gRPC response metadata.
-- **Deliverables**: Router load configuration, model placement guidance, updated adapter logic, unit tests for routing decisions, sample router output in docs.
-- **Acceptance Criteria**: Decision latency <100 ms P95 locally; fallback path triggered on invalid JSON; confidence thresholds configurable in `core/config.py`.
-- **Dependencies**: Quantized model availability; llama.cpp bindings for router if reusing; otherwise Python inference pipeline.
+  - Package a quantized router model (e.g., Qwen2.5-3B) within the `agent_service` container.
+  - The router's function is to analyze the user query and produce a list of recommended services with confidence scores and reasoning.
+  - This JSON output is then passed into the main arbitrator agent's prompt, which makes the final decision.
+  - Expose the router's recommendation and the agent's final decision via structured logs and span attributes.
+- **Deliverables**: Router loading logic, updated agent prompt template that includes router output, unit tests for the router's JSON output.
+- **Acceptance Criteria**: The arbitrator agent receives routing recommendations from the router. The final routing decision is logged. Router latency is <100ms.
 
 ### Task P1-T2: Checkpoint Reliability and Crash Resume
-- **Context**: SQLite checkpoints already exist; need WAL tuning and resume workflow on service restart.
+- **Context**: Existing SQLite checkpoints must be hardened to ensure workflows can resume after a service crash.
 - **Objectives**:
-  - Audit `core/checkpointing.py` for WAL mode enforcement, durable writes, and journaling settings.
-  - Add recovery routine on Agent Service startup: detect last checkpoint per thread, resume pending workflows.
-  - Implement integration test simulating crash + resume using Docker Compose restart.
-  - Document restart procedure for developers (Makefile target, expected logs).
-- **Deliverables**: Updated checkpointing module, restart handler in `agent_service/agent_service.py`, integration test in `tests/integration/test_checkpoint_resume.py`, doc section covering operations.
-- **Acceptance Criteria**: On forced container restart, workflow resumes from last persisted hop without data loss; tests run in CI.
-- **Dependencies**: Task P1-T1 for hop metadata; Compose health-check to ensure service restarts properly.
+  - Audit `core/checkpointing.py` to enforce WAL mode for safe concurrent reads/writes.
+  - Implement a recovery routine in `agent_service` on startup to load the last known checkpoint for a given thread and resume the workflow.
+  - Create an integration test that simulates a container crash and verifies successful resumption.
+- **Deliverables**: Updated checkpointing module, a startup recovery hook in `agent_service.py`, and an integration test (`tests/integration/test_resume.py`).
+- **Acceptance Criteria**: On a forced container restart, a running workflow correctly resumes from the last completed step.
 
-### Task P1-T3: Observability Mode Switch (Debug vs Shipping)
-- **Context**: Need environment-variable driven mode toggles with time-bounded full telemetry.
+### Task P1-T3: Observability Mode Switch (Debug vs. Shipping)
+- **Context**: We need controllable observability: lean for production, verbose for debugging.
 - **Objectives**:
-  - Introduce configuration flag (e.g., `OBS_MODE=debug|shipping`) recognized by Agent, LLM, Chroma services.
-  - Integrate OTEL exporters to emit traces by default; in Debug mode also emit structured logs and metrics for 5 minutes after crash detection.
-  - Implement crash detector hooking into checkpoint recovery (Task P1-T2) and toggling enhanced telemetry window.
-  - Update `docker-compose.yaml` and `Makefile` to pass mode to containers; add docs describing toggling.
-- **Deliverables**: Config updates in `core/config.py`, instrumentation wrappers in `shared/clients` and Agent Service, tests verifying span emission, operational docs in `FullPlan.md`.
-- **Acceptance Criteria**: Mode switch applied without redeploy; spans available in both modes; Debug mode auto-reverts to spans-only after 5 minutes.
-- **Dependencies**: Task P1-T2 for crash detection hook; Task P1-T4 for span naming convention.
+  - Introduce an environment variable `OBS_MODE` (`debug` or `shipping`).
+  - In `shipping` mode (default), only traces (spans) are emitted.
+  - In `debug` mode, emit full OTEL data (traces, metrics, logs). After a crash is detected (via the P1-T2 recovery hook), automatically enable `debug` mode for 5 minutes for forensics, then revert to `shipping`.
+- **Deliverables**: Configuration in `core/config.py`, instrumentation wrappers in `shared/clients`, and operational documentation.
+- **Acceptance Criteria**: Mode can be switched without redeployment. Spans are always on. Full telemetry is enabled only in debug mode or the post-crash window.
 
-### Task P1-T4: Span Taxonomy and Router Decision Surfacing
-- **Context**: Provide consistent span names/tags for route, tool execution, checkpoint operations.
+### Task P1-T4: Foundational Span Taxonomy
+- **Context**: Consistent naming and tagging are required for meaningful traces.
 - **Objectives**:
-  - Define canonical span names: `agent.route`, `agent.tool_call`, `agent.checkpoint.save`, etc.
-  - Attach attributes: service name, thread-id, hop count, remaining loops (if available), router confidence.
-  - Ensure `shared/clients` include interceptors to propagate spans through gRPC metadata.
-  - Update UI (minimal) to consume spans for the timeline (foundation for P2 UI work).
-- **Deliverables**: Trace instrumentation in Agent Service and clients, metadata propagation, developer guide for span usage.
-- **Acceptance Criteria**: Spans visible end-to-end in Debug mode; timeline data available for UI ingestion; router decisions readable in span attributes.
-- **Dependencies**: Task P1-T3 instrumentation; Task P1-T1 for router output schema.
+  - Define canonical span names: `agent.arbitrate`, `agent.route_recommendation`, `tool.call`, `checkpoint.save`.
+  - Attach key attributes: `service.name`, `thread.id`, `hop.count`, `router.confidence`.
+  - Ensure gRPC interceptors in `shared/clients` propagate trace context.
+- **Deliverables**: Trace instrumentation, updated interceptors, and a developer guide for span usage.
+- **Acceptance Criteria**: Traces are visible end-to-end. The agent's final routing decision and the router's recommendation are both readable in span attributes.
 
-### Task P1-T5: UI Foundations for Timeline and Router Panel
-- **Context**: Provide developer-facing timeline and router decision panel in Next.js UI.
+### Task P1-T5: UI Foundations for Observability
+- **Context**: The UI needs basic panels to display the system's state for developers.
 - **Objectives**:
-  - Introduce basic pages/components for Service Registry health, Request Timeline waterfall (using spans), Router Decision panel.
-  - Integrate existing gRPC client (`ui_service/src/lib/grpc-client.ts`) with new metadata (decision, confidence).
-  - Provide mock data mode for UI when backend spans unavailable.
-- **Deliverables**: React components with Tailwind styling, types in `ui_service/src/types`, wiring in `page.tsx`, tests/stories if applicable.
-- **Acceptance Criteria**: UI displays timeline of spans for a request, router decision summary, service health status; responsive for desktop; accessible within existing layout.
-- **Dependencies**: Task P1-T4 for span data shape; Task P1-T3 for modes; existing UI infra.
+  - Create three basic UI components: a Service Registry health panel, a Request Timeline (waterfall), and a Router Decisions panel.
+  - The timeline should render spans received from the backend.
+  - The router panel should show the router's recommendation and the agent's final choice.
+- **Deliverables**: React components, updated types in `ui_service/src/types`, and wiring in `page.tsx`.
+- **Acceptance Criteria**: UI displays a timeline, router decision summary, and service health status.
 
-## 3. Phase 2: Agent Collaboration and Resource Hardening (Weeks 3-5)
+## 3. Phase 2: Collaboration & Hardening (Weeks 3-5)
 
-### Task P2-T1: Agent2Agent Protocol and Persistence
-- **Context**: Need structured messaging between roles (Coder, Reviewer) with visibility and checkpointing.
+### Task P2-T1: Agent-to-Agent (A2A) Messaging Protocol
+- **Context**: Agents in a workflow (e.g., Coder, Reviewer) need a way to exchange structured feedback.
 - **Objectives**:
-  - Define protobuf schema for Agent2Agent messages (e.g., `shared/proto/agent.proto` update) with fields: sender role, recipient role, message type, payload, hop index, remaining loops, correlation-id.
-  - Extend LangGraph state to record Agent2Agent exchanges; ensure `core/graph.py` and `state.py` persist messages into checkpoints.
-  - Provide gRPC method or tool invocation path to send/receive messages; update AgentServiceAdapter to notify UI via spans/metadata.
-  - Add unit/integration tests verifying message persistence across crash/restart scenarios.
-- **Deliverables**: Updated proto + generated code, state graph modifications, documentation on message schema, tests.
-- **Acceptance Criteria**: Agents can send/receive messages during workflow; messages survive restarts; UI can display message history.
-- **Dependencies**: Task P1-T2 checkpoint reliability; Task P1-T4 spans for correlating messages.
+  - Define a protobuf schema for A2A messages in `shared/proto/agent.proto` (fields: `sender_role`, `recipient_role`, `payload`, `hop_index`).
+  - Extend the LangGraph state (`core/state.py`) to persist A2A messages in the checkpoint.
+  - Expose a tool or gRPC method for agents to send messages, which are then routed to the correct recipient agent in the workflow.
+- **Deliverables**: Updated protobuf definitions, modified state graph, and integration tests verifying message persistence and delivery.
+- **Acceptance Criteria**: A "Reviewer" agent can send feedback that is received by a "Coder" agent on a subsequent workflow step. Messages survive restarts.
 
 ### Task P2-T2: Bounded Cyclic Workflow Support
-- **Context**: Introduce loops with max iterations for reviewer feedback.
+- **Context**: Workflows need to support simple, finite loops (e.g., for code revisions).
 - **Objectives**:
-  - Extend workflow configuration to include loop metadata (e.g., max cycles, current cycle count).
-  - Modify `core/graph.py` to enforce cycle limits and surface remaining hops in state and spans.
-  - Update router prompt to respect remaining hops, biasing toward completion when loops near exhaustion.
-  - Add tests covering loop exhaustion and resume mid-loop after crash.
-- **Deliverables**: Updated workflow builder, config schema, loop tracking logic, tests, documentation.
-- **Acceptance Criteria**: Loop iterations capped at configured max; state shows `remaining_loops`; UI indicates progress; router behavior adjusts near limits.
-- **Dependencies**: Task P2-T1 message schema (to display loops), Task P1-T1 router config.
+  - Extend the workflow state to include loop metadata (e.g., `max_cycles`, `current_cycle`).
+  - Modify `core/graph.py` to enforce the cycle limit and expose `remaining_hops` in the state.
+  - The arbitrator agent's prompt will include the remaining hops, allowing it to bias its decisions toward completion as loops are exhausted.
+- **Deliverables**: Updated workflow builder, tests for loop exhaustion, and documentation.
+- **Acceptance Criteria**: A workflow with a max of 2 review cycles stops after the second review. The UI indicates the current loop status (e.g., "Review Cycle 1 of 2").
 
-### Task P2-T3: Resource Capping and Container Hardening
-- **Context**: Ensure predictable resource consumption per container.
+### Task P2-T3: Resource Monitoring and Capping
+- **Context**: Start with minimal, safe resource management. Strict C++-style enforcement is deferred.
 - **Objectives**:
-  - Update Compose/Dockerfiles to set CPU quotas, memory limits, fixed thread pools (4-8 threads) per service.
-  - Configure llama.cpp invocation with pre-sized KV cache, pinned threads, and environment variables for reproducibility.
-  - Surface resource usage data as span tags (threads, memory) and in service registry heartbeat.
-  - Provide documentation and scripts to override caps for power users.
-- **Deliverables**: Dockerfile updates, Compose configuration, instrumentation patches, doc updates.
-- **Acceptance Criteria**: Containers respect resource limits; metrics visible in spans; failure when exceeding limits triggers circuit breaker or fallback with logging.
-- **Dependencies**: Task P1-T3 instrumentation; Task P2-T4 registry enhancements.
+  - **Monitoring**: Use `psutil` within services to periodically report basic resource usage (CPU, memory) as span attributes. This is for observability only.
+  - **Capping**: Use Docker Compose to set initial, generous CPU and memory limits on service containers to prevent runaway processes.
+  - Defer implementing fixed thread pools and memory arenas until the system is stable and performance bottlenecks are identified.
+- **Deliverables**: Instrumentation patches for services, updated `docker-compose.yaml` with resource limits.
+- **Acceptance Criteria**: Containers run within their defined resource caps. CPU and memory usage are visible as attributes on service-level spans.
 
-### Task P2-T4: Service Registry Capability Tags
-- **Context**: Router needs capability hints per service/tool.
+### Task P2-T4: Service Registry with Capability Tags
+- **Context**: The router and agent need to know what each service can do.
 - **Objectives**:
-  - Extend registry data model (likely `shared/clients` and `tools/registry.py`) to attach capability tags (threads, memory, tool type).
-  - Update heartbeat messages to include capacity hints.
-  - Modify router prompt to reference capability tags and recent health status.
-- **Deliverables**: Registry updates, new gRPC messages if needed, docs on tag schema, tests verifying router decisions change with capabilities.
-- **Acceptance Criteria**: Router sees capability tags at runtime; UI displays service health + capacities; tests simulate degraded capacity and confirm router fallback.
-- **Dependencies**: Task P1-T1 router integration; Task P2-T3 resource instrumentation.
+  - Extend the in-memory service registry. On startup, services register themselves along with a list of "capability tags" (e.g., `coding`, `rag`, `review`).
+  - The router uses these tags to identify candidate services to recommend to the agent.
+- **Deliverables**: An extended registry implementation, service registration logic, and updated router logic to use the tags.
+- **Acceptance Criteria**: The router only recommends services with the relevant capability tag for a given task. The UI can display the capabilities of each registered service.
 
-### Task P2-T5: UI Enhancements for Agent Collaboration
-- **Context**: UI must show Agent2Agent messages, loop counts, resource health.
+### Task P2-T5: UI Enhancements for Collaboration
+- **Context**: The UI must visualize the new multi-agent and resource-monitoring features.
 - **Objectives**:
-  - Add components to display message timeline, remaining loops, and service resource stats.
-  - Provide filtering by request/thread, highlight message send/receive events, and show router confidence.
-  - Integrate health data into registry panel with capability tags and resource usage.
-- **Deliverables**: React components, updates to `ui_service/src/lib/utils.ts` for formatting, tests/stories.
-- **Acceptance Criteria**: UI shows Agent2Agent conversation context, loops progress, resource data; handles empty states; accessible via keyboard.
-- **Dependencies**: Tasks P2-T1, P2-T2, P2-T3, P2-T4.
+  - Display A2A messages in the timeline view.
+  - Show the current loop count and remaining hops for cyclic workflows.
+  - Integrate basic resource metrics (CPU/memory from spans) into the service health panel.
+- **Deliverables**: Updated React components for the timeline and registry panels.
+- **Acceptance Criteria**: The UI provides a clear, real-time view of workflow collaboration and basic resource consumption.
 
-## 4. Phase 3: Async/Event Future-Proofing (Week 6+)
+## 4. Phase 3: Future-Proofing & Scale (Week 6+)
 
 ### Task P3-T1: Correlation IDs and Idempotent Handlers
-- **Context**: Prepare for optional async/event-driven evolution.
+- **Context**: Prepare for a potential evolution to an event-driven architecture.
 - **Objectives**:
-  - Standardize correlation ID format (UUID4) propagated through gRPC metadata, spans, checkpoints, Agent2Agent messages.
-  - Ensure handlers in Agent Service and downstream services are idempotent based on correlation ID + hop index.
-  - Document guidelines for event bus integration preserving contracts.
-- **Deliverables**: Metadata propagation utilities, idempotency checks, documentation, tests verifying duplicate event handling.
-- **Acceptance Criteria**: Duplicate requests with same correlation ID do not re-execute side-effectful actions; logs/spans show consistent IDs.
-- **Dependencies**: Phase 1 span taxonomy; Phase 2 message schema.
+  - Standardize on a `correlation_id` (UUID) for each request, propagated through all gRPC calls, spans, and A2A messages.
+  - Ensure service handlers are idempotent where possible (e.g., a write operation can be safely retried with the same ID without creating duplicates).
+- **Deliverables**: Metadata propagation utilities and idempotency checks in key service handlers.
+- **Acceptance Criteria**: A request can be traced end-to-end using a single correlation ID. Retrying a failed request does not cause duplicate data.
 
-### Task P3-T2: Event Schema Draft and Dapr Compatibility
-- **Context**: Align with Solace/Dapr style eventing.
+### Task P3-T2: Event Schema Draft
+- **Context**: If we move to eventing (e.g., with Dapr or Solace), we'll need a schema.
 - **Objectives**:
-  - Draft event schema for Agent2Agent and router events (JSON/Protobuf) with versioning, correlation IDs, payload signatures.
-  - Document mapping between gRPC API and prospective event topics; identify required headers for trace propagation.
-  - Prototype Dapr sidecar configuration file for Agent Service (no deployment yet).
-- **Deliverables**: Schema definitions, documentation in `FullPlan.md` or new doc, configuration examples.
-- **Acceptance Criteria**: Schema reviewed and approved; Dapr config validated locally (lint) though not deployed.
-- **Dependencies**: Task P3-T1 correlation IDs; Phase 2 messaging design.
+  - Draft a conceptual event schema for key actions (e.g., `AgentRouted`, `ToolExecuted`, `MessageSent`).
+  - Document the mapping from gRPC calls to these conceptual events. This is a design task; no implementation is required.
+- **Deliverables**: A markdown document (`docs/event_schema.md`) outlining the proposed event structures.
+- **Acceptance Criteria**: The schema is reviewed and approved as a viable future direction.
 
 ### Task P3-T3: Kubernetes Migration Prep
-- **Context**: Containers already isolated; need readiness for K8s.
+- **Context**: Prepare for eventual deployment on Kubernetes.
 - **Objectives**:
-  - Create Helm/chart skeleton or Kustomize templates reflecting Compose setup.
-  - Define resource requests/limits matching Phase 2 caps; include OTEL collector deployment instructions.
-  - Document readiness/liveness probes, config maps for OBS_MODE, router model mounting strategy.
-- **Deliverables**: Deployment templates, documentation, pipeline checklist.
-- **Acceptance Criteria**: Templates render successfully; manual testing instructions provided; no actual migration required yet.
-- **Dependencies**: Phase 2 resource caps; Phase 1 observability modes.
+  - Create a skeleton Helm chart or Kustomize templates that mirror the Docker Compose setup.
+  - Define resource requests/limits based on the caps from Phase 2.
+  - Document readiness/liveness probes and configuration strategies (e.g., using ConfigMaps).
+- **Deliverables**: Deployment templates and documentation.
+- **Acceptance Criteria**: Templates are linted and render successfully. No actual migration is performed.
 
 ## 5. Edge Case Handling and QA Strategy
-- **Crash/Restart**: Use integration suite to simulate container crash mid-tool call; expect resume from last checkpoint with 5-minute Debug telemetry window.
-- **Latency Budget**: Add performance tests (pytest markers) verifying P95 < real-time targets; router response <100 ms, overall hop budgets tracked.
-- **Agent Hops and Loops**: Validate linear (3 steps) and bounded cyclic (max 5 hops) flows; ensure UI and state reflect remaining hops.
-- **Router Accuracy**: Collect 50-100 labeled routing samples; run regression tests to compare decisions pre/post changes; implement low-confidence fallback logic.
-- **Resource Limits**: Stress test each service under heavy load to confirm circuit breakers engage and spans capture thread/mem usage.
+- **Crash/Restart**: The integration test from P1-T2 will be the primary validation. Test crashes at each step of a multi-agent workflow.
+- **Latency Budgets**: Add performance tests to verify that router recommendations remain fast (<100ms) and overall hop budgets are respected.
+- **Agent Hops**: Validate that linear flows are limited to 3 steps and bounded cyclic flows to 5 total hops. The arbitrator agent should be aware of the remaining hops.
+- **Router Accuracy**: The router's job is to provide good recommendations. Collect a small labeled set (50-100 queries) to tune the router's prompt and validate its recommendations. In low-confidence cases, the arbitrator agent can choose a safe default or ask the user for clarification.
+- **Resource Limits**: Stress test services to ensure the Docker-level caps prevent system-wide instability.
 
 ## 6. Documentation and Developer Enablement
-- Update `ARCHITECTURE.md` with new router, Agent2Agent communication, and observability modes (Phase 1/2 milestone).
-- Create `docs/observability.md` covering telemetry modes, span taxonomy, OTEL exporters.
-- Add `docs/workflows.md` describing linear vs bounded cyclic flows, loop configuration, and Agent2Agent usage.
-- Maintain `UI_SERVICE_SETUP.md` with new panels/components and local dev instructions.
-- Provide onboarding checklist for new developers covering router model setup, debug mode usage, and test suites.
+- Update `ARCHITECTURE.md` to reflect the refined router role and multi-agent workflow patterns.
+- Create `docs/observability.md` covering telemetry modes and span taxonomy.
+- Create `docs/workflows.md` describing how to build and configure linear and bounded-cyclic workflows.
+- Maintain `UI_SERVICE_SETUP.md` with details on the new UI panels.
 
 ## 7. Testing and Automation Enhancements
-- Expand unit tests in `tests/unit` for router decision logic, Tool registry capability tags, and Agent2Agent message handling.
-- Add integration tests in `tests/integration` simulating end-to-end flows with loops and restarts.
-- Configure CI to run new test suite segments and capture artifacts (spans, logs) for debugging.
-- Introduce performance test harness (potentially in `testing_tool/`) to measure latency budgets automatically.
+- Expand unit tests for the router's recommendation logic and the new workflow node types.
+- Add integration tests for multi-agent flows, including A2A messaging and loop termination.
+- Configure CI to run all tests and capture artifacts (spans, logs) for easier debugging of failures.
 
 ## 8. Risk Register and Mitigations
-- **Router Model Footprint**: Embedded 3B model increases memory usage (~3-4 GB). Mitigation: Document resource requirement, ensure container limit fits host; fall back to lighter model if needed.
-- **Checkpoint Corruption**: SQLite WAL issues could block resume. Mitigation: Frequent backups, WAL checkpointing on graceful shutdown, instrumentation for errors.
-- **Observability Overhead**: Debug mode OTEL flood could impact latency. Mitigation: Time-bound to 5 minutes, sample logs where possible.
-- **UI Complexity**: Additional panels could overwhelm users. Mitigation: Feature flag for advanced panels, maintain minimal default view.
-- **Async Migration Drift**: Without documentation, future event-driven shift could break contracts. Mitigation: Maintain schemas and idempotency checks early (Phase 3 tasks).
+- **Router Model Footprint**: An embedded 3B model adds ~2-3 GB to the Agent Service memory. **Mitigation**: Document the resource requirement. If it becomes an issue, fall back to a smaller model or a simpler heuristic-based router.
+- **Checkpoint Corruption**: SQLite WAL is robust, but file corruption is still possible. **Mitigation**: Implement automated backups of the checkpoint database. Add monitoring for write errors.
+- **Observability Overhead**: Debug mode can be verbose. **Mitigation**: Keep it time-bounded (5 mins post-crash) and off by default in production.
+- **UI Complexity**: New panels could become cluttered. **Mitigation**: Use a clean, minimal design. Keep advanced views optional or collapsed by default.
 
 ## 9. Jira Task Creation Cheatsheet
-Each task above maps to a Jira epic or story. Suggested format:
-- **Summary**: `[Phase X] Task Name`
-- **Description**: Copy task section (Context, Objectives, Deliverables, Acceptance Criteria, Dependencies).
-- **Labels**: `phase-x`, `router`, `observability`, etc.
-- **Story Points**: Estimate based on team velocity (guideline: Phase 1 tasks 3-5 pts each, Phase 2 tasks 5-8 pts, Phase 3 tasks 3-5 pts).
-- **Attachments**: Link to relevant doc sections or diagrams (e.g., include ASCII diagram from Section 10).
+- **Summary**: `[Phase X] Task Name` (e.g., `[P1] Embedded Router for Agent Guidance`)
+- **Description**: Copy the full task details (Context, Objectives, Deliverables, Acceptance Criteria).
+- **Labels**: `phase-1`, `router`, `mvp`, `observability`.
+- **Story Points**: Use estimates from the original plans as a baseline (e.g., P1 tasks: 3-5 pts; P2 tasks: 5-8 pts).
 
 ## 10. Reference Architecture Visuals
 
-### System Overview (Current Focus: Sync gRPC + Embedded Router + Containers)
+### System Overview (Sync gRPC + Informed Agent)
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                     Developer / UI (Next.js)                   │
@@ -209,62 +182,45 @@ Each task above maps to a Jira epic or story. Suggested format:
                 │ WebSocket/SSE (spans/events)  │ gRPC (Query)    
 ┌───────────────┴───────────────────────────────┴───────────────┐
 │                        Agent Service                          │
-│  • LangGraph workflow (linear → bounded cyclic)               │
-│  • Embedded Router (≈3B quantized)                            │
-│  • SQLite checkpoints (resume after crash)                    │
-│  • OBS_MODE: Debug → full OTEL (5m post-crash), Shipping spans│
-└───────┬─────────────────────┬────────────────────────┬─────────────┘
-        │ gRPC                │ gRPC                   │ gRPC             
-        ▼                     ▼                        ▼                 
-┌─────────────┐         ┌─────────────┐        ┌─────────────┐        
-│ Chroma Svc  │         │ LLM Service │        │ Tool Svc    │        
-│ (Vector DB) │         │ (llama.cpp) │        │ (Registry)  │        
-│ • Indexed   │         │ • Fixed thr │        │ • Circuit   │        
-│ • WAL logs  │         │ • KV cache  │        │   breakers  │        
-└─────────────┘         └─────────────┘        └─────────────┘        
-    ▲                          ▲                        ▲                
-    └──────  Spans/metrics/logs (mode-dependent)  ──────┘
+│  • Arbitrator Agent (Makes Final Decision)                    │
+│  • Embedded Router (Provides Recommendations)                 │
+│  • LangGraph Workflow (Linear → Bounded Cyclic)               │
+│  • SQLite Checkpoints (Resume After Crash)                    │
+└───────┬───────────────┬──────────────────────┬────────────────┘
+        │ gRPC          │ gRPC                 │ gRPC
+        ▼               ▼                      ▼
+┌─────────────┐   ┌─────────────┐        ┌─────────────┐
+│ RAG Service │   │ Coding Svc  │        │ Tools Svc   │
+│ (Mistral)   │   │ (DeepSeek)  │        │ (Llama 8B)  │
+└─────────────┘   └─────────────┘        └─────────────┘
 ```
 
 ### Resumability and Bounded Loops
 ```
 User Query
-  → Router span (decision + confidence)
+  → Router Recommendation (span)
+  → Arbitrator Agent Decision (span)
   → Graph: RAG → Coder → Reviewer
-        │          ▲
-        └──(≤2)────┘  (bounded loop)
+       │          ▲
+       └──(≤2)────┘   (bounded loop)
 
-At each node:
-  • Checkpoint saved (state + messages + remaining loops)
-  • On crash: reload last checkpoint, resume next hop
-  • UI displays "remaining loops: 1/2"
+Checkpoints at each node:
+  • On crash: restart service, load last checkpoint, resume next hop.
+  • Agent state includes "remaining_hops: 1/2".
 ```
 
-### Agent2Agent Messaging Visibility
+### Agent-to-Agent Messaging
 ```
-Reviewer ──► Agent2Agent Message (proto) ──► Coder
-  • Persists with trace-id + hop index
-  • Router may re-evaluate route if service health changed
-  • UI timeline shows structured message payloads
+Reviewer Agent ──► A2A Message (persisted in checkpoint) ──► Coder Agent
+  • Message includes trace-id and hop index.
+  • UI shows message in timeline.
+  • Arbitrator agent sees message in state for next decision.
 ```
 
 ## 11. Next Steps for Program Managers
-- Review Phase 1 tasks, confirm dependencies, and schedule backlog grooming session.
-- Validate resource allocation (model hosting requirements) with infrastructure team.
-- Prepare stakeholder demo criteria focusing on timeline panel, router decision visibility, and crash resume scenario.
-- Plan regular checkpoints (end of each phase) to reassess need for Phase 3 scope based on business priority.
-
-## 12. Appendix: Configuration Snapshots
-- **Environment Variables**: `OBS_MODE`, `ROUTER_MODEL_PATH`, `ROUTER_CONFIDENCE_THRESHOLD`, `CHECKPOINT_DB_PATH`.
-- **Compose Overrides**: Provide sample `docker-compose.override.yml` enabling Debug mode and resource caps.
-- **Testing Commands**:
-  - `pytest tests/unit/test_router.py -k decision`
-  - `pytest tests/integration/test_checkpoint_resume.py`
-  - `make up && pytest tests/integration/test_agent_service_e2e.py`
-- **Manual Verification Checklist**:
-  - Start stack in Debug mode, trigger crash, observe 5-minute telemetry.
-  - Trigger query requiring loop (review cycle) and confirm UI displays hops.
-  - Validate Agent2Agent message visible in timeline with correct correlation ID.
+- Review Phase 1 tasks for the MVP, confirm dependencies, and groom the backlog.
+- Validate resource estimates for the router model with the infrastructure team.
+- Prepare a stakeholder demo focused on the core MVP: crash-resume, basic observability (timeline, router panel), and a simple linear workflow.
 
 ---
-This plan equips the team to implement the sync-first, resumable, observable agent mesh while preserving future flexibility for event-driven expansion.
+This master plan equips the team to build a robust, observable, and resumable agent architecture, starting with a minimal viable product and providing a clear path for future enhancements.

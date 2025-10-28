@@ -14,6 +14,7 @@ Example:
 """
 
 import logging
+import json
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
@@ -28,6 +29,8 @@ from shared.clients.cpp_llm_client import CppLLMClient
 from tools.builtin.web_search import web_search
 from tools.builtin.math_solver import math_solver
 from tools.builtin.web_loader import load_web_page
+from router import Router, RouterConfig
+from prompts import AGENT_SYSTEM_PROMPT_TEMPLATE, AGENT_SIMPLE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,8 @@ class AgentServiceAdapter:
         config: Optional[WorkflowConfig] = None,
         checkpoint_db_path: str = "./data/agent_checkpoints.db",
         system_prompt: Optional[str] = None,
+        router_config: Optional[RouterConfig] = None,
+        enable_router: bool = True,
     ):
         """
         Initialize adapter with tool registry and checkpoint manager.
@@ -74,6 +79,8 @@ class AgentServiceAdapter:
             config: Workflow configuration (uses defaults if None)
             checkpoint_db_path: Path to SQLite checkpoint database
             system_prompt: Optional system prompt for all conversations
+            router_config: Optional router configuration
+            enable_router: Whether to enable the embedded router (default: True)
         """
         # Initialize tool registry
         self.registry = LocalToolRegistry()
@@ -86,6 +93,20 @@ class AgentServiceAdapter:
         self.checkpoint_manager = CheckpointManager(db_path=str(self.checkpoint_db_path))
         self.checkpointer = self.checkpoint_manager.create_checkpointer()
         
+        # Initialize router
+        self.enable_router = enable_router
+        if self.enable_router:
+            try:
+                self.router = Router(config=router_config)
+                logger.info("Router enabled")
+            except Exception as e:
+                logger.warning(f"Router initialization failed: {e}. Continuing without router.")
+                self.enable_router = False
+                self.router = None
+        else:
+            self.router = None
+            logger.info("Router disabled")
+        
         # Initialize workflow configuration
         self.config = config or WorkflowConfig(
             max_iterations=5,
@@ -96,20 +117,8 @@ class AgentServiceAdapter:
             timeout_seconds=30,
         )
         
-        # System prompt (optional)
-        self.system_prompt = system_prompt or (
-            "You are a helpful AI assistant that provides detailed, informative responses. "
-            "When you have information, explain it thoroughly with context and examples.\n\n"
-            "Tool Usage Rules:\n"
-            "1. Use web_search ONLY when you need current or specific information you don't have\n"
-            "2. Use math_solver for calculations, equations, or numerical problems\n"
-            "3. Use load_web_page to fetch content from specific URLs\n\n"
-            "Response Guidelines:\n"
-            "- Provide comprehensive answers with examples and context when appropriate\n"
-            "- If using a tool, synthesize the results into a clear, detailed explanation\n"
-            "- For simple questions or greetings, answer directly and conversationally\n"
-            "- Always be helpful, informative, and thorough in your responses"
-        )
+        # System prompt (will be dynamically generated with router recommendation)
+        self.base_system_prompt = system_prompt
         
         # Workflow (initialized after LLM engine is set)
         self.workflow: Optional[AgentWorkflow] = None
@@ -119,12 +128,15 @@ class AgentServiceAdapter:
         self.total_queries = 0
         self.successful_queries = 0
         self.failed_queries = 0
+        self.router_calls = 0
+        self.router_failures = 0
         
         logger.info(
             f"AgentServiceAdapter initialized: "
             f"checkpoint_db={checkpoint_db_path}, "
             f"tools={len(self.registry.tools)}, "
-            f"max_iterations={self.config.max_iterations}"
+            f"max_iterations={self.config.max_iterations}, "
+            f"router={'enabled' if self.enable_router else 'disabled'}"
         )
     
     def _register_builtin_tools(self):
@@ -175,6 +187,31 @@ class AgentServiceAdapter:
             logger.warning(f"Failed to register cpp_llm_inference: {e}")
         
         logger.info(f"Total tools registered: {len(self.registry.tools)}")
+    
+    def _build_system_prompt(self, router_recommendation: Optional[dict] = None) -> str:
+        """
+        Build system prompt with optional router recommendation.
+        
+        Args:
+            router_recommendation: Optional router recommendation to inject
+        
+        Returns:
+            str: System prompt for the agent
+        """
+        if self.base_system_prompt:
+            # Use custom system prompt if provided
+            return self.base_system_prompt
+        
+        # Use template-based prompt
+        if router_recommendation:
+            # Format router recommendation for display
+            rec_text = json.dumps(router_recommendation, indent=2)
+            return AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+                router_recommendation=rec_text
+            )
+        else:
+            # No router recommendation, use simple prompt
+            return AGENT_SIMPLE_SYSTEM_PROMPT
     
     def set_llm_engine(self, llm_engine):
         """
@@ -267,7 +304,24 @@ class AgentServiceAdapter:
         )
         
         try:
-            # Create initial state
+            # Step 1: Get router recommendation (if enabled)
+            router_recommendation = None
+            if self.enable_router and self.router:
+                try:
+                    self.router_calls += 1
+                    router_recommendation = self.router.route(query)
+                    logger.info(
+                        f"Router recommendation: "
+                        f"primary={router_recommendation.get('primary_service')}, "
+                        f"confidence={router_recommendation.get('confidence', 0):.2f}, "
+                        f"requires_tools={router_recommendation.get('requires_tools')}"
+                    )
+                except Exception as e:
+                    self.router_failures += 1
+                    logger.warning(f"Router failed, continuing without recommendation: {e}")
+                    router_recommendation = None
+            
+            # Step 2: Create initial state with router recommendation
             initial_state = create_initial_state(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -276,11 +330,13 @@ class AgentServiceAdapter:
                     "query_timestamp": start_time.isoformat(),
                 },
             )
+            initial_state["router_recommendation"] = router_recommendation
             
-            # Add system prompt if this is a new conversation
+            # Step 3: Build system prompt with router recommendation
             messages = []
-            if self.system_prompt:
-                messages.append(SystemMessage(content=self.system_prompt))
+            system_prompt = self._build_system_prompt(router_recommendation)
+            if system_prompt:
+                messages.append(SystemMessage(content=system_prompt))
             
             # Add user message
             messages.append(HumanMessage(content=query))
@@ -324,12 +380,17 @@ class AgentServiceAdapter:
                 "content": content,
                 "tool_results": result.get("tool_results", []),
                 "iteration_count": result.get("retry_count", 0),
+                "router_recommendation": router_recommendation,  # Include router rec
                 "metadata": {
                     "thread_id": conversation_id,
                     "message_count": len(messages),
                     "processing_time_ms": (
                         datetime.now() - start_time
                     ).total_seconds() * 1000,
+                    "router_latency_ms": (
+                        router_recommendation.get("latency_ms", 0)
+                        if router_recommendation else 0
+                    ),
                 },
             }
             
@@ -430,6 +491,9 @@ class AgentServiceAdapter:
                 - successful_queries: Queries completed successfully
                 - failed_queries: Queries that encountered errors
                 - success_rate: Percentage of successful queries
+                - router_calls: Number of router invocations
+                - router_failures: Number of router failures
+                - router_success_rate: Router success percentage
                 - tools_registered: Number of registered tools
                 - tools_available: Number of tools with circuit breaker closed
                 - checkpoint_db: Path to checkpoint database
@@ -444,6 +508,12 @@ class AgentServiceAdapter:
             else 0.0
         )
         
+        router_success_rate = (
+            ((self.router_calls - self.router_failures) / self.router_calls * 100)
+            if self.router_calls > 0
+            else 0.0
+        )
+        
         tools_available = len([
             name
             for name, tool in self.registry.tools.items()
@@ -455,6 +525,10 @@ class AgentServiceAdapter:
             "successful_queries": self.successful_queries,
             "failed_queries": self.failed_queries,
             "success_rate": success_rate,
+            "router_enabled": self.enable_router,
+            "router_calls": self.router_calls,
+            "router_failures": self.router_failures,
+            "router_success_rate": router_success_rate,
             "tools_registered": len(self.registry.tools),
             "tools_available": tools_available,
             "checkpoint_db": str(self.checkpoint_db_path),
