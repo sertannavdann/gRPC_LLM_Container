@@ -13,13 +13,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
-try:
-    from llama_cpp import Llama
-    LLAMA_CPP_AVAILABLE = True
-except ImportError:
-    LLAMA_CPP_AVAILABLE = False
-    logging.warning("llama-cpp-python not available, router will use fallback only")
-
 from prompts import ROUTER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -29,80 +22,68 @@ logger = logging.getLogger(__name__)
 class RouterConfig:
     """Configuration for the embedded router."""
     model_path: str = "/app/models/qwen2.5-3b-instruct-q5_k_m.gguf"
-    max_tokens: int = 512
-    temperature: float = 0.1  # Low temperature for deterministic routing
-    n_ctx: int = 2048
+    max_tokens: int = 256
+    temperature: float = 0.1
+    n_ctx: int = 4096
     n_threads: int = 4
     timeout_seconds: int = 10
 
 
 class Router:
     """
-    Embedded router that recommends services for user queries.
+    Embedded router using llama-cpp-python for service recommendation.
     
-    Uses llama-cpp-python to run a quantized 3B model for fast, low-latency
-    routing decisions. The router outputs JSON recommendations that inform
-    the main agent's decision-making process.
-    
-    Attributes:
-        config: RouterConfig with model and execution settings
-        model: Loaded Llama model instance (None if not available)
-        model_loaded: Whether the model has been successfully loaded
-    
-    Example:
-        >>> router = Router()
-        >>> recommendation = router.route("What is the weather in Paris?")
-        >>> print(recommendation["primary_service"])
-        "web_search"
+    The router analyzes user queries and recommends which services should
+    be involved in handling them. It returns structured JSON with:
+    - recommended_services: List of service names
+    - primary_service: Main service to use
+    - confidence: 0.0-1.0 confidence score
     """
     
     def __init__(self, config: Optional[RouterConfig] = None):
-        """
-        Initialize router with configuration.
-        
-        Args:
-            config: Optional RouterConfig (uses defaults if None)
-        """
+        """Initialize router with configuration."""
         self.config = config or RouterConfig()
-        self.model = None
-        self.model_loaded = False
+        self.llm = None  # Lazy load on first use
+        self.metrics = {
+            "total_calls": 0,
+            "successful_routes": 0,
+            "fallback_routes": 0,
+            "errors": 0,
+            "avg_latency_ms": 0.0
+        }
+        self._validate_model_exists()
+    
+    def _validate_model_exists(self) -> None:
+        """Validate that model exists."""
+        model_path = Path(self.config.model_path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Router model not found: {self.config.model_path}")
         
-        # Try to load the model
-        self._load_model()
-        
+        logger.info(f"Router model validated: {model_path.name}")
         logger.info(
-            f"Router initialized: "
-            f"model={Path(self.config.model_path).name if self.model_loaded else 'fallback-only'}, "
-            f"temp={self.config.temperature}, "
-            f"timeout={self.config.timeout_seconds}s"
+            f"Router initialized: model={model_path.name}, "
+            f"temp={self.config.temperature}, timeout={self.config.timeout_seconds}s"
         )
     
     def _load_model(self):
-        """Load the router model if available."""
-        if not LLAMA_CPP_AVAILABLE:
-            logger.warning("llama-cpp-python not available, using fallback routing only")
-            return
-        
-        model_path = Path(self.config.model_path)
-        if not model_path.exists():
-            logger.warning(f"Router model not found: {model_path}")
+        """Lazy load the LLM model."""
+        if self.llm is not None:
             return
         
         try:
-            logger.info(f"Loading router model: {model_path.name}")
-            self.model = Llama(
-                model_path=str(model_path),
+            from llama_cpp import Llama
+            
+            logger.info(f"Loading router model: {self.config.model_path}")
+            self.llm = Llama(
+                model_path=self.config.model_path,
                 n_ctx=self.config.n_ctx,
                 n_threads=self.config.n_threads,
-                n_batch=512,
-                verbose=False,
+                verbose=False
             )
-            self.model_loaded = True
             logger.info("Router model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load router model: {e}")
-            self.model = None
-            self.model_loaded = False
+            raise
     
     def route(self, query: str) -> Dict[str, Any]:
         """
@@ -119,206 +100,190 @@ class Router:
                 - confidence: Overall confidence score
                 - latency_ms: Router execution time
                 - error: Error message (if routing failed)
-        
-        Example:
-            >>> recommendation = router.route("Calculate 15 * 23")
-            >>> print(recommendation["primary_service"])
-            "math_solver"
-            >>> print(recommendation["confidence"])
-            0.98
         """
         start_time = time.time()
-        
-        if not self.model_loaded or not self.model:
-            logger.warning("Router not available, using fallback")
-            return self._fallback_route(query, start_time)
+        self.metrics["total_calls"] += 1
         
         try:
+            # Lazy load model on first use
+            self._load_model()
+            
             # Build prompt
-            prompt = f"{ROUTER_SYSTEM_PROMPT}\n\nUser Query: {query}\n\nJSON Output:"
+            prompt = self._build_prompt(query)
             
-            logger.debug(f"Executing router: query='{query[:50]}...'")
-            
-            # Generate with timeout using llama-cpp-python
-            output = self.model(
+            # Call LLM with JSON format constraint
+            response = self.llm(
                 prompt,
                 max_tokens=self.config.max_tokens,
                 temperature=self.config.temperature,
-                stop=["User Query:", "\n\n\n"],  # Stop tokens
-                echo=False,
+                stop=["</s>", "\n\n"],
+                echo=False
             )
             
-            # Extract text from output
-            if isinstance(output, dict) and "choices" in output:
-                text = output["choices"][0]["text"]
-            else:
-                text = str(output)
+            # Extract and parse JSON
+            output_text = response["choices"][0]["text"].strip()
+            recommendation = self._parse_router_output(output_text)
             
-            # Extract JSON from output
-            recommendation = self._parse_router_output(text)
-            
-            # Add metadata
-            latency_ms = (time.time() - start_time) * 1000
+            # Add latency
+            latency_ms = int((time.time() - start_time) * 1000)
             recommendation["latency_ms"] = latency_ms
-            recommendation["query"] = query[:100]  # Truncated for logging
             
-            # Calculate overall confidence
-            if recommendation.get("recommended_services"):
-                confidences = [
-                    s.get("confidence", 0.0)
-                    for s in recommendation["recommended_services"]
-                ]
-                recommendation["confidence"] = max(confidences) if confidences else 0.5
-            else:
-                recommendation["confidence"] = 0.5
+            # Update metrics
+            self.metrics["successful_routes"] += 1
+            self._update_avg_latency(latency_ms)
             
             logger.info(
-                f"Router recommendation: "
-                f"primary={recommendation.get('primary_service', 'unknown')}, "
-                f"confidence={recommendation.get('confidence', 0):.2f}, "
-                f"latency={latency_ms:.0f}ms"
+                f"Router recommendation: primary={recommendation['primary_service']}, "
+                f"confidence={recommendation['confidence']:.2f}, "
+                f"latency={latency_ms}ms"
             )
             
             return recommendation
-        
+            
         except Exception as e:
-            logger.error(f"Router error: {e}", exc_info=True)
-            return self._fallback_route(query, start_time, error=str(e))
+            logger.error(f"Router error: {e}")
+            self.metrics["errors"] += 1
+            
+            # Fallback to heuristic routing
+            return self._fallback_route(query, start_time, str(e))
+    
+    def _build_prompt(self, query: str) -> str:
+        """Build chat-formatted prompt for router."""
+        return f"""<|im_start|>system
+        {ROUTER_SYSTEM_PROMPT}<|im_end|>
+        <|im_start|>user
+        {query}<|im_end|>
+        <|im_start|>assistant
+        """
     
     def _parse_router_output(self, output: str) -> Dict[str, Any]:
         """
-        Parse JSON output from router model.
+        Parse router output to extract JSON recommendation.
         
-        Args:
-            output: Raw output from llama-cli
-        
-        Returns:
-            dict: Parsed recommendation
+        Uses brace counting to handle cases where LLM outputs extra text
+        after the JSON object.
         """
-        # Find JSON in output (may have extra text)
-        json_start = output.find("{")
-        json_end = output.rfind("}") + 1
+        # Find first opening brace
+        start_idx = output.find('{')
+        if start_idx == -1:
+            raise ValueError("No JSON object found in router output")
         
-        if json_start == -1 or json_end == 0:
-            logger.warning("No JSON found in router output")
-            raise ValueError("No JSON in output")
+        # Count braces to find matching closing brace
+        brace_count = 0
+        end_idx = start_idx
         
-        json_str = output[json_start:json_end]
+        for i in range(start_idx, len(output)):
+            if output[i] == '{':
+                brace_count += 1
+            elif output[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_idx = i + 1
+                    break
         
-        try:
-            recommendation = json.loads(json_str)
-            
-            # Validate structure
-            if "recommended_services" not in recommendation:
-                raise ValueError("Missing 'recommended_services' field")
-            
-            if "primary_service" not in recommendation:
-                # Infer from first recommendation
-                if recommendation["recommended_services"]:
-                    recommendation["primary_service"] = (
-                        recommendation["recommended_services"][0].get("service", "llm_service")
-                    )
-                else:
-                    recommendation["primary_service"] = "llm_service"
-            
-            if "requires_tools" not in recommendation:
-                # Infer from primary service
-                primary = recommendation["primary_service"]
-                recommendation["requires_tools"] = primary not in ["llm_service"]
-            
-            return recommendation
+        # Extract and parse JSON
+        json_str = output[start_idx:end_idx]
+        recommendation = json.loads(json_str)
         
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON from router: {e}")
-            logger.debug(f"Raw output: {output[:200]}")
-            raise ValueError(f"Invalid JSON: {e}")
+        # Validate required fields
+        required_fields = ["recommended_services", "primary_service", "requires_tools"]
+        missing = [f for f in required_fields if f not in recommendation]
+        if missing:
+            raise ValueError(f"Missing required fields: {missing}")
+        
+        # Extract overall confidence from first recommended service
+        if (recommendation.get("recommended_services") and 
+            len(recommendation["recommended_services"]) > 0 and
+            "confidence" in recommendation["recommended_services"][0]):
+            recommendation["confidence"] = recommendation["recommended_services"][0]["confidence"]
+        else:
+            # Default confidence if not provided
+            recommendation["confidence"] = 0.7
+        
+        return recommendation
     
-    def _fallback_route(
-        self,
-        query: str,
-        start_time: float,
-        error: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _fallback_route(self, query: str, start_time: float, error: str) -> Dict[str, Any]:
         """
-        Provide fallback routing when router fails.
-        
-        Uses simple heuristics to recommend services.
+        Fallback routing using keyword heuristics.
         
         Args:
             query: User query
-            start_time: Request start time
-            error: Optional error message
+            start_time: Start timestamp
+            error: Error message from primary routing
         
         Returns:
             dict: Fallback recommendation
         """
         query_lower = query.lower()
-        latency_ms = (time.time() - start_time) * 1000
+        latency_ms = int((time.time() - start_time) * 1000)
         
-        # Simple keyword-based routing
-        if any(word in query_lower for word in ["weather", "news", "current", "latest", "search"]):
+        self.metrics["fallback_routes"] += 1
+        
+        # Keyword-based heuristics
+        if any(kw in query_lower for kw in ["search", "find", "look up", "google"]):
             primary = "web_search"
-            confidence = 0.6
-            requires_tools = True
-        elif any(word in query_lower for word in ["calculate", "solve", "math", "equation", "=", "+"]):
+            services = ["web_search"]
+        elif any(kw in query_lower for kw in ["calculate", "math", "compute", "+", "-", "*", "/"]):
             primary = "math_solver"
-            confidence = 0.7
-            requires_tools = True
-        elif "http" in query_lower or "www." in query_lower or ".com" in query_lower:
+            services = ["math_solver"]
+        elif any(kw in query_lower for kw in ["load", "fetch", "read", "download", "url", "http"]):
             primary = "load_web_page"
-            confidence = 0.65
-            requires_tools = True
+            services = ["load_web_page"]
         else:
             primary = "llm_service"
-            confidence = 0.5
-            requires_tools = False
+            services = ["llm_service"]
         
-        recommendation = {
-            "recommended_services": [
-                {
-                    "service": primary,
-                    "confidence": confidence,
-                    "reasoning": "Fallback heuristic routing"
-                }
-            ],
-            "primary_service": primary,
-            "requires_tools": requires_tools,
-            "confidence": confidence,
-            "latency_ms": latency_ms,
-            "query": query[:100],
-            "fallback": True,
-        }
-        
-        if error:
-            recommendation["error"] = error
-        
-        logger.info(
-            f"Fallback routing: "
-            f"primary={primary}, "
-            f"confidence={confidence:.2f}"
-        )
-        
-        return recommendation
-    
-    def health_check(self) -> Dict[str, Any]:
-        """
-        Check router health status.
-        
-        Returns:
-            dict: Health status with:
-                - status: "healthy", "degraded", or "unhealthy"
-                - model_loaded: Whether model is available
-                - model_path: Path to model file
-        """
-        status = "healthy" if self.model_loaded else "degraded"
+        logger.info(f"Fallback routing: primary={primary}, confidence=0.50")
         
         return {
-            "status": status,
-            "model_loaded": self.model_loaded,
-            "model_path": self.config.model_path,
+            "recommended_services": services,
+            "primary_service": primary,
+            "requires_tools": primary != "llm_service",
+            "confidence": 0.5,
+            "latency_ms": latency_ms,
+            "error": error,
+            "fallback": True
+        }
+    
+    def _update_avg_latency(self, new_latency_ms: int) -> None:
+        """Update running average latency."""
+        successful = self.metrics["successful_routes"]
+        current_avg = self.metrics["avg_latency_ms"]
+        
+        # Incremental average: new_avg = old_avg + (new_value - old_avg) / count
+        self.metrics["avg_latency_ms"] = current_avg + (new_latency_ms - current_avg) / successful
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get router performance metrics."""
+        return {
+            **self.metrics,
+            "success_rate": (
+                self.metrics["successful_routes"] / self.metrics["total_calls"]
+                if self.metrics["total_calls"] > 0
+                else 0.0
+            ),
+            "fallback_rate": (
+                self.metrics["fallback_routes"] / self.metrics["total_calls"]
+                if self.metrics["total_calls"] > 0
+                else 0.0
+            )
+        }
+    
+    def health_check(self) -> Dict[str, Any]:
+        """Check router health status."""
+        model_path = Path(self.config.model_path)
+        model_exists = model_path.exists()
+        
+        return {
+            "model_path": str(model_path),
+            "model_exists": model_exists,
+            "model_loaded": self.llm is not None,
+            "model_size_mb": model_path.stat().st_size / (1024 * 1024) if model_exists else 0,
             "config": {
-                "temperature": self.config.temperature,
                 "max_tokens": self.config.max_tokens,
-                "timeout": self.config.timeout_seconds,
+                "temperature": self.config.temperature,
+                "n_ctx": self.config.n_ctx,
+                "timeout_seconds": self.config.timeout_seconds
             },
+            "metrics": self.get_metrics()
         }

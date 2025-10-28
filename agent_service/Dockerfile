@@ -14,11 +14,10 @@ COPY agent_service/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
-# Install llama-cpp-python for router
-RUN pip install llama-cpp-python==0.2.90 --no-cache-dir
-
-# Copy router model from llm_service
+# Copy router model and llama-cli binary from llm_service
 COPY llm_service/models/qwen2.5-3b-instruct-q5_k_m.gguf ./models/
+COPY llm_service/llama/llama-cli ./llama/
+RUN chmod +x ./llama/llama-cli
 
 # Shared components (including pre-generated protobuf files)
 COPY shared/ ./shared/

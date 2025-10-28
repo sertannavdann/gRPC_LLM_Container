@@ -206,8 +206,10 @@ class LLMClientWrapper:
                 # Handle both content and function calls
                 if msg.content:
                     parts.append(f"Assistant: {msg.content}\n")
-                # Don't include tool call JSON in the prompt - it confuses the model
-                # The tool results will be included via ToolMessage below
+                # Check for function calls in additional_kwargs
+                if msg.additional_kwargs.get("tool_calls"):
+                    tool_calls = msg.additional_kwargs["tool_calls"]
+                    parts.append(f"Assistant: [Called tools: {json.dumps(tool_calls)}]\n")
             elif isinstance(msg, (ToolMessage, FunctionMessage)):
                 # Include tool results
                 parts.append(f"Tool Result: {msg.content}\n")
@@ -287,22 +289,15 @@ class LLMClientWrapper:
         return f"""AVAILABLE TOOLS:
 {tools_text}
 
-WHEN TO USE TOOLS:
-- web_search: For current events, recent information, or specific facts you need to look up
-- math_solver: For calculations, equations, or numerical problems
-- load_web_page: For fetching content from specific URLs
-
-HOW TO CALL A TOOL:
-Respond with ONLY this JSON format (no extra text before or after):
-{{"function_call": {{"name": "tool_name", "arguments": {{"param": "value"}}}}}}
+TOOL CALLING FORMAT (use ONLY when needed):
+{{"function_call": {{"name": "TOOL_NAME", "arguments": {{EXACT_PARAMS}}}}}}
 
 EXAMPLES:
-{examples_text}
+web_search: {{"function_call": {{"name": "web_search", "arguments": {{"query": "search terms"}}}}}}
+math_solver: {{"function_call": {{"name": "math_solver", "arguments": {{"expression": "2+2"}}}}}}
+load_web_page: {{"function_call": {{"name": "load_web_page", "arguments": {{"url": "https://example.com"}}}}}}
 
-IMPORTANT: 
-- If you can answer directly without tools, just respond normally
-- If you need a tool, respond ONLY with the JSON (nothing else)
-- Use exact parameter names as shown above"""
+CRITICAL: Use exact parameter names (query/expression/url). Output ONLY JSON when calling tool."""
     
     def _extract_tool_calls(
         self,
@@ -324,6 +319,9 @@ IMPORTANT:
         """
         if not content:
             return []
+        
+        # Log the raw content for debugging
+        logger.debug(f"Extracting tool calls from content: {content[:200]}")
 
         def normalize_args(args):
             if isinstance(args, dict):
@@ -371,11 +369,34 @@ IMPORTANT:
         # Try strict JSON forms first
         parsed = extract_first_json(content)
         if isinstance(parsed, dict):
-            # OpenAI-style
+            logger.debug(f"Parsed JSON structure: {parsed}")
+            
+            # OpenAI-style: {"function_call": {"name": "tool_name", "arguments": {...}}}
             if "function_call" in parsed:
                 fc = parsed["function_call"] or {}
                 name = fc.get("name", "")
                 args = normalize_args(fc.get("arguments", {}))
+                
+                # CRITICAL FIX: Handle double-wrapped tool calls
+                # If arguments contain "tool_name" and "param", unwrap them
+                if isinstance(args, dict) and "tool_name" in args:
+                    logger.warning(f"Detected double-wrapped tool call, unwrapping: {args}")
+                    name = args.get("tool_name", name)  # Use inner tool_name
+                    
+                    # Extract actual parameters
+                    if "param" in args and isinstance(args["param"], dict):
+                        args = args["param"]  # Unwrap to inner params
+                    elif "arguments" in args:
+                        args = normalize_args(args["arguments"])
+                    else:
+                        # Try to find the actual parameter
+                        unwrapped_args = {k: v for k, v in args.items() 
+                                        if k not in ["tool_name", "param", "arguments"]}
+                        if unwrapped_args:
+                            args = unwrapped_args
+                
+                logger.info(f"Extracted tool call: name={name}, args={args}")
+                
                 tool_calls.append({
                     "id": f"call_{abs(hash(name)) % 100000}",
                     "type": "function",

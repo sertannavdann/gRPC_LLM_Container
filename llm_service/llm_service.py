@@ -56,7 +56,7 @@ def load_model():
     logger.info("Loading model from %s", MODEL_PATH)
     return Llama(
         model_path=MODEL_PATH,
-        n_ctx=2048,
+        n_ctx=4096,  # Increased from 2048 to 4096
         n_threads=4,
         n_batch=512,
         verbose=False

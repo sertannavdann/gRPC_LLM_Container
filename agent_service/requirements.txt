@@ -10,3 +10,4 @@ scikit-learn
 circuitbreaker
 python-dotenv
 requests
+llama-cpp-python
