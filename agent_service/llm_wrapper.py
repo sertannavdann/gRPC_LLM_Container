@@ -206,10 +206,8 @@ class LLMClientWrapper:
                 # Handle both content and function calls
                 if msg.content:
                     parts.append(f"Assistant: {msg.content}\n")
-                # Check for function calls in additional_kwargs
-                if msg.additional_kwargs.get("tool_calls"):
-                    tool_calls = msg.additional_kwargs["tool_calls"]
-                    parts.append(f"Assistant: [Called tools: {json.dumps(tool_calls)}]\n")
+                # Don't include tool call JSON in the prompt - it confuses the model
+                # The tool results will be included via ToolMessage below
             elif isinstance(msg, (ToolMessage, FunctionMessage)):
                 # Include tool results
                 parts.append(f"Tool Result: {msg.content}\n")

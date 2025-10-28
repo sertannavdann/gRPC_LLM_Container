@@ -1,5 +1,5 @@
 """
-Embedded router for service recommendation using llama-cli.
+Embedded router for service recommendation using llama-cpp-python.
 
 The router uses a small quantized model to analyze user queries and recommend
 which services should handle them. This informs the main agent's decision-making
@@ -8,11 +8,17 @@ without replacing it.
 
 import json
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
+
+try:
+    from llama_cpp import Llama
+    LLAMA_CPP_AVAILABLE = True
+except ImportError:
+    LLAMA_CPP_AVAILABLE = False
+    logging.warning("llama-cpp-python not available, router will use fallback only")
 
 from prompts import ROUTER_SYSTEM_PROMPT
 
@@ -23,7 +29,6 @@ logger = logging.getLogger(__name__)
 class RouterConfig:
     """Configuration for the embedded router."""
     model_path: str = "/app/models/qwen2.5-3b-instruct-q5_k_m.gguf"
-    llama_cli_path: str = "/app/llama/llama-cli"
     max_tokens: int = 512
     temperature: float = 0.1  # Low temperature for deterministic routing
     n_ctx: int = 2048
@@ -35,13 +40,14 @@ class Router:
     """
     Embedded router that recommends services for user queries.
     
-    Uses llama-cli binary to run a quantized 3B model for fast, low-latency
+    Uses llama-cpp-python to run a quantized 3B model for fast, low-latency
     routing decisions. The router outputs JSON recommendations that inform
     the main agent's decision-making process.
     
     Attributes:
         config: RouterConfig with model and execution settings
-        model_loaded: Whether the model has been validated
+        model: Loaded Llama model instance (None if not available)
+        model_loaded: Whether the model has been successfully loaded
     
     Example:
         >>> router = Router()
@@ -58,37 +64,45 @@ class Router:
             config: Optional RouterConfig (uses defaults if None)
         """
         self.config = config or RouterConfig()
+        self.model = None
         self.model_loaded = False
         
-        # Validate paths
-        self._validate_paths()
+        # Try to load the model
+        self._load_model()
         
         logger.info(
             f"Router initialized: "
-            f"model={Path(self.config.model_path).name}, "
+            f"model={Path(self.config.model_path).name if self.model_loaded else 'fallback-only'}, "
             f"temp={self.config.temperature}, "
             f"timeout={self.config.timeout_seconds}s"
         )
     
-    def _validate_paths(self):
-        """Validate that model and llama-cli exist."""
-        model_path = Path(self.config.model_path)
-        cli_path = Path(self.config.llama_cli_path)
+    def _load_model(self):
+        """Load the router model if available."""
+        if not LLAMA_CPP_AVAILABLE:
+            logger.warning("llama-cpp-python not available, using fallback routing only")
+            return
         
+        model_path = Path(self.config.model_path)
         if not model_path.exists():
             logger.warning(f"Router model not found: {model_path}")
             return
         
-        if not cli_path.exists():
-            logger.warning(f"llama-cli not found: {cli_path}")
-            return
-        
-        if not cli_path.is_file():
-            logger.warning(f"llama-cli is not a file: {cli_path}")
-            return
-        
-        self.model_loaded = True
-        logger.info("Router model and llama-cli validated")
+        try:
+            logger.info(f"Loading router model: {model_path.name}")
+            self.model = Llama(
+                model_path=str(model_path),
+                n_ctx=self.config.n_ctx,
+                n_threads=self.config.n_threads,
+                n_batch=512,
+                verbose=False,
+            )
+            self.model_loaded = True
+            logger.info("Router model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load router model: {e}")
+            self.model = None
+            self.model_loaded = False
     
     def route(self, query: str) -> Dict[str, Any]:
         """
@@ -115,7 +129,7 @@ class Router:
         """
         start_time = time.time()
         
-        if not self.model_loaded:
+        if not self.model_loaded or not self.model:
             logger.warning("Router not available, using fallback")
             return self._fallback_route(query, start_time)
         
@@ -123,35 +137,25 @@ class Router:
             # Build prompt
             prompt = f"{ROUTER_SYSTEM_PROMPT}\n\nUser Query: {query}\n\nJSON Output:"
             
-            # Build llama-cli command
-            cmd = [
-                self.config.llama_cli_path,
-                "-m", self.config.model_path,
-                "-p", prompt,
-                "-n", str(self.config.max_tokens),
-                "--temp", str(self.config.temperature),
-                "-c", str(self.config.n_ctx),
-                "-t", str(self.config.n_threads),
-                "--log-disable",  # Disable llama.cpp logging for cleaner output
-            ]
-            
             logger.debug(f"Executing router: query='{query[:50]}...'")
             
-            # Execute with timeout
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.config.timeout_seconds,
+            # Generate with timeout using llama-cpp-python
+            output = self.model(
+                prompt,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+                stop=["User Query:", "\n\n\n"],  # Stop tokens
+                echo=False,
             )
             
-            if result.returncode != 0:
-                logger.error(f"llama-cli failed: {result.stderr}")
-                return self._fallback_route(query, start_time, error=result.stderr)
+            # Extract text from output
+            if isinstance(output, dict) and "choices" in output:
+                text = output["choices"][0]["text"]
+            else:
+                text = str(output)
             
             # Extract JSON from output
-            output = result.stdout.strip()
-            recommendation = self._parse_router_output(output)
+            recommendation = self._parse_router_output(text)
             
             # Add metadata
             latency_ms = (time.time() - start_time) * 1000
@@ -176,10 +180,6 @@ class Router:
             )
             
             return recommendation
-        
-        except subprocess.TimeoutExpired:
-            logger.error(f"Router timeout after {self.config.timeout_seconds}s")
-            return self._fallback_route(query, start_time, error="timeout")
         
         except Exception as e:
             logger.error(f"Router error: {e}", exc_info=True)
@@ -309,7 +309,6 @@ class Router:
                 - status: "healthy", "degraded", or "unhealthy"
                 - model_loaded: Whether model is available
                 - model_path: Path to model file
-                - cli_path: Path to llama-cli binary
         """
         status = "healthy" if self.model_loaded else "degraded"
         
@@ -317,7 +316,6 @@ class Router:
             "status": status,
             "model_loaded": self.model_loaded,
             "model_path": self.config.model_path,
-            "cli_path": self.config.llama_cli_path,
             "config": {
                 "temperature": self.config.temperature,
                 "max_tokens": self.config.max_tokens,

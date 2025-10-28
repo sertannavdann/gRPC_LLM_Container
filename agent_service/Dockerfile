@@ -2,19 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies
-RUN apt-get update && apt-get install -y protobuf-compiler && \
-    rm -rf /var/lib/apt/lists/*
+# System dependencies (including build tools for llama-cpp-python)
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    build-essential \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
 COPY agent_service/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
-# Copy router model and llama-cli binary from llm_service
+# Install llama-cpp-python for router
+RUN pip install llama-cpp-python==0.2.90 --no-cache-dir
+
+# Copy router model from llm_service
 COPY llm_service/models/qwen2.5-3b-instruct-q5_k_m.gguf ./models/
-COPY llm_service/llama/llama-cli ./llama/
-RUN chmod +x ./llama/llama-cli
 
 # Shared components (including pre-generated protobuf files)
 COPY shared/ ./shared/
@@ -52,6 +56,8 @@ RUN find ./shared/generated -name "*_pb2_grpc.py" -type f -exec sed -i 's/^impor
 COPY agent_service/agent_service.py .
 COPY agent_service/adapter.py .
 COPY agent_service/llm_wrapper.py .
+COPY agent_service/router.py .
+COPY agent_service/prompts.py .
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 

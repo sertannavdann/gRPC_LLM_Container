@@ -1,8 +1,34 @@
 # Phase 1, Task 1: Embedded Router Implementation Summary
 
-**Task**: P1-T1: Embedded Router for Agent Guidance  
-**Status**: ✅ Complete  
-**Date**: October 27, 2025
+**Task**: P1-T1: Embedded Router for Agent Guidance
+
+## Critical Fixes Applied (October 28, 2025)
+
+### Fix 1: Router Binary Architecture Issue
+**Problem**: The `llama-cli` binary was compiled for macOS ARM64 but Docker containers run Linux x86_64, causing `[Errno 8] Exec format error`.
+
+**Solution**: Switched from subprocess-based `llama-cli` execution to `llama-cpp-python` library:
+- Removed dependency on pre-compiled binary
+- Added `llama-cpp-python==0.2.90` to agent_service dependencies
+- Updated Dockerfile to install build tools (cmake, gcc) for compilation
+- Modified `router.py` to use `Llama` class directly
+
+**Impact**: Router now works cross-platform and benefits from Python library's optimizations.
+
+### Fix 2: Tool Call Formatting Issue
+**Problem**: The UI was displaying raw JSON like `[Called tools: [{"id": "call_60872"...}]]` instead of clean responses.
+
+**Root Cause**: Line 214 in `llm_wrapper.py` was injecting tool call JSON into the conversation history, which the LLM then echoed back.
+
+**Solution**: Removed the problematic line that added tool calls to the prompt:
+```python
+# REMOVED:
+if msg.additional_kwargs.get("tool_calls"):
+    tool_calls = msg.additional_kwargs["tool_calls"]
+    parts.append(f"Assistant: [Called tools: {json.dumps(tool_calls)}]\n")
+```
+
+**Impact**: Tool calls are now processed internally without polluting the conversation context. The LLM generates clean, natural responses.
 
 ## Overview
 
@@ -12,7 +38,11 @@ Implemented an embedded router in the `agent_service` that uses the `llama-cli` 
 
 1. **Router as Advisor, Not Decision-Maker**: The router provides recommendations with confidence scores, but the main agent makes the final routing decision.
 
-2. **Using llama-cli Binary**: Instead of Python libraries, we use the existing `llama-cli` binary from `llm_service` for consistency and to avoid dependency conflicts.
+2. **Using llama-cpp-python Library** (Updated Oct 28): Instead of pre-compiled binaries, we use the `llama-cpp-python` library which:
+   - Compiles natively for the container's architecture
+   - Avoids cross-platform binary compatibility issues
+   - Provides cleaner Python API
+   - Is already used in `llm_service` for consistency
 
 3. **Graceful Degradation**: If the router fails or is unavailable, the system falls back to simple heuristic-based routing, ensuring the agent service remains operational.
 
