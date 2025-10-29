@@ -11,22 +11,16 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
-from dataclasses import dataclass
 
 from prompts import ROUTER_SYSTEM_PROMPT
 
+# Import config (works in both package and script mode)
+try:
+    from .config import RouterConfig
+except ImportError:
+    from config import RouterConfig
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RouterConfig:
-    """Configuration for the embedded router."""
-    model_path: str = "/app/models/qwen2.5-3b-instruct-q5_k_m.gguf"
-    max_tokens: int = 256
-    temperature: float = 0.1
-    n_ctx: int = 4096
-    n_threads: int = 4
-    timeout_seconds: int = 10
 
 
 class Router:

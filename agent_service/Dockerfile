@@ -57,6 +57,7 @@ COPY agent_service/adapter.py .
 COPY agent_service/llm_wrapper.py .
 COPY agent_service/router.py .
 COPY agent_service/prompts.py .
+COPY agent_service/config.py .
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 

@@ -41,6 +41,7 @@ class CheckpointManager:
         """
         self.db_path = Path(db_path)
         self._ensure_db_exists()
+        self.setup_status_table()
         
         logger.info(f"CheckpointManager initialized: {self.db_path}")
     
@@ -235,3 +236,149 @@ class CheckpointManager:
         with self._get_connection() as conn:
             conn.execute("VACUUM")
             logger.info("Database vacuumed successfully")
+    
+    def setup_status_table(self) -> None:
+        """Create thread_status table if it doesn't exist."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS thread_status (
+                    thread_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    last_updated DATETIME NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_status_updated ON thread_status(status, last_updated)"
+            )
+            conn.commit()
+            logger.debug("Thread status table setup complete")
+    
+    def validate_checkpoint_integrity(self, thread_id: str) -> tuple[bool, Optional[str]]:
+        """
+        Validate checkpoint data integrity for a thread.
+        
+        Args:
+            thread_id: Thread to validate
+        
+        Returns:
+            tuple: (is_valid, error_message)
+        """
+        try:
+            with self._get_connection() as conn:
+                # Check if checkpoints table exists
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+                )
+                if not cursor.fetchone():
+                    return False, "Checkpoints table does not exist"
+                
+                # Get latest checkpoint
+                cursor = conn.execute(
+                    """
+                    SELECT checkpoint_id, checkpoint, metadata
+                    FROM checkpoints
+                    WHERE thread_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    (thread_id,),
+                )
+                
+                row = cursor.fetchone()
+                if not row:
+                    return False, f"No checkpoints found for thread {thread_id}"
+                
+                checkpoint_id, checkpoint_data, metadata = row
+                
+                # Validate checkpoint data is not null
+                if checkpoint_data is None:
+                    return False, f"Checkpoint {checkpoint_id} has null data"
+                
+                # Try to deserialize checkpoint (basic validation)
+                try:
+                    import pickle
+                    pickle.loads(checkpoint_data)
+                except Exception as e:
+                    return False, f"Checkpoint {checkpoint_id} is corrupted: {e}"
+                
+                return True, None
+                
+        except Exception as e:
+            return False, f"Validation error: {e}"
+    
+    def mark_thread_incomplete(self, thread_id: str) -> None:
+        """
+        Mark a thread as incomplete (workflow in progress).
+        
+        Used to track threads that may need recovery after crash.
+        """
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO thread_status (thread_id, status, last_updated)
+                VALUES (?, 'incomplete', datetime('now'))
+                """,
+                (thread_id,),
+            )
+            conn.commit()
+            logger.debug(f"Marked thread {thread_id} as incomplete")
+    
+    def mark_thread_complete(self, thread_id: str) -> None:
+        """Mark a thread as complete (workflow finished)."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO thread_status (thread_id, status, last_updated)
+                VALUES (?, 'complete', datetime('now'))
+                """,
+                (thread_id,),
+            )
+            conn.commit()
+            logger.debug(f"Marked thread {thread_id} as complete")
+    
+    def get_incomplete_threads(self, older_than_minutes: int = 5) -> list[str]:
+        """
+        Get threads that were incomplete and potentially crashed.
+        
+        Args:
+            older_than_minutes: Consider threads incomplete if last updated more than N minutes ago
+        
+        Returns:
+            list: Thread IDs that may need recovery
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT thread_id
+                FROM thread_status
+                WHERE status = 'incomplete'
+                AND last_updated < datetime('now', ? || ' minutes')
+                ORDER BY last_updated DESC
+                """,
+                (-older_than_minutes,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+    
+    def flush_wal(self) -> None:
+        """
+        Force WAL checkpoint to disk.
+        
+        Should be called after critical operations to ensure durability.
+        """
+        with self._get_connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            logger.debug("WAL checkpoint flushed to disk")
+    
+    def get_wal_info(self) -> dict:
+        """Get WAL file information for diagnostics."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("PRAGMA wal_checkpoint")
+            busy, log, checkpointed = cursor.fetchone()
+            return {
+                "wal_mode": "enabled",
+                "busy": busy,
+                "log_size": log,
+                "checkpointed_frames": checkpointed,
+            }

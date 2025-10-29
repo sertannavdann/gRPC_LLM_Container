@@ -98,7 +98,7 @@ class ConfigLoader:
             ModelConfig: Validated model configuration
         """
         config = ModelConfig(
-            model_path=os.getenv("LLM_MODEL_PATH", "inference/models/qwen2.5-0.5b-instruct-q5_k_m.gguf"),
+            model_path=os.getenv("LLM_MODEL_PATH", "inference/models/qwen2.5-3b-instruct-q5_k_m.gguf"),
             n_ctx=int(os.getenv("LLM_N_CTX", "2048")),
             n_threads=int(os.getenv("LLM_N_THREADS", "4")),
             n_gpu_layers=int(os.getenv("LLM_N_GPU_LAYERS", "0")),

@@ -25,6 +25,7 @@ RUN python -m grpc_tools.protoc \
 RUN rm -rf ./proto
 
 COPY llm_service/llm_service.py .
+COPY llm_service/config.py .
 COPY llm_service/models/ /app/models/
 
 EXPOSE 50051

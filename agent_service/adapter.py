@@ -29,7 +29,14 @@ from shared.clients.cpp_llm_client import CppLLMClient
 from tools.builtin.web_search import web_search
 from tools.builtin.math_solver import math_solver
 from tools.builtin.web_loader import load_web_page
-from router import Router, RouterConfig
+from router import Router
+
+# Import config (works in both package and script mode)
+try:
+    from .config import RouterConfig, AgentServiceConfig
+except ImportError:
+    from config import RouterConfig, AgentServiceConfig
+
 from prompts import AGENT_SYSTEM_PROMPT_TEMPLATE, AGENT_SIMPLE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -66,35 +73,34 @@ class AgentServiceAdapter:
     
     def __init__(
         self,
-        config: Optional[WorkflowConfig] = None,
-        checkpoint_db_path: str = "./data/agent_checkpoints.db",
-        system_prompt: Optional[str] = None,
-        router_config: Optional[RouterConfig] = None,
-        enable_router: bool = True,
+        service_config: Optional[AgentServiceConfig] = None,
+        workflow_config: Optional[WorkflowConfig] = None,
     ):
         """
-        Initialize adapter with tool registry and checkpoint manager.
+        Initialize adapter with configuration.
         
         Args:
-            config: Workflow configuration (uses defaults if None)
-            checkpoint_db_path: Path to SQLite checkpoint database
-            system_prompt: Optional system prompt for all conversations
-            router_config: Optional router configuration
-            enable_router: Whether to enable the embedded router (default: True)
+            service_config: Agent service configuration (loads from env if None)
+            workflow_config: Workflow configuration (uses defaults if None)
         """
+        # Load service configuration
+        self.service_config = service_config or AgentServiceConfig.from_env()
+        
         # Initialize tool registry
         self.registry = LocalToolRegistry()
         self._register_builtin_tools()
         
         # Initialize checkpoint manager
-        self.checkpoint_db_path = Path(checkpoint_db_path)
+        self.checkpoint_db_path = Path(self.service_config.checkpoint_db_path)
         self.checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.checkpoint_manager = CheckpointManager(db_path=str(self.checkpoint_db_path))
         self.checkpointer = self.checkpoint_manager.create_checkpointer()
         
         # Initialize router
-        self.enable_router = enable_router
+        router_config = self.service_config.router_config
+        self.enable_router = router_config.enabled if router_config else False
+        
         if self.enable_router:
             try:
                 self.router = Router(config=router_config)
@@ -108,17 +114,17 @@ class AgentServiceAdapter:
             logger.info("Router disabled")
         
         # Initialize workflow configuration
-        self.config = config or WorkflowConfig(
-            max_iterations=5,
-            temperature=0.7,
+        self.config = workflow_config or WorkflowConfig(
+            max_iterations=self.service_config.max_iterations,
+            temperature=self.service_config.temperature,
             model_name="qwen2.5-0.5b-instruct",
-            context_window=3,
-            enable_streaming=False,
-            timeout_seconds=30,
+            context_window=self.service_config.context_window,
+            enable_streaming=self.service_config.enable_streaming,
+            timeout_seconds=self.service_config.timeout_seconds,
         )
         
-        # System prompt (will be dynamically generated with router recommendation)
-        self.base_system_prompt = system_prompt
+        # System prompt
+        self.base_system_prompt = self.service_config.system_prompt
         
         # Workflow (initialized after LLM engine is set)
         self.workflow: Optional[AgentWorkflow] = None
@@ -133,7 +139,7 @@ class AgentServiceAdapter:
         
         logger.info(
             f"AgentServiceAdapter initialized: "
-            f"checkpoint_db={checkpoint_db_path}, "
+            f"checkpoint_db={self.checkpoint_db_path}, "
             f"tools={len(self.registry.tools)}, "
             f"max_iterations={self.config.max_iterations}, "
             f"router={'enabled' if self.enable_router else 'disabled'}"
@@ -321,7 +327,11 @@ class AgentServiceAdapter:
                     logger.warning(f"Router failed, continuing without recommendation: {e}")
                     router_recommendation = None
             
-            # Step 2: Create initial state with router recommendation
+            # Step 2: Mark thread as incomplete (in progress)
+            if thread_id:
+                self.checkpoint_manager.mark_thread_incomplete(thread_id)
+            
+            # Step 3: Create initial state with router recommendation
             initial_state = create_initial_state(
                 conversation_id=conversation_id,
                 user_id=user_id,
@@ -401,6 +411,9 @@ class AgentServiceAdapter:
                 self.failed_queries += 1
             else:
                 self.successful_queries += 1
+                # Mark thread as complete on success
+                if thread_id:
+                    self.checkpoint_manager.mark_thread_complete(thread_id)
             
             logger.info(
                 f"Query processed: "
@@ -413,6 +426,7 @@ class AgentServiceAdapter:
             return response
         
         except Exception as e:
+            # Thread remains marked as incomplete (will be recovered on restart)
             self.failed_queries += 1
             logger.error(f"Error processing query: {e}", exc_info=True)
             

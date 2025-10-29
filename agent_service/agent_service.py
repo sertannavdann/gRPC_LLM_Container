@@ -28,6 +28,7 @@ except ImportError:
 from adapter import AgentServiceAdapter
 from llm_wrapper import LLMClientWrapper
 from shared.clients.llm_client import LLMClient
+from core.recovery import RecoveryManager
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,6 +42,75 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
         llm_client = LLMClient(host="llm_service", port=50051)
         llm_engine = LLMClientWrapper(llm_client)
         self.adapter.set_llm_engine(llm_engine)
+        
+        # Initialize recovery manager
+        self.recovery_manager = RecoveryManager(self.adapter.checkpoint_manager)
+        
+        # Run startup recovery
+        self._run_startup_recovery()
+    
+    def _run_startup_recovery(self):
+        """
+        Run crash recovery on service startup.
+        
+        Scans for incomplete threads and attempts to resume them.
+        """
+        logger.info("Running startup crash recovery scan...")
+        
+        try:
+            # Scan for crashed threads (inactive for >5 minutes)
+            crashed_threads = self.recovery_manager.scan_for_crashed_threads(
+                older_than_minutes=5
+            )
+            
+            if not crashed_threads:
+                logger.info("No crashed threads found. Clean startup.")
+                return
+            
+            logger.warning(f"Found {len(crashed_threads)} crashed threads. Attempting recovery...")
+            
+            recovered = 0
+            failed = 0
+            
+            for thread_id in crashed_threads:
+                try:
+                    # Check if recoverable
+                    can_recover, reason = self.recovery_manager.can_recover_thread(thread_id)
+                    if not can_recover:
+                        logger.warning(f"Cannot recover thread {thread_id}: {reason}")
+                        failed += 1
+                        continue
+                    
+                    # Load checkpoint
+                    checkpoint_state = self.recovery_manager.load_checkpoint_state(thread_id)
+                    if not checkpoint_state:
+                        logger.error(f"Failed to load checkpoint for {thread_id}")
+                        self.recovery_manager.mark_recovery_attempt(thread_id, success=False)
+                        failed += 1
+                        continue
+                    
+                    # Mark as recovered (mark_thread_incomplete will be set again on next run)
+                    self.adapter.checkpoint_manager.mark_thread_complete(thread_id)
+                    self.recovery_manager.mark_recovery_attempt(thread_id, success=True)
+                    recovered += 1
+                    
+                    logger.info(f"Successfully recovered thread {thread_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Recovery failed for thread {thread_id}: {e}", exc_info=True)
+                    self.recovery_manager.mark_recovery_attempt(thread_id, success=False)
+                    failed += 1
+            
+            logger.info(
+                f"Recovery complete: {recovered} recovered, {failed} failed"
+            )
+            
+            # Log recovery report
+            report = self.recovery_manager.get_recovery_report()
+            logger.info(f"Recovery report: {report}")
+            
+        except Exception as e:
+            logger.error(f"Startup recovery scan failed: {e}", exc_info=True)
 
     def _get_thread_id(self, context: grpc.ServicerContext) -> Optional[str]:
         """Extract thread-id from gRPC metadata if provided."""
