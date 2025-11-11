@@ -14,6 +14,12 @@ except ImportError:
     import llm_pb2
     import llm_pb2_grpc
 
+# Import config (works in both package and script mode)
+try:
+    from .config import get_config
+except ImportError:
+    from config import get_config
+
 from grpc_reflection.v1alpha import reflection
 from functools import lru_cache
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
@@ -22,6 +28,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger("llm_service")
+
+# Load configuration
+CONFIG = get_config()
+CONFIG.log_config()
 
 JSON_GRAMMAR = '''root ::= (object)
 object ::= "{" members "}"
@@ -52,14 +62,14 @@ class HealthServicer(health.HealthServicer):
 
 @lru_cache(maxsize=1)
 def load_model():
-    MODEL_PATH = "./models/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-    logger.info("Loading model from %s", MODEL_PATH)
+    """Load LLM model from configuration."""
+    logger.info("Loading model from %s", CONFIG.model_path)
     return Llama(
-        model_path=MODEL_PATH,
-        n_ctx=2048,
-        n_threads=4,
-        n_batch=512,
-        verbose=False
+        model_path=CONFIG.model_path,
+        n_ctx=CONFIG.n_ctx,
+        n_threads=CONFIG.n_threads,
+        n_batch=CONFIG.n_batch,
+        verbose=CONFIG.verbose
     )
 
 class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
@@ -67,11 +77,14 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
         try:
             llm = load_model()
             gen_config = {
-                "max_tokens": min(request.max_tokens, 1024),
+                "max_tokens": min(request.max_tokens, CONFIG.max_tokens),
                 "temperature": max(0.1, min(request.temperature, 1.0)),
-                "grammar": self._get_json_grammar() if request.response_format == "json" else None,
                 "stream": True
             }
+            
+            # Only add grammar if response_format is "json"
+            if request.response_format == "json":
+                gen_config["grammar"] = self._get_json_grammar()
             
             # Generation loop with JSON validation
             output_buffer = ""
@@ -102,13 +115,14 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             )
 
         except Exception as e:
-            logger.error(f"Generation failed: {str(e)}")
+            import traceback
+            tb = traceback.format_exc()
+            error_msg = f"Type: {type(e).__name__}, Message: {str(e)}, Traceback: {tb}"
+            logger.error(f"Generation failed: {error_msg}")
             context.abort(
                 grpc.StatusCode.INTERNAL,
-                f"Generation error ({type(e).__name__}): {str(e)}"
+                f"Generation error ({type(e).__name__}): {str(e) or 'No message'}"
             )
-
-            logger.error("Generation failed", exc_info=True)
 
     def _get_json_grammar(self):
         """Define strict JSON grammar for LLM"""
@@ -122,7 +136,7 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
         '''
     
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=CONFIG.max_workers))
     llm_pb2_grpc.add_LLMServiceServicer_to_server(LLMServiceServicer(), server)
     health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     
@@ -132,8 +146,8 @@ def serve():
         reflection.SERVICE_NAME
     ], server)
     
-    server.add_insecure_port("[::]:50051")
-    logger.info("LLM Service operational on port 50051")
+    server.add_insecure_port(f"{CONFIG.host}:{CONFIG.port}")
+    logger.info(f"LLM Service operational on {CONFIG.host}:{CONFIG.port}")
     server.start()
     server.wait_for_termination()
 

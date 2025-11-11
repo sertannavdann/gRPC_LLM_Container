@@ -1,17 +1,22 @@
 FROM python:3.11-slim
 
+# Cache busting argument
+ARG CACHE_BUST=1
+
 WORKDIR /app
 
 # System dependencies
-RUN apt-get update && apt-get install -y protobuf-compiler && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
-COPY agent_service/requirements.txt .
+COPY orchestrator/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
-# Shared components (including pre-generated protobuf files)
+# Shared components (clients and proto)
 COPY shared/ ./shared/
 
 # Core framework components
@@ -20,10 +25,10 @@ COPY core/ ./core/
 # Tools components
 COPY tools/ ./tools/
 
-# Generate protobuf stubs
+# Protobuf files
 COPY shared/proto/ ./proto/
 
-# Generate agent service protobuf
+# Generate protobuf stubs for agent service (orchestrator uses agent.proto)
 RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=. \
@@ -35,7 +40,6 @@ RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=./shared/generated \
     --grpc_python_out=./shared/generated \
-    proto/cpp_llm.proto \
     proto/llm.proto \
     proto/chroma.proto \
     proto/agent.proto
@@ -43,12 +47,14 @@ RUN python -m grpc_tools.protoc \
 # Fix imports in generated gRPC files
 RUN find ./shared/generated -name "*_pb2_grpc.py" -type f -exec sed -i 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' {} \;
 
-# Application code
-COPY agent_service/agent_service.py .
-COPY agent_service/adapter.py .
-COPY agent_service/llm_wrapper.py .
+# Copy orchestrator service code
+COPY orchestrator/ ./orchestrator/
+
+# Create data directory for checkpoints
+RUN mkdir -p /app/data
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 EXPOSE 50054
-CMD ["python", "agent_service.py"]
+
+CMD ["python", "-m", "orchestrator.orchestrator_service"]

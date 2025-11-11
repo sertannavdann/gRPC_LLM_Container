@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     Attributes:
         messages: Conversation history with automatic merge on update
         tool_results: List of tool execution results with metadata
+        router_recommendation: Router's service recommendation (for observability)
         next_action: Routing decision for next graph node
         error: Error message if workflow fails
         retry_count: Number of retry attempts for current operation
@@ -36,6 +37,9 @@ class AgentState(TypedDict):
     
     # Tool execution tracking
     tool_results: list[dict]  # [{tool_name, result, timestamp, latency_ms}]
+    
+    # Router recommendation (for observability and checkpointing)
+    router_recommendation: Optional[dict]  # Router's service recommendations
     
     # Routing control for graph execution
     next_action: Optional[Literal["llm", "tools", "validate", "end"]]
@@ -165,6 +169,7 @@ def create_initial_state(
     return AgentState(
         messages=[],
         tool_results=[],
+        router_recommendation=None,
         next_action=None,
         error=None,
         retry_count=0,

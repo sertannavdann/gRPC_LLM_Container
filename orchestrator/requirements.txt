@@ -1,0 +1,18 @@
+# gRPC and protobuf
+grpcio==1.67.1
+grpcio-tools==1.67.1
+grpcio-reflection==1.67.1
+grpcio-health-checking==1.67.1
+protobuf==5.28.3
+
+# LangChain and LangGraph
+langchain==0.3.7
+langchain-core==0.3.15
+langgraph==0.2.45
+langgraph-checkpoint-sqlite==2.0.2
+
+# Utilities
+pydantic==2.10.2
+tenacity==9.0.0
+requests==2.32.3
+beautifulsoup4==4.12.3

@@ -268,7 +268,7 @@ class DockerComposeManager:
         Wait for service health check to pass.
         
         Args:
-            service: Service name (e.g., "agent_service")
+            service: Service name (e.g., "orchestrator")
             timeout: Maximum wait time in seconds
             check_interval: Check interval in seconds
         

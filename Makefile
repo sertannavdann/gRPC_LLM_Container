@@ -1,8 +1,10 @@
 # Environment setup
 PROTO_DIR := shared/proto
-SERVICES := agent_service chroma_service llm_service ui_service
+SERVICES := orchestrator chroma_service llm_service ui_service
 # Docker command - use full path if not in conda PATH
 DOCKER_CMD := $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
+# Add Docker credential helper to PATH
+export PATH := /Applications/Docker.app/Contents/Resources/bin:$(PATH)
 
 # Build automation
 .PHONY: all proto-gen build up down clean
@@ -10,18 +12,18 @@ DOCKER_CMD := $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
 all: build up
 
 # Main proto-gen target
-proto-gen: proto-gen-agent proto-gen-chroma proto-gen-llm proto-gen-shared
+proto-gen: proto-gen-orchestrator proto-gen-chroma proto-gen-llm proto-gen-shared
 	@echo "All protobufs generated."
 
 # Individual proto-gen targets
-proto-gen-agent:
-	@echo "Generating agent protobuf stubs..."
+proto-gen-orchestrator:
+	@echo "Generating orchestrator protobuf stubs..."
 	@python -m grpc_tools.protoc \
 		-I$(PROTO_DIR) \
-		--python_out=agent_service \
-		--grpc_python_out=agent_service \
+		--python_out=orchestrator \
+		--grpc_python_out=orchestrator \
 		$(PROTO_DIR)/agent.proto
-	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' agent_service/*_pb2_grpc.py
+	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' orchestrator/*_pb2_grpc.py
 
 proto-gen-chroma:
 	@echo "Generating chroma protobuf stubs..."
@@ -48,7 +50,6 @@ proto-gen-shared:
 		-I$(PROTO_DIR) \
 		--python_out=shared/generated \
 		--grpc_python_out=shared/generated \
-		$(PROTO_DIR)/cpp_llm.proto \
 		$(PROTO_DIR)/llm.proto \
 		$(PROTO_DIR)/chroma.proto \
 		$(PROTO_DIR)/agent.proto
@@ -62,9 +63,9 @@ build:
 	@echo "Build complete"
 
 # Individual build targets
-build-agent:
-	@echo "Building agent_service container..."
-	$(DOCKER_CMD) compose build agent_service
+build-orchestrator:
+	@echo "Building orchestrator container..."
+	$(DOCKER_CMD) compose build orchestrator
 	@echo "Build complete"
 
 build-chroma:
