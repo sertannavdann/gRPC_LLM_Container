@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class AgentTestClient:
     """
-    gRPC test client for agent_service.
+    gRPC test client for orchestrator service.
     
     Simplifies testing by providing type-safe methods with
     automatic connection management and error handling.

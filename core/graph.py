@@ -194,7 +194,9 @@ class AgentWorkflow:
         Returns:
             AgentState: Updated state with AI response and routing decision
         """
+        logger.info("ENTERED _llm_node")
         messages = state["messages"]
+        logger.info(f"Got {len(messages)} messages from state")
         
         # Apply context window to prevent token overflow
         recent_messages = messages[-self.config.context_window:]
@@ -219,6 +221,7 @@ class AgentWorkflow:
             logger.info("No tools needed - direct answer expected")
         
         logger.debug(f"Calling LLM with {len(recent_messages)} messages, {len(tools_schema)} tools")
+        logger.info(f"ABOUT TO CALL LLM.GENERATE with {len(recent_messages)} messages")
         
         try:
             # Call local LLM via llama.cpp

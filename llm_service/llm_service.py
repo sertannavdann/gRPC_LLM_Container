@@ -79,9 +79,12 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             gen_config = {
                 "max_tokens": min(request.max_tokens, CONFIG.max_tokens),
                 "temperature": max(0.1, min(request.temperature, 1.0)),
-                "grammar": self._get_json_grammar() if request.response_format == "json" else None,
                 "stream": True
             }
+            
+            # Only add grammar if response_format is "json"
+            if request.response_format == "json":
+                gen_config["grammar"] = self._get_json_grammar()
             
             # Generation loop with JSON validation
             output_buffer = ""
@@ -112,13 +115,14 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             )
 
         except Exception as e:
-            logger.error(f"Generation failed: {str(e)}")
+            import traceback
+            tb = traceback.format_exc()
+            error_msg = f"Type: {type(e).__name__}, Message: {str(e)}, Traceback: {tb}"
+            logger.error(f"Generation failed: {error_msg}")
             context.abort(
                 grpc.StatusCode.INTERNAL,
-                f"Generation error ({type(e).__name__}): {str(e)}"
+                f"Generation error ({type(e).__name__}): {str(e) or 'No message'}"
             )
-
-            logger.error("Generation failed", exc_info=True)
 
     def _get_json_grammar(self):
         """Define strict JSON grammar for LLM"""

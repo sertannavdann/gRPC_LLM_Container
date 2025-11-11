@@ -1,8 +1,8 @@
 """
-End-to-end integration tests for agent_service.
+End-to-end integration tests for orchestrator service.
 
 Tests the complete gRPC stack with real Docker services:
-- agent_service (orchestrator)
+- orchestrator (unified routing + agent workflow)
 - llm_service (inference)
 - chroma_service (embeddings)
 
@@ -43,8 +43,8 @@ def docker_manager():
     logger.info("=" * 60)
     
     # Verify services are running
-    if not manager.wait_for_service("agent_service", 50054, timeout=10):
-        pytest.skip("agent_service not available on port 50054. Please start with 'make up'.")
+    if not manager.wait_for_service("orchestrator", 50054, timeout=10):
+        pytest.skip("orchestrator not available on port 50054. Please start with 'make up'.")
     
     if not manager.wait_for_service("llm_service", 50051, timeout=10):
         pytest.skip("llm_service not available on port 50051. Please start with 'make up'.")
@@ -104,7 +104,7 @@ class TestBasicFunctionality:
         assert len(response.final_answer) > 0
         
         # Debug mode should populate additional fields
-        # (Note: Depends on agent_service implementation)
+        # (Note: Depends on orchestrator implementation)
         logger.info(f"✓ Debug response: {response.final_answer[:100]}...")
         logger.info(f"  Context: {response.context_used[:50]}...")
         logger.info(f"  Sources: {response.sources[:50]}...")
@@ -175,7 +175,7 @@ class TestConcurrency:
         
         logger.info(f"✓ Sequential queries: {len(responses)} successful")
     
-    @pytest.mark.xfail(reason="Known issue: concurrent requests fail due to thread safety issues in agent_service")
+    @pytest.mark.xfail(reason="Known issue: concurrent requests fail due to thread safety issues in orchestrator")
     def test_rapid_fire_queries(self, agent_client):
         """Test rapid concurrent queries (stress test)."""
         import concurrent.futures
@@ -239,14 +239,14 @@ class TestServiceHealth:
         response1 = agent_client.query("First query")
         assert response1 is not None
         
-        # Restart agent service
-        logger.info("Restarting agent_service...")
-        docker_manager.restart_service("agent_service")
+        # Restart orchestrator service
+        logger.info("Restarting orchestrator...")
+        docker_manager.restart_service("orchestrator")
         
         # Wait for restart
         time.sleep(5)
-        if not docker_manager.wait_for_service("agent_service", 50054, timeout=30):
-            pytest.fail("agent_service failed to restart")
+        if not docker_manager.wait_for_service("orchestrator", 50054, timeout=30):
+            pytest.fail("orchestrator failed to restart")
         
         # Send query after restart
         time.sleep(2)  # Additional settling time

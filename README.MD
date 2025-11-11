@@ -74,8 +74,9 @@ A modern local LLM agent framework with intelligent tool orchestration, conversa
 
 | Component | Purpose | Location |
 |-----------|---------|----------|
-| **AgentServiceAdapter** | Bridges gRPC ↔ LangGraph workflow | `agent_service/adapter.py` |
-| **LLMClientWrapper** | Adapts gRPC LLM to LangGraph interface | `agent_service/llm_wrapper.py` |
+| **OrchestratorService** | Unified routing + agent workflow orchestration | `orchestrator/orchestrator_service.py` |
+| **AgentWorkflow** | LangGraph StateGraph with tool routing | `orchestrator/agent_workflow.py` |
+| **LLMEngineWrapper** | Adapts gRPC LLM to LangGraph interface | `orchestrator/orchestrator_service.py` |
 | **StateGraph** | Workflow orchestration with tool routing | `core/graph.py` |
 | **SqliteSaver** | Conversation checkpointing | `core/checkpointing.py` |
 | **LocalToolRegistry** | Tool registration with circuit breakers | `tools/registry.py` |
@@ -102,7 +103,7 @@ A modern local LLM agent framework with intelligent tool orchestration, conversa
 | LLM Service | 50051 | `grpc_health_probe -addr:50051` |
 | Chroma Service | 50052 | `grpc_health_probe -addr:50052` |
 | Tool Service | 50053 | `grpc_health_probe -addr:50053` |
-| Agent Service | 50054 | `grpc_health_probe -addr:50054` |
+| Orchestrator Service | 50054 | `grpc_health_probe -addr:50054` |
 
 ## Logical Flow Recipes
 
@@ -232,7 +233,7 @@ def _handle_new_tool(self, params):
 ### 2. Modify Workflow
 
 ```python
-# agent_service/agent_service.py
+# orchestrator/orchestrator_service.py
 class WorkflowBuilder:
     def build(self):
         # Add custom workflow edges
@@ -350,7 +351,7 @@ conda create -n llm python=3.12
 conda activate llm
 
 # Install dependencies
-pip install -r agent_service/requirements.txt
+pip install -r orchestrator/requirements.txt
 pip install -r llm_service/requirements.txt
 pip install -r chroma_service/requirements.txt
 pip install -r requirements-test.txt
@@ -381,10 +382,9 @@ make rebuild      # Clean rebuild (no cache)
 
 ```
 grpc_llm/
-├── agent_service/          # Main orchestration service
-│   ├── agent_service.py    # gRPC entry point
-│   ├── adapter.py          # AgentServiceAdapter (core logic)
-│   ├── llm_wrapper.py      # LLM interface adapter
+├── orchestrator/           # Main orchestration service
+│   ├── orchestrator_service.py  # gRPC entry point & routing
+│   ├── agent_workflow.py   # LangGraph agent workflow
 │   └── Dockerfile
 ├── core/                   # Framework core
 │   ├── graph.py            # StateGraph workflow
@@ -417,10 +417,10 @@ grpc_llm/
 
 ### Adding a New Tool
 
-Tools are registered in `agent_service/adapter.py`. Here's how to add one:
+Tools are registered in `orchestrator/agent_workflow.py`. Here's how to add one:
 
 ```python
-# In adapter.py __init__ method:
+# In agent_workflow.py __init__ method:
 
 def my_custom_tool(param1: str, param2: int) -> dict:
     """
@@ -522,7 +522,7 @@ lsof -i :5000   # UI service
 
 ### Debug Mode
 
-Enable verbose logging in `agent_service/adapter.py`:
+Enable verbose logging in `orchestrator/agent_workflow.py`:
 
 ```python
 logging.basicConfig(
@@ -538,14 +538,14 @@ logging.basicConfig(
 - Check if multiple processes are accessing the same DB file
 - Solution: Restart with `make down && make up`
 
-**"Name resolution failed for target dns:agent_service"**
+**"Name resolution failed for target dns:orchestrator"**
 - Docker network issue
 - Solution: `make down && make clean && make up`
 
 **Web search returns no results**
 - Missing SERPER_API_KEY in `.env`
 - Rate limit exceeded (50 free requests/day)
-- Check logs: `docker compose logs -f agent_service | grep SERPER`
+- Check logs: `docker compose logs -f orchestrator | grep SERPER`
 
 **LLM service not responding**
 - Model file missing or corrupted
@@ -580,13 +580,13 @@ make up
 pytest tests/integration/ -v
 
 # Specific test
-pytest tests/integration/test_agent_service_e2e.py::test_query_with_tools -v
+pytest tests/integration/test_orchestrator_e2e.py::test_query_with_tools -v
 ```
 
 ### Test Coverage
 
 ```bash
-pytest tests/ --cov=agent_service --cov=core --cov=tools --cov-report=html
+pytest tests/ --cov=orchestrator --cov=core --cov=tools --cov-report=html
 open htmlcov/index.html
 ```
 

@@ -76,7 +76,7 @@ class LLMEngineWrapper:
         Generate response from LLM.
         
         Args:
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of LangChain message objects OR message dicts with 'role' and 'content'
             tools: Optional list of tool schemas
             temperature: Optional temperature override
             max_tokens: Optional max_tokens override
@@ -85,21 +85,43 @@ class LLMEngineWrapper:
         Returns:
             dict with 'content' and optionally 'tool_calls'
         """
+        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, tools={tools is not None}")
+        
         # Use provided values or defaults
         temp = temperature if temperature is not None else self.temperature
         max_tok = max_tokens if max_tokens is not None else self.max_tokens
         
-        # Convert messages to prompt string (simple concatenation for now)
+        # Convert messages to prompt string
         prompt = ""
         for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "system":
-                prompt += f"System: {content}\n"
-            elif role == "user":
-                prompt += f"User: {content}\n"
-            elif role == "assistant":
-                prompt += f"Assistant: {content}\n"
+            # Handle LangChain message objects
+            if isinstance(msg, HumanMessage):
+                prompt += f"User: {msg.content}\n"
+            elif isinstance(msg, AIMessage):
+                prompt += f"Assistant: {msg.content}\n"
+            elif isinstance(msg, dict):
+                # Handle dict format messages
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    prompt += f"System: {content}\n"
+                elif role == "user":
+                    prompt += f"User: {content}\n"
+                elif role == "assistant":
+                    prompt += f"Assistant: {content}\n"
+            else:
+                # Handle other LangChain message types
+                prompt += f"System: {str(msg.content)}\n"
+        
+        # Ensure we have a prompt
+        if not prompt.strip():
+            logger.warning("Empty prompt generated from messages")
+            return {
+                "content": "I received an empty message. Please try again.",
+                "tool_calls": []
+            }
+        
+        logger.info(f"Generated prompt for LLM ({len(prompt)} chars): {prompt[:500]}")
         
         # For now, call LLMClient.generate() with simple prompt
         # TODO: Enhance to support structured message format and tool calls
@@ -386,12 +408,26 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         route: Route
     ) -> Dict[str, Any]:
         """Process query through agent workflow."""
-        # Create initial state
-        state = create_initial_state(query)
+        # Create initial state with thread_id as conversation_id
+        state = create_initial_state(
+            conversation_id=thread_id,
+            metadata={
+                "query": query,
+                "route": route.service,
+                "tool": route.tool
+            }
+        )
         
-        # Add routing hint if available
+        # Add user query as HumanMessage
+        state["messages"] = [HumanMessage(content=query)]
+        
+        # Add router recommendation if available
         if route.tool:
-            state["routing_hint"] = route.tool
+            state["router_recommendation"] = {
+                "service": route.service,
+                "tool": route.tool,
+                "confidence": route.confidence
+            }
         
         # Configure thread
         config = {

@@ -28,6 +28,8 @@ class LLMClient(BaseClient):
         self._stream_timeout = 30
 
     def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
+        # DEBUG: Added logging to trace call path
+        logger.info(f"LLMClient.generate() called with prompt ({len(prompt)} chars): {prompt[:200]}")
         try:
             responses = self.stub.Generate(
                 llm_pb2.GenerateRequest(

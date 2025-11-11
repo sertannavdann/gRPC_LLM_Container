@@ -61,7 +61,7 @@ class TestCrashResume:
         time.sleep(2)  # Let workflow start
         
         # Crash agent service
-        docker_manager.kill_service("agent_service")
+        docker_manager.kill_service("orchestrator")
         print("🔥 Agent service killed (simulated crash)")
         
         # Wait for thread to fail

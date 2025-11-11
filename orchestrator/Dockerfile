@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Cache busting argument
+ARG CACHE_BUST=1
+
 WORKDIR /app
 
 # System dependencies
