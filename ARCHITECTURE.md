@@ -17,7 +17,7 @@
 │  │ │ /api/chat (API Route)                          │  │    │
 │  │ │   → grpc-client.ts                             │  │    │
 │  │ │      → getAgentAddress()                       │  │    │
-│  │ │         reads: process.env['AGENT_SERVICE...'] │  │    │
+│  │ │         reads: process.env['AGENT_SERVICE_ADDRESS'] │  │
 │  │ │         value: "orchestrator:50054"            │  │    │
 │  │ └────────────────────────────────────────────────┘  │    │
 │  │         │ gRPC                                      │    │
@@ -154,7 +154,7 @@ AgentState = {
 2. SimpleRouter.route(query)
    ├─ Keyword analysis
    ├─ Confidence scoring
-   └─ Route decision (e.g., "agent_service/web_search", 0.75)
+   └─ Route decision (e.g., "orchestrator/web_search", 0.75)
    ↓
 3. Create AgentState with routing_hint
    ↓
@@ -243,5 +243,79 @@ CREATE TABLE thread_status (
 ```
 
 **WAL Mode**: Enabled via `PRAGMA journal_mode=WAL` for safe concurrent reads/writes.
+
+## 🔧 Implementation Details & Bug Fixes
+
+### LLMEngineWrapper Message Handling
+
+The `LLMEngineWrapper` handles both LangChain message objects and dictionary formats to ensure compatibility between the agent workflow and LLM service:
+
+**Message Format Handling**:
+```python
+def generate(messages, tools=None, ...):
+    formatted_messages = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            formatted_messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            formatted_messages.append({"role": "assistant", "content": msg.content})
+        else:
+            # Already formatted as dict
+            formatted_messages.append(msg)
+```
+
+**Tools Parameter Enhancement**:
+- Logs actual tools value instead of boolean: `tools={tools}`
+- Explicit handling of empty tools list: `if tools and len(tools) > 0:`
+- Future-proof structure for tool calling implementation
+- Clear logging when tools provided but not yet implemented
+
+### State Initialization Fix
+
+**Bug**: State was incorrectly initialized with query string instead of thread_id:
+```python
+# BEFORE (incorrect)
+state = create_initial_state(query)
+
+# AFTER (correct)
+state = create_initial_state(conversation_id=thread_id)
+state["messages"].append(HumanMessage(content=query))
+```
+
+**Impact**: This fix ensures proper conversation tracking and checkpoint recovery.
+
+### LLM Service Grammar Parameter
+
+**Bug**: Grammar parameter was being passed as `None` causing generation errors:
+```python
+# BEFORE (incorrect)
+grammar = None if response_format != "json" else json_grammar
+request = GenerateRequest(..., grammar=grammar)  # ❌ Passes None
+
+# AFTER (correct)
+request_params = {...}
+if response_format == "json":
+    request_params["grammar"] = json_grammar  # ✅ Only add if needed
+request = GenerateRequest(**request_params)
+```
+
+### Docker Build Caching
+
+**Issue**: Docker was caching old code even after file changes, preventing bug fixes from being deployed.
+
+**Solution**: Added cache-busting to Dockerfile:
+```dockerfile
+ARG CACHE_BUST=1
+ENV CACHE_BUST=${CACHE_BUST}
+COPY . .
+```
+
+**Usage**:
+```bash
+docker compose build --build-arg CACHE_BUST=$(date +%s) orchestrator
+```
+
+This forces a fresh build when needed while allowing normal caching for dependencies.
+
 
 

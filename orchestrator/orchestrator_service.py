@@ -77,7 +77,7 @@ class LLMEngineWrapper:
         
         Args:
             messages: List of LangChain message objects OR message dicts with 'role' and 'content'
-            tools: Optional list of tool schemas
+            tools: Optional list of tool schemas (None = no tools, [] = no tools, [schemas] = with tools)
             temperature: Optional temperature override
             max_tokens: Optional max_tokens override
             stream: Whether to stream response (not implemented)
@@ -85,7 +85,7 @@ class LLMEngineWrapper:
         Returns:
             dict with 'content' and optionally 'tool_calls'
         """
-        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, tools={tools is not None}")
+        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, tools={tools}")
         
         # Use provided values or defaults
         temp = temperature if temperature is not None else self.temperature
@@ -132,9 +132,18 @@ class LLMEngineWrapper:
                 temperature=temp
             )
             
+            # Handle tool calls based on tools parameter
+            tool_calls = []
+            # If tools is None or empty list, no tool calls should be generated
+            # Only return tool_calls if tools is provided and not empty
+            if tools and len(tools) > 0:
+                # In the future, we might parse the response for tool calls
+                # For now, we don't support tool calling in the simple wrapper
+                logger.info(f"Tools provided ({len(tools)}) but tool calling not implemented in simple wrapper")
+            
             return {
                 "content": response_text,
-                "tool_calls": []  # Tool calling not yet implemented in simple wrapper
+                "tool_calls": tool_calls  # Always empty for now until tool calling is implemented
             }
         except Exception as e:
             logger.error(f"LLM generation error: {e}")

@@ -1,7 +1,7 @@
 """
-gRPC test client for agent service integration tests.
+gRPC test client for orchestrator service integration tests.
 
-Provides simplified interface for testing agent_service via gRPC.
+Provides simplified interface for testing orchestrator via gRPC.
 """
 
 import grpc
@@ -14,7 +14,7 @@ import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from agent_service import agent_pb2, agent_pb2_grpc
+from shared.generated import agent_pb2, agent_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
