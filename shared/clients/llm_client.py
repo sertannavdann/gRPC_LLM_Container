@@ -27,13 +27,26 @@ class LLMClient(BaseClient):
         self.stub = llm_pb2_grpc.LLMServiceStub(self.channel)
         self._stream_timeout = 30
 
-    def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
+    def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7, response_format: str = "") -> str:
+        """
+        Generate text from LLM.
+        
+        Args:
+            prompt: Input prompt
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            response_format: Optional format constraint (e.g., "json")
+        
+        Returns:
+            Generated text
+        """
         try:
             responses = self.stub.Generate(
                 llm_pb2.GenerateRequest(
                     prompt=prompt,
                     max_tokens=min(max_tokens, 2048),
-                    temperature=temperature
+                    temperature=temperature,
+                    response_format=response_format
                 ),
                 timeout=30
             )

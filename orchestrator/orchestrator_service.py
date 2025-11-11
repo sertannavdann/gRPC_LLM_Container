@@ -62,18 +62,18 @@ logger = logging.getLogger("orchestrator")
 
 
 class LLMEngineWrapper:
-    """Wrapper around LLM client to provide consistent interface."""
+    """Wrapper around LLM client with structured tool calling support."""
     
     def __init__(self, llm_client: LLMClient, temperature: float = 0.7, max_tokens: int = 512):
         self.client = llm_client
         self.temperature = temperature
         self.max_tokens = max_tokens
-        logger.info(f"LLMEngineWrapper initialized: temp={temperature}, max_tokens={max_tokens}")
+        logger.info(f"LLMEngineWrapper initialized with tool calling support: temp={temperature}, max_tokens={max_tokens}")
     
     def generate(self, messages: list, tools: list = None, temperature: float = None, 
                  max_tokens: int = None, stream: bool = False) -> dict:
         """
-        Generate response from LLM.
+        Generate response from LLM with optional tool calling.
         
         Args:
             messages: List of LangChain message objects OR message dicts with 'role' and 'content'
@@ -85,35 +85,22 @@ class LLMEngineWrapper:
         Returns:
             dict with 'content' and optionally 'tool_calls'
         """
-        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, tools={tools}")
+        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, {len(tools) if tools else 0} tools")
         
         # Use provided values or defaults
         temp = temperature if temperature is not None else self.temperature
         max_tok = max_tokens if max_tokens is not None else self.max_tokens
         
-        # Convert messages to prompt string
-        prompt = ""
-        for msg in messages:
-            # Handle LangChain message objects
-            if isinstance(msg, HumanMessage):
-                prompt += f"User: {msg.content}\n"
-            elif isinstance(msg, AIMessage):
-                prompt += f"Assistant: {msg.content}\n"
-            elif isinstance(msg, dict):
-                # Handle dict format messages
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role == "system":
-                    prompt += f"System: {content}\n"
-                elif role == "user":
-                    prompt += f"User: {content}\n"
-                elif role == "assistant":
-                    prompt += f"Assistant: {content}\n"
-            else:
-                # Handle other LangChain message types
-                prompt += f"System: {str(msg.content)}\n"
+        # Route to appropriate generation method
+        if tools and len(tools) > 0:
+            return self._generate_with_tools(messages, tools, temp, max_tok)
+        else:
+            return self._generate_direct(messages, temp, max_tok)
+    
+    def _generate_direct(self, messages: list, temperature: float, max_tokens: int) -> dict:
+        """Generate direct response without tools."""
+        prompt = self._format_messages(messages)
         
-        # Ensure we have a prompt
         if not prompt.strip():
             logger.warning("Empty prompt generated from messages")
             return {
@@ -121,36 +108,197 @@ class LLMEngineWrapper:
                 "tool_calls": []
             }
         
-        logger.info(f"Generated prompt for LLM ({len(prompt)} chars): {prompt[:500]}")
-        
-        # For now, call LLMClient.generate() with simple prompt
-        # TODO: Enhance to support structured message format and tool calls
         try:
             response_text = self.client.generate(
                 prompt=prompt,
-                max_tokens=max_tok,
-                temperature=temp
+                max_tokens=max_tokens,
+                temperature=temperature
             )
             
-            # Handle tool calls based on tools parameter
-            tool_calls = []
-            # If tools is None or empty list, no tool calls should be generated
-            # Only return tool_calls if tools is provided and not empty
-            if tools and len(tools) > 0:
-                # In the future, we might parse the response for tool calls
-                # For now, we don't support tool calling in the simple wrapper
-                logger.info(f"Tools provided ({len(tools)}) but tool calling not implemented in simple wrapper")
-            
             return {
-                "content": response_text,
-                "tool_calls": tool_calls  # Always empty for now until tool calling is implemented
+                "content": response_text.strip(),
+                "tool_calls": []
             }
         except Exception as e:
-            logger.error(f"LLM generation error: {e}")
+            logger.error(f"Direct generation error: {e}")
             return {
                 "content": "Sorry, I encountered an error generating a response.",
                 "tool_calls": []
             }
+    
+    def _generate_with_tools(self, messages: list, tools: list, temperature: float, max_tokens: int) -> dict:
+        """Generate response with tool calling capability using structured prompting."""
+        
+        # Format tools for prompt
+        tools_desc = self._format_tools_description(tools)
+        
+        # Build conversation history including tool results
+        conversation = self._format_messages_with_tools(messages)
+        
+        # Construct prompt with tool instructions
+        prompt = f"""You are a helpful AI assistant with access to tools.
+
+Available tools:
+{tools_desc}
+
+Instructions:
+- To use a tool, respond with ONLY valid JSON in this exact format: {{"type": "tool_call", "tool": "tool_name", "arguments": {{"arg1": "value"}}}}
+- To answer directly without tools, respond with ONLY valid JSON: {{"type": "answer", "content": "your answer here"}}
+- IMPORTANT: Respond with ONLY the JSON object, no additional text before or after
+- Choose the appropriate tool based on the user's question
+- If no tool is needed, provide a direct answer
+
+Conversation:
+{conversation}
+
+Your response (JSON only):"""
+
+        logger.debug(f"Tool-enabled prompt generated ({len(prompt)} chars)")
+        
+        try:
+            # Generate with JSON grammar constraint
+            response_text = self.client.generate(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                response_format="json"  # Triggers JSON grammar in llm_service
+            )
+            
+            # Parse response
+            return self._parse_tool_response(response_text)
+            
+        except Exception as e:
+            logger.error(f"Tool generation error: {e}", exc_info=True)
+            return {
+                "content": "I encountered an error while processing your request with tools.",
+                "tool_calls": []
+            }
+    
+    def _parse_tool_response(self, response_text: str) -> dict:
+        """Parse LLM's JSON response into content or tool_calls."""
+        try:
+            # Clean response text
+            response_text = response_text.strip()
+            parsed = json.loads(response_text)
+            
+            response_type = parsed.get("type", "answer")
+            
+            if response_type == "tool_call":
+                # Extract tool call
+                tool_name = parsed.get("tool", "")
+                tool_args = parsed.get("arguments", {})
+                
+                if not tool_name:
+                    logger.warning("Tool call missing 'tool' field, treating as direct answer")
+                    return {
+                        "content": "I tried to use a tool but the request was incomplete. Let me answer directly.",
+                        "tool_calls": []
+                    }
+                
+                # Create OpenAI-style tool call
+                tool_call = {
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": tool_args
+                    }
+                }
+                
+                logger.info(f"✓ Tool call parsed: {tool_name}({list(tool_args.keys())})")
+                
+                return {
+                    "content": "",  # No text content when tool calling
+                    "tool_calls": [tool_call]
+                }
+            
+            else:  # type == "answer" or default
+                content = parsed.get("content", "")
+                return {
+                    "content": content,
+                    "tool_calls": []
+                }
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.debug(f"Raw response: {response_text[:200]}")
+            
+            # Fallback: treat as plain text
+            return {
+                "content": response_text,
+                "tool_calls": []
+            }
+    
+    def _format_tools_description(self, tools: list) -> str:
+        """Format tools as readable list for LLM prompt."""
+        lines = []
+        for i, tool in enumerate(tools, 1):
+            func = tool.get("function", {})
+            name = func.get("name", "unknown")
+            desc = func.get("description", "No description")
+            params = func.get("parameters", {}).get("properties", {})
+            
+            param_list = ", ".join(params.keys()) if params else "none"
+            lines.append(f"{i}. {name}: {desc}")
+            lines.append(f"   Parameters: {param_list}")
+        
+        return "\n".join(lines)
+    
+    def _format_messages(self, messages: list) -> str:
+        """Convert messages to simple prompt string."""
+        from langchain_core.messages import ToolMessage, SystemMessage
+        
+        prompt = ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                prompt += f"User: {msg.content}\n"
+            elif isinstance(msg, AIMessage):
+                prompt += f"Assistant: {msg.content}\n"
+            elif isinstance(msg, SystemMessage):
+                prompt += f"System: {msg.content}\n"
+            elif isinstance(msg, ToolMessage):
+                # Handle tool results
+                prompt += f"Tool Result: {msg.content}\n"
+            elif isinstance(msg, dict):
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                prompt += f"{role.capitalize()}: {content}\n"
+            else:
+                prompt += f"System: {str(msg.content)}\n"
+        
+        return prompt.strip()
+    
+    def _format_messages_with_tools(self, messages: list) -> str:
+        """Format messages including tool calls and results for conversation history."""
+        from langchain_core.messages import ToolMessage, SystemMessage
+        
+        lines = []
+        
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                lines.append(f"User: {msg.content}")
+            
+            elif isinstance(msg, AIMessage):
+                # Check for tool calls in additional_kwargs
+                tool_calls = msg.additional_kwargs.get("tool_calls", [])
+                if tool_calls:
+                    # Show that assistant called a tool
+                    for tc in tool_calls:
+                        tool_name = tc.get("function", {}).get("name", "unknown")
+                        tool_args = tc.get("function", {}).get("arguments", {})
+                        lines.append(f"Assistant: [Calling tool: {tool_name} with {tool_args}]")
+                elif msg.content:
+                    lines.append(f"Assistant: {msg.content}")
+            
+            elif isinstance(msg, ToolMessage):
+                # Show tool result
+                tool_name = getattr(msg, 'name', 'unknown_tool')
+                lines.append(f"Tool Result ({tool_name}): {msg.content}")
+            
+            elif isinstance(msg, SystemMessage):
+                lines.append(f"System: {msg.content}")
+        
+        return "\n".join(lines)
     
     def invoke(self, messages: list, **kwargs) -> AIMessage:
         """

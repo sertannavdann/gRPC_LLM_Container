@@ -116,18 +116,28 @@ class AgentWorkflow:
             logger.info(f"Tool usage detected via URL")
             return True
         
-        # Broader factual question detection: question words + entities
-        question_words = ['what', 'when', 'where', 'who', 'why', 'how', 'which']
-        has_question_word = any(w in query_lower for w in question_words)
-        has_question_mark = '?' in query
-
-        # Detect proper nouns (simple heuristic: capitalized tokens not at start of sentence)
-        proper_noun_match = re.search(r'\b[A-Z][a-z]+\b', query)
-
-        # If it's a factual question about specific entities, prefer using tools
-        if (has_question_word or has_question_mark) and proper_noun_match:
-            logger.info(f"Tool usage detected via question+proper noun pattern")
-            return True
+        # Conversational greetings/small talk - NEVER need tools
+        greeting_patterns = [
+            'hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon',
+            'good evening', 'how are you', 'how do you do', 'whats up', "what's up",
+            'nice to meet', 'thanks', 'thank you', 'bye', 'goodbye', 'see you'
+        ]
+        if any(pattern in query_lower for pattern in greeting_patterns):
+            logger.info(f"Conversational greeting detected - no tools needed")
+            return False
+        
+        # Factual question detection: question words about specific topics
+        # Only trigger if it's clearly asking for external information
+        factual_keywords = ['what is', 'who is', 'when did', 'where is', 'why did', 
+                           'how does', 'how did', 'tell me about', 'explain']
+        
+        # Questions that clearly need external data
+        if any(kw in query_lower for kw in factual_keywords):
+            # But exclude simple opinion questions
+            opinion_words = ['think', 'feel', 'opinion', 'prefer', 'like', 'favorite']
+            if not any(w in query_lower for w in opinion_words):
+                logger.info(f"Factual question detected - tools may be needed")
+                return True
         
         logger.info(f"No tool usage needed for query")
         return False

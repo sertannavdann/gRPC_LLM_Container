@@ -5,7 +5,7 @@ from concurrent import futures
 import json
 from json.decoder import JSONDecodeError
 
-from llama_cpp import Llama
+from llama_cpp import Llama, LlamaGrammar
 
 try:
     from . import llm_pb2
@@ -126,14 +126,16 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
 
     def _get_json_grammar(self):
         """Define strict JSON grammar for LLM"""
-        return '''
-        root ::= object
-        value ::= object | array | string | number | "true" | "false" | "null"
-        object ::= "{" ( string ":" value ("," string ":" value)* )? "}"
-        array ::= "[" ( value ("," value)* )? "]"
-        string ::= "\"" ( [^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] ) )* "\""
-        number ::= "-"? ( "0" | [1-9] [0-9]* ) ( "." [0-9]+ )? ( [eE] [-+]? [0-9]+ )?
-        '''
+        grammar_str = r'''
+root ::= object
+value ::= object | array | string | number | "true" | "false" | "null"
+object ::= "{" ws ( string ws ":" ws value (ws "," ws string ws ":" ws value)* )? ws "}"
+array ::= "[" ws ( value (ws "," ws value)* )? ws "]"
+string ::= "\"" [^"\\\n]* "\""
+number ::= "-"? ( "0" | [1-9] [0-9]* ) ( "." [0-9]+ )? ( [eE] [-+]? [0-9]+ )?
+ws ::= [ \t\n]*
+'''
+        return LlamaGrammar.from_string(grammar_str)
     
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=CONFIG.max_workers))
