@@ -28,7 +28,7 @@ except ImportError:
 from adapter import AgentServiceAdapter
 from llm_wrapper import LLMClientWrapper
 from shared.clients.llm_client import LLMClient
-from core.recovery import RecoveryManager
+from core.checkpointing import CheckpointManager, RecoveryManager
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -134,42 +134,30 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
         return None
 
     def QueryAgent(self, request, context):
+        """Process user query through agent workflow."""
         request_id = str(uuid.uuid4())
         start_time = time.time()
-        logger.info(f"[Req ID: {request_id}] Received query: '{request.user_query}'")
+        logger.info(f"[{request_id}] Query: '{request.user_query}'")
 
         try:
+            # Get or create thread_id for conversation persistence
             thread_id = self._get_thread_id(context) or request_id
 
+            # Process query through adapter
             result = self.adapter.process_query(
                 query=request.user_query,
                 thread_id=thread_id,
-                context=None,
-                user_id=None,
             )
 
+            # Extract response content
             content = result.get("content") or "Sorry, I couldn't generate a response."
-            tool_results = result.get("tool_results", [])
+            
+            # Build sources metadata
+            sources = self._build_sources_metadata(result, thread_id)
 
-            # Summarize tools used and errors (if any)
-            tools_used = []
-            errors = []
-            for r in tool_results:
-                name = r.get("tool_name") or r.get("_metadata", {}).get("tool_name")
-                if name and name not in tools_used:
-                    tools_used.append(name)
-                if r.get("status") == "error" and r.get("error"):
-                    errors.append(r.get("error"))
-
-            sources = {
-                "tools_used": tools_used,
-                "tool_results": tool_results,
-                "errors": errors,
-                "thread_id": thread_id,
-            }
-
-            processing_time = time.time() - start_time
-            logger.info(f"[Req ID: {request_id}] Completed in {processing_time:.2f}s")
+            # Log completion
+            elapsed = time.time() - start_time
+            logger.info(f"[{request_id}] Completed in {elapsed:.2f}s")
 
             return agent_pb2.AgentReply(
                 final_answer=content,
@@ -179,13 +167,36 @@ class AgentService(agent_pb2_grpc.AgentServiceServicer):
             )
 
         except Exception as e:
-            logger.exception(f"[Req ID: {request_id}] Error processing request: {str(e)}")
+            logger.exception(f"[{request_id}] Error: {e}")
             context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details(f"Internal error processing request. ID: {request_id}")
+            context.set_details(f"Internal error. Request ID: {request_id}")
             return agent_pb2.AgentReply(
-                final_answer=f"I'm sorry, but an error occurred while processing your request. (Request ID: {request_id})",
+                final_answer=f"Sorry, an error occurred. (Request ID: {request_id})",
                 sources=json.dumps({"error": str(e), "request_id": request_id}),
             )
+    
+    def _build_sources_metadata(self, result: dict, thread_id: str) -> dict:
+        """Extract and format sources metadata from result."""
+        tool_results = result.get("tool_results", [])
+        
+        # Extract unique tool names and errors
+        tools_used = []
+        errors = []
+        for r in tool_results:
+            # Get tool name from result or metadata
+            name = r.get("tool_name") or r.get("_metadata", {}).get("tool_name")
+            if name and name not in tools_used:
+                tools_used.append(name)
+            # Collect errors
+            if r.get("status") == "error" and r.get("error"):
+                errors.append(r.get("error"))
+
+        return {
+            "tools_used": tools_used,
+            "tool_results": tool_results,
+            "errors": errors,
+            "thread_id": thread_id,
+        }
 
     def GetMetrics(self, request, context):
         metrics = self.adapter.get_metrics()

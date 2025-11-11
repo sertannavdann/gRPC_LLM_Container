@@ -34,11 +34,11 @@ services:
       timeout: 5s
       retries: 3
 
-  agent_service:
+  orchestrator:
     build:
       context: .
-      dockerfile: agent_service/Dockerfile
-    container_name: agent_service
+      dockerfile: orchestrator/Dockerfile
+    container_name: orchestrator
     ports:
       - "50054:50054"
     depends_on:
@@ -47,9 +47,17 @@ services:
     env_file:
       - .env
     environment:
-      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - ORCHESTRATOR_HOST=0.0.0.0
+      - ORCHESTRATOR_PORT=50054
+      - LLM_HOST=llm_service
+      - LLM_PORT=50051
+      - CHROMA_HOST=chroma_service
+      - CHROMA_PORT=50052
+      - AGENT_MAX_ITERATIONS=5
+      - AGENT_TEMPERATURE=0.7
       - SERPER_API_KEY=${SERPER_API_KEY:-}
+    volumes:
+      - ./data:/app/data
     networks:
       - rag_net
     healthcheck:
@@ -66,9 +74,9 @@ services:
     ports:
       - "5001:5000"
     depends_on:
-      - agent_service
+      - orchestrator
     environment:
-      - AGENT_SERVICE_ADDRESS=agent_service:50054
+      - AGENT_SERVICE_ADDRESS=orchestrator:50054
     networks:
       - rag_net
 

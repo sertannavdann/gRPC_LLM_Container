@@ -3,6 +3,8 @@ PROTO_DIR := shared/proto
 SERVICES := agent_service chroma_service llm_service ui_service
 # Docker command - use full path if not in conda PATH
 DOCKER_CMD := $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
+# Add Docker credential helper to PATH
+export PATH := /Applications/Docker.app/Contents/Resources/bin:$(PATH)
 
 # Build automation
 .PHONY: all proto-gen build up down clean
@@ -48,7 +50,6 @@ proto-gen-shared:
 		-I$(PROTO_DIR) \
 		--python_out=shared/generated \
 		--grpc_python_out=shared/generated \
-		$(PROTO_DIR)/cpp_llm.proto \
 		$(PROTO_DIR)/llm.proto \
 		$(PROTO_DIR)/chroma.proto \
 		$(PROTO_DIR)/agent.proto

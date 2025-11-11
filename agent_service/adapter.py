@@ -25,7 +25,6 @@ from core import AgentWorkflow, WorkflowConfig
 from core.state import create_initial_state
 from core.checkpointing import CheckpointManager
 from tools.registry import LocalToolRegistry
-from shared.clients.cpp_llm_client import CppLLMClient
 from tools.builtin.web_search import web_search
 from tools.builtin.math_solver import math_solver
 from tools.builtin.web_loader import load_web_page
@@ -164,33 +163,6 @@ class AgentServiceAdapter:
             logger.info("Registered tool: load_web_page")
         except Exception as e:
             logger.warning(f"Failed to register load_web_page: {e}")
-
-        # Bridge tool for native C++ LLM service
-        try:
-            cpp_client = CppLLMClient()
-
-            def cpp_llm_inference(query: str) -> dict:
-                """Low-latency inference via native C++ microservice.
-
-                Args:
-                    query (str): Prompt to send to C++ LLM service
-
-                Returns:
-                    Dict with keys 'status', 'output', 'intent_payload'
-                """
-                result = cpp_client.run_inference(query)
-                # Standardize result shape
-                return {
-                    "status": "success",
-                    "output": result.get("output", ""),
-                    "intent_payload": result.get("intent_payload", ""),
-                }
-
-            # Register with explicit name/description
-            self.registry.register(name="cpp_llm_inference", description="Low-latency deterministic inference via C++ service")(cpp_llm_inference)
-            logger.info("Registered tool: cpp_llm_inference")
-        except Exception as e:
-            logger.warning(f"Failed to register cpp_llm_inference: {e}")
         
         logger.info(f"Total tools registered: {len(self.registry.tools)}")
     

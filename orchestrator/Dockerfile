@@ -2,24 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies (including build tools for llama-cpp-python)
+# System dependencies
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
     build-essential \
-    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
-COPY agent_service/requirements.txt .
+COPY orchestrator/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
-# Copy router model and llama-cli binary from llm_service
-COPY llm_service/models/qwen2.5-3b-instruct-q5_k_m.gguf ./models/
-COPY llm_service/llama/llama-cli ./llama/
-RUN chmod +x ./llama/llama-cli
-
-# Shared components (including pre-generated protobuf files)
+# Shared components (clients and proto)
 COPY shared/ ./shared/
 
 # Core framework components
@@ -28,10 +22,10 @@ COPY core/ ./core/
 # Tools components
 COPY tools/ ./tools/
 
-# Generate protobuf stubs
+# Protobuf files
 COPY shared/proto/ ./proto/
 
-# Generate agent service protobuf
+# Generate protobuf stubs for agent service (orchestrator uses agent.proto)
 RUN python -m grpc_tools.protoc \
     -I ./proto \
     --python_out=. \
@@ -50,15 +44,14 @@ RUN python -m grpc_tools.protoc \
 # Fix imports in generated gRPC files
 RUN find ./shared/generated -name "*_pb2_grpc.py" -type f -exec sed -i 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' {} \;
 
-# Application code
-COPY agent_service/agent_service.py .
-COPY agent_service/adapter.py .
-COPY agent_service/llm_wrapper.py .
-COPY agent_service/router.py .
-COPY agent_service/prompts.py .
-COPY agent_service/config.py .
+# Copy orchestrator service code
+COPY orchestrator/ ./orchestrator/
+
+# Create data directory for checkpoints
+RUN mkdir -p /app/data
 
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 EXPOSE 50054
-CMD ["python", "agent_service.py"]
+
+CMD ["python", "-m", "orchestrator.orchestrator_service"]

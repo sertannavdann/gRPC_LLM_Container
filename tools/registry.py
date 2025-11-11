@@ -151,12 +151,12 @@ class LocalToolRegistry:
             parameters: Optional parameter schema override
         
         Example:
-            >>> from shared.clients.tool_client import ToolClient
-            >>> tool_client = ToolClient("tool_service", 50053)
+            >>> def grpc_method(**kwargs):
+            ...     return client.call_tool("web_search", **kwargs)
             >>> 
             >>> registry.register_gRPC_tool(
             ...     name="web_search",
-            ...     client_method=lambda **kw: tool_client.call_tool("web_search", **kw),
+            ...     client_method=grpc_method,
             ...     description="Search the web via gRPC service"
             ... )
         """
