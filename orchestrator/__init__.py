@@ -6,13 +6,10 @@ a single, streamlined service.
 """
 
 from .config import OrchestratorConfig
-from .simple_router import SimpleRouter, Route
 from .orchestrator_service import OrchestratorService, serve
 
 __all__ = [
     "OrchestratorConfig",
-    "SimpleRouter",
-    "Route",
     "OrchestratorService",
     "serve",
 ]

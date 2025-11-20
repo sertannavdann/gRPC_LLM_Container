@@ -33,26 +33,15 @@ logger = logging.getLogger("llm_service")
 CONFIG = get_config()
 CONFIG.log_config()
 
-JSON_GRAMMAR = '''root ::= (object)
-object ::= "{" members "}"
-members ::= pair | pair "," members
-pair ::= string ":" value
-value ::= string | number | object | array | "true" | "false" | "null"
-array ::= "[" elements "]"
-elements ::= value | value "," elements
-string ::= '"' characters '"'
-characters ::= "" | character characters
-character ::= [^"\\] | "\\" escape
-escape ::= ["\\/bfnrt] | "u" hex hex hex hex
-hex ::= [0-9a-fA-F]
-number ::= integer fraction exponent
-integer ::= digit | onenine digits | "-" digit | "-" onenine digits
-digit ::= [0-9]
-onenine ::= [1-9]
-fraction ::= "" | "." digits
-exponent ::= "" | "e" sign digits | "E" sign digits
-                "max_tokens": min(max(1, request.max_tokens), 1024),
-digits ::= digit | digit digits'''
+JSON_GRAMMAR = r'''
+root ::= object
+value ::= object | array | string | number | "true" | "false" | "null"
+object ::= "{" ws ( string ws ":" ws value (ws "," ws string ws ":" ws value)* )? ws "}"
+array ::= "[" ws ( value (ws "," ws value)* )? ws "]"
+string ::= "\"" [^"\\\n]* "\""
+number ::= "-"? ( "0" | [1-9] [0-9]* ) ( "." [0-9]+ )? ( [eE] [-+]? [0-9]+ )?
+ws ::= [ \t\n]*
+'''
 
 class HealthServicer(health.HealthServicer):
     def Check(self, request, context):

@@ -53,6 +53,8 @@ services:
       - LLM_PORT=50051
       - CHROMA_HOST=chroma_service
       - CHROMA_PORT=50052
+      - REGISTRY_HOST=registry_service
+      - REGISTRY_PORT=50055
       - AGENT_MAX_ITERATIONS=5
       - AGENT_TEMPERATURE=0.7
       - SERPER_API_KEY=${SERPER_API_KEY:-}
@@ -65,6 +67,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  registry_service:
+    build:
+      context: .
+      dockerfile: registry_service/Dockerfile
+    container_name: registry_service
+    ports:
+      - "50055:50055"
+    networks:
+      - rag_net
+
+  worker_coding:
+    build:
+      context: .
+      dockerfile: worker_service/Dockerfile
+    container_name: worker_coding
+    environment:
+      - WORKER_ID=coding-worker-1
+      - WORKER_NAME=CodingAgent
+      - WORKER_CAPABILITIES=coding,python
+      - WORKER_PORT=50056
+      - REGISTRY_HOST=registry_service
+      - REGISTRY_PORT=50055
+      - HOST_IP=worker_coding
+    ports:
+      - "50056:50056"
+    depends_on:
+      - registry_service
+    networks:
+      - rag_net
 
   ui_service:
     build:

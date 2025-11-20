@@ -1,0 +1,30 @@
+syntax = "proto3";
+package registry;
+
+message AgentProfile {
+  string id = 1;
+  string name = 2;
+  repeated string capabilities = 3;
+  string endpoint = 4; // host:port
+}
+
+message Ack {
+  bool success = 1;
+  string message = 2;
+}
+
+message CapabilityQuery {
+  string capability = 1;
+}
+
+message AgentList {
+  repeated AgentProfile agents = 1;
+}
+
+service AgentRegistry {
+  // Agents call this to say "I am here and I can do X"
+  rpc Register (AgentProfile) returns (Ack);
+  
+  // Agents call this to find "Who can do X?"
+  rpc Discover (CapabilityQuery) returns (AgentList);
+}

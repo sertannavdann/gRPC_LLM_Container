@@ -24,7 +24,6 @@ from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
 # Import configuration
 from .config import OrchestratorConfig
-from .simple_router import SimpleRouter, Route
 
 # These will be copied from agent_service
 from shared.clients.llm_client import LLMClient
@@ -38,20 +37,14 @@ from tools.builtin.web_loader import load_web_page
 
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Protobuf imports (will use agent.proto initially)
-try:
-    # When running as module
-    from shared.generated import agent_pb2
-    from shared.generated import agent_pb2_grpc
-except ImportError:
-    try:
-        # When running in Docker
-        from . import agent_pb2
-        from . import agent_pb2_grpc
-    except ImportError:
-        # Fallback
-        import agent_pb2
-        import agent_pb2_grpc
+# New imports for Registry and Worker clients
+from shared.clients.registry_client import RegistryClient
+from shared.clients.worker_client import WorkerClient
+import os
+
+# Protobuf imports
+from shared.generated import agent_pb2
+from shared.generated import agent_pb2_grpc
 
 
 logging.basicConfig(
@@ -358,37 +351,44 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     """
     Unified orchestrator service combining agent workflow and routing.
     
-    Responsibilities:
-    - Route queries to appropriate tools/services using SimpleRouter
-    - Execute agent workflows via AgentWorkflow
-    - Manage conversation persistence with CheckpointManager
-    - Handle crash recovery on startup
+    Acts as the Supervisor in the Supervisor-Worker architecture.
     """
     
-    def __init__(self, config: Optional[OrchestratorConfig] = None):
-        """Initialize orchestrator service."""
+    def __init__(self, config: OrchestratorConfig = None):
         self.config = config or OrchestratorConfig.from_env()
-        logger.info(f"Initializing Orchestrator on {self.config.host}:{self.config.port}")
+        logger.info("Initializing Orchestrator on 0.0.0.0:50054")
         
-        # Initialize router (lightweight keyword-based)
-        self.router = SimpleRouter()
-        logger.info("SimpleRouter initialized (keyword-based routing)")
+        # Initialize clients
+        self.llm_client = LLMClient(host=self.config.llm_host, port=self.config.llm_port)
         
-        # Initialize tool registry
-        self.registry = LocalToolRegistry()
-        self._register_tools()
+        # Initialize Registry Client
+        registry_host = os.getenv("REGISTRY_HOST", "registry_service")
+        registry_port = int(os.getenv("REGISTRY_PORT", "50055"))
+        self.registry_client = RegistryClient(host=registry_host, port=registry_port)
         
-        # Initialize checkpoint manager
-        self.checkpoint_manager = CheckpointManager(self.config.checkpoint_db_path)
-        self.checkpointer = self.checkpoint_manager.create_checkpointer()
-        
-        # Initialize LLM client and wrapper
-        llm_client = LLMClient(host=self.config.llm_host, port=self.config.llm_port)
+        # Initialize LLM Engine Wrapper
         self.llm_engine = LLMEngineWrapper(
-            llm_client,
+            self.llm_client, 
             temperature=self.config.temperature,
             max_tokens=512
         )
+        
+        # Initialize Tool Registry
+        self.tool_registry = LocalToolRegistry()
+        
+        # Register built-in tools
+        self.tool_registry.register(web_search)
+        self.tool_registry.register(math_solver)
+        self.tool_registry.register(load_web_page)
+        
+        # Register delegation tool
+        self.tool_registry.register(self.delegate_to_worker)
+        
+        logger.info(f"Total tools registered: {len(self.tool_registry.tools)}")
+    
+        # Initialize Checkpoint Manager
+        self.checkpoint_manager = CheckpointManager(self.config.checkpoint_db_path)
+        self.checkpointer = self.checkpoint_manager.create_checkpointer()
         
         # Initialize workflow config
         self.workflow_config = WorkflowConfig(
@@ -403,7 +403,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # Initialize agent workflow
         self.workflow = AgentWorkflow(
-            tool_registry=self.registry,
+            tool_registry=self.tool_registry,
             llm_engine=self.llm_engine,
             config=self.workflow_config
         )
@@ -419,19 +419,6 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self._run_startup_recovery()
         
         logger.info("Orchestrator initialization complete")
-    
-    def _register_tools(self):
-        """Register built-in tools with the registry."""
-        self.registry.register(web_search)
-        logger.info("Registered tool: web_search")
-        
-        self.registry.register(math_solver)
-        logger.info("Registered tool: math_solver")
-        
-        self.registry.register(load_web_page)
-        logger.info("Registered tool: load_web_page")
-        
-        logger.info(f"Total tools registered: {len(self.registry.get_available_tools())}")
     
     def _run_startup_recovery(self):
         """Run crash recovery on service startup."""
@@ -500,12 +487,45 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             pass
         return None
     
+    def delegate_to_worker(self, task: str, capability: str) -> str:
+        """
+        Delegate a task to a specialized worker agent.
+        
+        Args:
+            task (str): The instruction for the worker.
+            capability (str): The required capability (e.g., 'coding', 'rag').
+            
+        Returns:
+            str: The result from the worker.
+        """
+        logger.info(f"Delegating task '{task}' to worker with capability '{capability}'")
+        
+        # Discover workers
+        agents = self.registry_client.discover(capability)
+        if not agents:
+            return f"Error: No workers found with capability '{capability}'"
+        
+        # Pick the first one (simple load balancing)
+        worker_profile = agents[0]
+        logger.info(f"Selected worker: {worker_profile.name} at {worker_profile.endpoint}")
+        
+        # Execute task
+        worker_client = WorkerClient(worker_profile.endpoint)
+        response = worker_client.execute_task(
+            task_id=str(uuid.uuid4()),
+            instruction=task
+        )
+        
+        if response and response.status == "success":
+            return response.result
+        else:
+            return f"Error executing task: {response.error_message if response else 'Unknown error'}"
+
     def QueryAgent(self, request, context):
         """
         Process user query through orchestrator.
         
-        Uses SimpleRouter for lightweight intent classification,
-        then executes appropriate agent workflow.
+        Executes appropriate agent workflow using LLM decision making.
         """
         request_id = str(uuid.uuid4())
         start_time = time.time()
@@ -515,21 +535,13 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             # Get or create thread_id
             thread_id = self._get_thread_id(context) or request_id
             
-            # Route query using SimpleRouter
-            route = self.router.route(request.user_query)
-            logger.info(
-                f"[{request_id}] Route: {route.service}/{route.tool or 'direct'} "
-                f"(confidence={route.confidence:.2f})"
-            )
-            
             # Mark thread as incomplete (for crash recovery)
             self.checkpoint_manager.mark_thread_incomplete(thread_id)
             
             # Process through agent workflow
             result = self._process_query(
                 query=request.user_query,
-                thread_id=thread_id,
-                route=route
+                thread_id=thread_id
             )
             
             # Mark thread as complete
@@ -561,30 +573,19 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     def _process_query(
         self,
         query: str,
-        thread_id: str,
-        route: Route
+        thread_id: str
     ) -> Dict[str, Any]:
         """Process query through agent workflow."""
         # Create initial state with thread_id as conversation_id
         state = create_initial_state(
             conversation_id=thread_id,
             metadata={
-                "query": query,
-                "route": route.service,
-                "tool": route.tool
+                "query": query
             }
         )
         
         # Add user query as HumanMessage
         state["messages"] = [HumanMessage(content=query)]
-        
-        # Add router recommendation if available
-        if route.tool:
-            state["router_recommendation"] = {
-                "service": route.service,
-                "tool": route.tool,
-                "confidence": route.confidence
-            }
         
         # Configure thread
         config = {
@@ -623,7 +624,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             "thread_id": thread_id,
             "iterations": result.get("iteration", 0),
             "tools_used": []
-        }
+        };
         
         for tr in tool_results:
             if isinstance(tr, dict):

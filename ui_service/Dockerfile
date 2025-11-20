@@ -18,6 +18,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY ui_service/ .
 
+# Copy shared proto to ensure single source of truth
+RUN mkdir -p proto
+COPY shared/proto/agent.proto ./proto/agent.proto
+
 # Build Next.js
 RUN npm run build
 

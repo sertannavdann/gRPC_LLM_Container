@@ -12,18 +12,8 @@ export PATH := /Applications/Docker.app/Contents/Resources/bin:$(PATH)
 all: build up
 
 # Main proto-gen target
-proto-gen: proto-gen-orchestrator proto-gen-chroma proto-gen-llm proto-gen-shared
+proto-gen: proto-gen-chroma proto-gen-llm proto-gen-shared
 	@echo "All protobufs generated."
-
-# Individual proto-gen targets
-proto-gen-orchestrator:
-	@echo "Generating orchestrator protobuf stubs..."
-	@python -m grpc_tools.protoc \
-		-I$(PROTO_DIR) \
-		--python_out=orchestrator \
-		--grpc_python_out=orchestrator \
-		$(PROTO_DIR)/agent.proto
-	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' orchestrator/*_pb2_grpc.py
 
 proto-gen-chroma:
 	@echo "Generating chroma protobuf stubs..."
@@ -52,7 +42,9 @@ proto-gen-shared:
 		--grpc_python_out=shared/generated \
 		$(PROTO_DIR)/llm.proto \
 		$(PROTO_DIR)/chroma.proto \
-		$(PROTO_DIR)/agent.proto
+		$(PROTO_DIR)/agent.proto \
+		$(PROTO_DIR)/registry.proto \
+		$(PROTO_DIR)/worker.proto
 	@echo "Fixing imports in shared/generated/*_pb2_grpc.py..."
 	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' shared/generated/*_pb2_grpc.py
 

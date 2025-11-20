@@ -46,7 +46,18 @@ def math_solver(expression: str) -> Dict[str, Any]:
     Raises:
         Returns error dict for invalid expressions or unsupported operations
     """
-    if not expression or not isinstance(expression, str):
+    if expression is None:
+        return {
+            "status": "error",
+            "error": "Expression cannot be None",
+            "expression": ""
+        }
+    
+    # Ensure expression is a string
+    if not isinstance(expression, str):
+        expression = str(expression)
+    
+    if not expression.strip():
         return {
             "status": "error",
             "error": "Expression must be a non-empty string",

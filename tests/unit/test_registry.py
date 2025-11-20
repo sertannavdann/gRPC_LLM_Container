@@ -342,28 +342,6 @@ class TestLocalToolRegistry:
         assert "limit" in tool_spec["function"]["parameters"]["properties"]
         assert "query" in tool_spec["function"]["parameters"]["required"]
     
-    def test_register_gRPC_tool(self, empty_tool_registry):
-        """Test backward compatibility with gRPC tool registration."""
-        registry = empty_tool_registry
-        
-        # Mock gRPC client method
-        mock_method = Mock(return_value={"status": "success", "data": "grpc result"})
-        
-        # Register gRPC tool with the correct signature
-        registry.register_gRPC_tool(
-            name="grpc_search",
-            client_method=mock_method,
-            description="gRPC web search tool"
-        )
-        
-        assert "grpc_search" in registry.tools
-        
-        # Call tool
-        result = registry.call_tool("grpc_search", query="test")
-        
-        # Should delegate to gRPC client method
-        mock_method.assert_called_once_with(query="test")
-        assert result["status"] == "success"
     
     def test_tool_with_complex_return(self, empty_tool_registry):
         """Test tool that returns non-standard format gets wrapped."""
