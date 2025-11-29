@@ -1,6 +1,8 @@
 #llm_service.py
 import grpc
 import logging
+import sys
+import os
 from concurrent import futures
 import json
 from json.decoder import JSONDecodeError
@@ -19,6 +21,14 @@ try:
     from .config import get_config
 except ImportError:
     from config import get_config
+
+# Import self-consistency from core (consolidated logic)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+try:
+    from core.self_consistency import compute_self_consistency
+except ImportError:
+    # Fallback if core not available (standalone mode)
+    compute_self_consistency = None
 
 from grpc_reflection.v1alpha import reflection
 from functools import lru_cache
@@ -112,6 +122,96 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
                 grpc.StatusCode.INTERNAL,
                 f"Generation error ({type(e).__name__}): {str(e) or 'No message'}"
             )
+
+    def GenerateBatch(self, request, context):
+        """
+        Generate k samples for self-consistency scoring (Agent0 Phase 2).
+        Returns all responses plus majority voting metrics.
+        """
+        try:
+            llm = load_model()
+            num_samples = max(1, min(request.num_samples, 10))  # Clamp 1-10
+            responses = []
+            
+            gen_config = {
+                "max_tokens": min(request.max_tokens, CONFIG.max_tokens),
+                "temperature": max(0.1, min(request.temperature, 1.0)),
+                "stream": False  # Non-streaming for batch
+            }
+            
+            if request.response_format == "json":
+                gen_config["grammar"] = self._get_json_grammar()
+            
+            # Generate k samples
+            for i in range(num_samples):
+                logger.info(f"Generating sample {i+1}/{num_samples}")
+                output = llm(request.prompt, **gen_config)
+                text = output["choices"][0]["text"].strip()
+                responses.append(text)
+            
+            # Compute self-consistency via consolidated module
+            if compute_self_consistency is not None:
+                consistency_score, majority_answer, majority_count = compute_self_consistency(responses)
+            else:
+                # Fallback if core module not available
+                majority_answer, majority_count, consistency_score = self._compute_majority_vote_fallback(responses)
+            
+            logger.info(f"Self-consistency: {consistency_score:.2f} ({majority_count}/{num_samples} agree)")
+            
+            return llm_pb2.GenerateBatchResponse(
+                responses=responses,
+                self_consistency_score=consistency_score,
+                majority_answer=majority_answer,
+                majority_count=majority_count
+            )
+            
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"Batch generation failed: {tb}")
+            context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Batch generation error ({type(e).__name__}): {str(e) or 'No message'}"
+            )
+
+    def _compute_majority_vote_fallback(self, responses: list) -> tuple:
+        """
+        Fallback majority voting if core module not available.
+        Returns (majority_answer, count, p̂ score).
+        """
+        from collections import Counter
+        
+        if not responses:
+            return "", 0, 0.0
+        
+        # Normalize responses for comparison
+        normalized = []
+        for r in responses:
+            try:
+                parsed = json.loads(r)
+                if isinstance(parsed, dict):
+                    answer = parsed.get("content", parsed.get("answer", r))
+                    normalized.append(str(answer).strip().lower())
+                else:
+                    normalized.append(str(parsed).strip().lower())
+            except json.JSONDecodeError:
+                normalized.append(r.strip().lower())
+        
+        counter = Counter(normalized)
+        if not counter:
+            return "", 0, 0.0
+        
+        most_common_norm, count = counter.most_common(1)[0]
+        
+        for i, norm in enumerate(normalized):
+            if norm == most_common_norm:
+                majority_answer = responses[i]
+                break
+        else:
+            majority_answer = responses[0]
+        
+        consistency_score = count / len(responses)
+        return majority_answer, count, consistency_score
 
     def _get_json_grammar(self):
         """Define strict JSON grammar for LLM"""

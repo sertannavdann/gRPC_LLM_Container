@@ -30,16 +30,19 @@ from shared.clients.llm_client import LLMClient
 from core.checkpointing import CheckpointManager, RecoveryManager
 from core import AgentWorkflow, WorkflowConfig
 from core.state import create_initial_state
+from core.self_consistency import SelfConsistencyVerifier
 from tools.registry import LocalToolRegistry
 from tools.builtin.web_search import web_search
 from tools.builtin.math_solver import math_solver  
 from tools.builtin.web_loader import load_web_page
+from tools.builtin.code_executor import execute_code, set_sandbox_client
 
 from langchain_core.messages import HumanMessage, AIMessage
 
 # New imports for Registry and Worker clients
 from shared.clients.registry_client import RegistryClient
 from shared.clients.worker_client import WorkerClient
+from shared.clients.sandbox_client import SandboxClient
 import os
 
 # Protobuf imports
@@ -55,13 +58,33 @@ logger = logging.getLogger("orchestrator")
 
 
 class LLMEngineWrapper:
-    """Wrapper around LLM client with structured tool calling support."""
+    """
+    Wrapper around LLM client with structured tool calling support.
     
-    def __init__(self, llm_client: LLMClient, temperature: float = 0.7, max_tokens: int = 512):
+    Implements Agent0-style multi-turn rollouts where the LLM can:
+    1. Generate reasoning text
+    2. Emit code blocks for execution
+    3. See execution results
+    4. Continue reasoning with updated context
+    """
+    
+    def __init__(
+        self, 
+        llm_client: LLMClient, 
+        temperature: float = 0.7, 
+        max_tokens: int = 512,
+        max_tool_iterations: int = 5,
+        sandbox_client = None  # Optional SandboxClient for code execution
+    ):
         self.client = llm_client
         self.temperature = temperature
         self.max_tokens = max_tokens
-        logger.info(f"LLMEngineWrapper initialized with tool calling support: temp={temperature}, max_tokens={max_tokens}")
+        self.max_tool_iterations = max_tool_iterations
+        self.sandbox_client = sandbox_client
+        logger.info(
+            f"LLMEngineWrapper initialized: temp={temperature}, "
+            f"max_tokens={max_tokens}, max_tool_iterations={max_tool_iterations}"
+        )
     
     def generate(self, messages: list, tools: list = None, temperature: float = None, 
                  max_tokens: int = None, stream: bool = False) -> dict:
@@ -120,7 +143,16 @@ class LLMEngineWrapper:
             }
     
     def _generate_with_tools(self, messages: list, tools: list, temperature: float, max_tokens: int) -> dict:
-        """Generate response with tool calling capability using structured prompting."""
+        """
+        Generate response with tool calling using Agent0-style multi-turn rollouts.
+        
+        Implements stop-and-go execution:
+        1. LLM generates text + optional tool call
+        2. If tool call detected, execute and append result
+        3. Continue generation with updated context
+        4. Repeat until final answer or max iterations
+        """
+        import re
         
         # Format tools for prompt
         tools_desc = self._format_tools_description(tools)
@@ -128,8 +160,16 @@ class LLMEngineWrapper:
         # Build conversation history including tool results
         conversation = self._format_messages_with_tools(messages)
         
-        # Construct prompt with tool instructions
-        prompt = f"""You are a helpful AI assistant with access to tools.
+        # Track multi-turn context
+        rollout_context = conversation
+        tool_calls_made = []
+        iteration = 0
+        
+        while iteration < self.max_tool_iterations:
+            iteration += 1
+            
+            # Construct prompt with tool instructions
+            prompt = f"""You are a helpful AI assistant with access to tools.
 
 Available tools:
 {tools_desc}
@@ -139,33 +179,74 @@ Instructions:
 - To answer directly without tools, respond with ONLY valid JSON: {{"type": "answer", "content": "your answer here"}}
 - IMPORTANT: Respond with ONLY the JSON object, no additional text before or after
 - Choose the appropriate tool based on the user's question
+- If you have already received tool results, use them to formulate your final answer
 - If no tool is needed, provide a direct answer
 
 Conversation:
-{conversation}
+{rollout_context}
 
 Your response (JSON only):"""
 
-        logger.debug(f"Tool-enabled prompt generated ({len(prompt)} chars)")
+            logger.debug(f"Multi-turn iteration {iteration}: prompt length={len(prompt)}")
+            
+            try:
+                # Generate with JSON grammar constraint
+                response_text = self.client.generate(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_format="json"
+                )
+                
+                # Parse response
+                parsed = self._parse_tool_response(response_text)
+                
+                # Check if this is a final answer
+                if not parsed.get("tool_calls"):
+                    # No tool calls = final answer
+                    logger.info(f"✓ Final answer after {iteration} iteration(s), {len(tool_calls_made)} tool call(s)")
+                    return {
+                        "content": parsed.get("content", ""),
+                        "tool_calls": [],
+                        "_multi_turn_metadata": {
+                            "iterations": iteration,
+                            "tool_calls_made": tool_calls_made
+                        }
+                    }
+                
+                # Tool call detected - record it
+                tool_call = parsed["tool_calls"][0]
+                tool_name = tool_call["function"]["name"]
+                tool_args = tool_call["function"]["arguments"]
+                
+                logger.info(f"[Iteration {iteration}] Tool call: {tool_name}({list(tool_args.keys())})")
+                tool_calls_made.append({"tool": tool_name, "arguments": tool_args})
+                
+                # Return tool call for external execution (single-turn mode for compatibility)
+                # The graph's tools_node will execute it and feed back results
+                if iteration == 1:
+                    # First iteration: return tool call for graph to handle
+                    return parsed
+                
+                # Multi-turn: append tool call to context and continue
+                rollout_context += f"\nAssistant: [Calling tool: {tool_name} with {tool_args}]"
+                rollout_context += f"\nTool Result ({tool_name}): Awaiting execution..."
+                
+            except Exception as e:
+                logger.error(f"Multi-turn iteration {iteration} error: {e}", exc_info=True)
+                break
         
-        try:
-            # Generate with JSON grammar constraint
-            response_text = self.client.generate(
-                prompt=prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                response_format="json"  # Triggers JSON grammar in llm_service
-            )
-            
-            # Parse response
-            return self._parse_tool_response(response_text)
-            
-        except Exception as e:
-            logger.error(f"Tool generation error: {e}", exc_info=True)
-            return {
-                "content": "I encountered an error while processing your request with tools.",
-                "tool_calls": []
+        # Max iterations reached
+        logger.warning(f"Max tool iterations ({self.max_tool_iterations}) reached")
+        return {
+            "content": "I attempted to use tools but reached the maximum number of iterations. Please try rephrasing your question.",
+            "tool_calls": [],
+            "_multi_turn_metadata": {
+                "iterations": iteration,
+                "tool_calls_made": tool_calls_made,
+                "max_iterations_reached": True
             }
+        }
     
     def _parse_tool_response(self, response_text: str) -> dict:
         """Parse LLM's JSON response into content or tool_calls."""
@@ -361,16 +442,41 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Initialize clients
         self.llm_client = LLMClient(host=self.config.llm_host, port=self.config.llm_port)
         
+        # Initialize Sandbox Client
+        try:
+            self.sandbox_client = SandboxClient(
+                host=self.config.sandbox_host,
+                port=self.config.sandbox_port
+            )
+            # Wire sandbox client to code_executor tool
+            set_sandbox_client(self.sandbox_client)
+            logger.info(f"Sandbox client connected to {self.config.sandbox_host}:{self.config.sandbox_port}")
+        except Exception as e:
+            logger.warning(f"Sandbox client initialization failed: {e}. Code execution disabled.")
+            self.sandbox_client = None
+        
         # Initialize Registry Client
         registry_host = os.getenv("REGISTRY_HOST", "registry_service")
         registry_port = int(os.getenv("REGISTRY_PORT", "50055"))
         self.registry_client = RegistryClient(host=registry_host, port=registry_port)
         
-        # Initialize LLM Engine Wrapper
+        # Initialize Self-Consistency Verifier (Agent0 Phase 2)
+        self.self_consistency_verifier = None
+        if self.config.enable_self_consistency:
+            self.self_consistency_verifier = SelfConsistencyVerifier(
+                llm_client=self.llm_client,
+                num_samples=self.config.self_consistency_samples,
+                consistency_threshold=self.config.self_consistency_threshold
+            )
+            logger.info(f"Self-consistency enabled: k={self.config.self_consistency_samples}, threshold={self.config.self_consistency_threshold}")
+        
+        # Initialize LLM Engine Wrapper with multi-turn support
         self.llm_engine = LLMEngineWrapper(
             self.llm_client, 
             temperature=self.config.temperature,
-            max_tokens=512
+            max_tokens=512,
+            max_tool_iterations=self.config.max_iterations,
+            sandbox_client=self.sandbox_client
         )
         
         # Initialize Tool Registry
@@ -380,6 +486,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.tool_registry.register(web_search)
         self.tool_registry.register(math_solver)
         self.tool_registry.register(load_web_page)
+        
+        # Register code executor if sandbox is available
+        if self.sandbox_client:
+            self.tool_registry.register(execute_code)
+            logger.info("Code executor tool registered")
         
         # Register delegation tool
         self.tool_registry.register(self.delegate_to_worker)

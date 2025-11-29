@@ -44,7 +44,8 @@ proto-gen-shared:
 		$(PROTO_DIR)/chroma.proto \
 		$(PROTO_DIR)/agent.proto \
 		$(PROTO_DIR)/registry.proto \
-		$(PROTO_DIR)/worker.proto
+		$(PROTO_DIR)/worker.proto \
+		$(PROTO_DIR)/sandbox.proto
 	@echo "Fixing imports in shared/generated/*_pb2_grpc.py..."
 	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' shared/generated/*_pb2_grpc.py
 
@@ -87,6 +88,11 @@ build-ui-clean:
 	$(DOCKER_CMD) compose build --no-cache ui_service
 	@echo "Build complete"
 
+build-sandbox:
+	@echo "Building sandbox_service container..."
+	$(DOCKER_CMD) compose build sandbox_service
+	@echo "Build complete"
+
 up:
 	@echo "Starting services..."
 	$(DOCKER_CMD) compose up --detach
@@ -108,7 +114,7 @@ clean:
 
 health-check:
 	@echo "Service Health Status:"
-	@for port in 50051 50052 50054; do \
+	@for port in 50051 50052 50054 50057; do \
 		grpc_health_probe -addr=localhost:$$port -connect-timeout=2s && \
 		echo "Port $$port: Healthy" || echo "Port $$port: Unhealthy"; \
 	done

@@ -131,8 +131,49 @@ The system relies on strict contracts defined in `shared/proto/`:
     *   **LLM**: Can be swapped for external APIs (OpenAI/Anthropic) or scaled with multiple GPU containers.
     *   **Orchestrator**: Stateless (except for DB), can be scaled if using a shared DB (PostgreSQL) instead of SQLite.
 
-## 8. Future Roadmap
+## 8. Agent0 Enhancements (Implemented)
 
-*   **Phase 2**: Enhanced RAG with document ingestion pipeline.
-*   **Phase 3**: Multi-modal support (Image/Audio).
-*   **Phase 4**: Kubernetes Helm charts for production deployment.
+Based on research from the Agent0 paper (arXiv:2511.16043), the following advanced reasoning features have been integrated:
+
+### 8.1 Multi-Turn Tool Rollouts (Phase 1)
+*   **Pattern**: "Stop-and-Go" execution where the LLM pauses at each tool call.
+*   **Implementation**: `LLMEngineWrapper._generate_with_tools_multi_turn()` in `orchestrator_service.py`.
+*   **Flow**:
+    1. LLM generates response with potential tool call.
+    2. If `type: "tool_call"`, execution pauses, tool is invoked.
+    3. Result is appended to context as a `tool` role message.
+    4. LLM continues generation with enriched context.
+    5. Loop repeats until `type: "answer"` or `max_tool_iterations` reached.
+*   **Config**: `max_tool_iterations=5` (configurable).
+
+### 8.2 Self-Consistency Scoring (Phase 2)
+*   **Purpose**: Measure model uncertainty via majority voting.
+*   **Implementation**: `core/self_consistency.py` + `LLMService.GenerateBatch` RPC.
+*   **Algorithm**:
+    1. Generate k samples (default k=5) for the same prompt.
+    2. Normalize responses for comparison.
+    3. Compute p̂ = (count of majority answer) / k.
+    4. If p̂ < threshold (0.6), model is uncertain → trigger tool verification.
+*   **API**: `llm_client.generate_batch(prompt, num_samples=5)` returns `{responses, self_consistency_score, majority_answer}`.
+
+### 8.3 Sandbox Service (Phase 3)
+*   **Purpose**: Secure execution of LLM-generated code.
+*   **Implementation**: `sandbox_service/sandbox_service.py`.
+*   **Features**:
+    *   Timeout enforcement (default 30s, max 60s).
+    *   Memory limits (default 256MB, max 512MB).
+    *   Import whitelisting (safe modules only).
+    *   Process isolation via `multiprocessing`.
+    *   Restricted builtins (no `eval`, `exec`, `open`).
+*   **API**: `sandbox_client.execute_code(code, language="python", timeout_seconds=30)`.
+
+### 8.4 Curriculum Learning Signal (Future)
+*   **Tracking**: `tool_use_count` is now tracked in LangGraph state for future ADPO training.
+*   **Purpose**: Reward efficient tool use in curriculum training.
+
+## 9. Future Roadmap
+
+*   **Phase 4**: Enhanced RAG with document ingestion pipeline.
+*   **Phase 5**: Multi-modal support (Image/Audio).
+*   **Phase 6**: Kubernetes Helm charts for production deployment.
+*   **Phase 7**: Full ADPO training loop with curriculum agent integration.

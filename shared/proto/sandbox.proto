@@ -1,0 +1,36 @@
+syntax = "proto3";
+package sandbox;
+
+service SandboxService {
+  // Execute code in a sandboxed environment
+  rpc ExecuteCode(ExecuteCodeRequest) returns (ExecuteCodeResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message ExecuteCodeRequest {
+  string code = 1;                    // Code to execute
+  string language = 2;                // Programming language (python, javascript, etc.)
+  int32 timeout_seconds = 3;          // Execution timeout
+  int32 memory_limit_mb = 4;          // Memory limit in MB
+  repeated string allowed_imports = 5; // Whitelist of allowed imports
+  map<string, string> environment = 6; // Environment variables
+}
+
+message ExecuteCodeResponse {
+  string stdout = 1;                  // Standard output
+  string stderr = 2;                  // Standard error
+  int32 exit_code = 3;                // Process exit code
+  float execution_time_ms = 4;        // Execution time in milliseconds
+  bool timed_out = 5;                 // True if execution exceeded timeout
+  bool memory_exceeded = 6;           // True if memory limit exceeded
+  string error_message = 7;           // Error message if execution failed
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string status = 2;
+}

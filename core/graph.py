@@ -279,10 +279,14 @@ class AgentWorkflow:
     
     def _tools_node(self, state: AgentState) -> AgentState:
         """
-        Tool execution node with parallel calls and error handling.
+        Tool execution node with parallel calls, error handling, and multi-turn support.
         
         Extracts tool calls from last AI message, executes them in parallel
         (up to max_tool_calls_per_turn), and creates ToolMessage responses.
+        
+        For multi-turn rollouts (Agent0 style), this node can be invoked multiple
+        times within a single query, with each invocation adding tool results
+        to the conversation context.
         
         Args:
             state: Current state with tool_calls in last message
@@ -299,7 +303,10 @@ class AgentWorkflow:
         results = []
         tool_messages = []
         
-        logger.info(f"Executing {len(tool_calls)} tool calls")
+        # Track cumulative tool usage for multi-turn metrics
+        total_tool_calls = state.get("total_tool_calls", 0)
+        
+        logger.info(f"Executing {len(tool_calls)} tool calls (cumulative: {total_tool_calls})")
         
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
@@ -341,19 +348,71 @@ class AgentWorkflow:
             results.append(execution_result.to_dict())
             
             # Create tool message for LLM context
+            # Format result for better LLM comprehension
+            result_content = self._format_tool_result(tool_name, result)
             tool_messages.append(
                 ToolMessage(
-                    content=str(result),
+                    content=result_content,
                     tool_call_id=tool_call_id,
+                    name=tool_name,  # Include tool name for multi-turn context
                 )
             )
+            
+            total_tool_calls += 1
         
         return {
             **state,
             "messages": tool_messages,
             "tool_results": state.get("tool_results", []) + results,
+            "total_tool_calls": total_tool_calls,
             "next_action": "validate",
         }
+    
+    def _format_tool_result(self, tool_name: str, result: dict) -> str:
+        """
+        Format tool result for LLM comprehension.
+        
+        Converts raw dict results into a readable string format that
+        helps the LLM understand and reason about the tool output.
+        
+        Args:
+            tool_name: Name of the tool that was executed
+            result: Raw result dictionary from tool execution
+        
+        Returns:
+            str: Formatted result string
+        """
+        status = result.get("status", "unknown")
+        
+        if status == "error":
+            error_msg = result.get("error", "Unknown error")
+            return f"[{tool_name} ERROR]: {error_msg}"
+        
+        # Extract meaningful data from result
+        if "result" in result:
+            data = result["result"]
+        elif "data" in result:
+            data = result["data"]
+        elif "formatted" in result:
+            data = result["formatted"]
+        else:
+            # Remove metadata fields for cleaner output
+            data = {k: v for k, v in result.items() 
+                   if k not in ("status", "_metadata", "latency_ms")}
+        
+        # Format based on data type
+        if isinstance(data, (int, float)):
+            return f"[{tool_name} RESULT]: {data}"
+        elif isinstance(data, str):
+            return f"[{tool_name} RESULT]: {data}"
+        elif isinstance(data, dict):
+            import json
+            return f"[{tool_name} RESULT]: {json.dumps(data, indent=2)}"
+        elif isinstance(data, list):
+            import json
+            return f"[{tool_name} RESULT]: {json.dumps(data, indent=2)}"
+        else:
+            return f"[{tool_name} RESULT]: {str(result)}"
     
     def _validate_node(self, state: AgentState) -> AgentState:
         """

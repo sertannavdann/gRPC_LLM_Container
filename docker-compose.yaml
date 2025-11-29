@@ -44,6 +44,7 @@ services:
     depends_on:
       - llm_service
       - chroma_service
+      - sandbox_service
     env_file:
       - .env
     environment:
@@ -55,8 +56,13 @@ services:
       - CHROMA_PORT=50052
       - REGISTRY_HOST=registry_service
       - REGISTRY_PORT=50055
+      - SANDBOX_HOST=sandbox_service
+      - SANDBOX_PORT=50057
       - AGENT_MAX_ITERATIONS=5
       - AGENT_TEMPERATURE=0.7
+      - ENABLE_SELF_CONSISTENCY=false
+      - SELF_CONSISTENCY_SAMPLES=5
+      - SELF_CONSISTENCY_THRESHOLD=0.6
       - SERPER_API_KEY=${SERPER_API_KEY:-}
     volumes:
       - ./data:/app/data
@@ -77,6 +83,25 @@ services:
       - "50055:50055"
     networks:
       - rag_net
+
+  sandbox_service:
+    build:
+      context: .
+      dockerfile: sandbox_service/Dockerfile
+    container_name: sandbox_service
+    ports:
+      - "50057:50057"
+    environment:
+      - SANDBOX_PORT=50057
+      - SANDBOX_TIMEOUT=30
+      - SANDBOX_MEMORY_MB=256
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50057"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   worker_coding:
     build:

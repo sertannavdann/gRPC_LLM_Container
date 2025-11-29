@@ -82,3 +82,54 @@ class LLMClient(BaseClient):
                 is_valid_json=False,
             )
             yield error
+
+    def generate_batch(
+        self,
+        prompt: str,
+        num_samples: int = 5,
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+        response_format: str = ""
+    ) -> dict:
+        """
+        Generate k samples for self-consistency scoring (Agent0 Phase 2).
+        
+        Args:
+            prompt: Input prompt
+            num_samples: Number of samples to generate (k)
+            max_tokens: Maximum tokens per sample
+            temperature: Sampling temperature
+            response_format: Optional format constraint (e.g., "json")
+        
+        Returns:
+            Dict with keys:
+                - responses: List of generated texts
+                - self_consistency_score: p̂ (proportion agreeing with majority)
+                - majority_answer: Most common answer
+                - majority_count: Number of responses that agree
+        """
+        try:
+            response = self.stub.GenerateBatch(
+                llm_pb2.GenerateBatchRequest(
+                    prompt=prompt,
+                    num_samples=min(num_samples, 10),
+                    max_tokens=min(max_tokens, 2048),
+                    temperature=temperature,
+                    response_format=response_format
+                ),
+                timeout=120  # Longer timeout for batch generation
+            )
+            return {
+                "responses": list(response.responses),
+                "self_consistency_score": response.self_consistency_score,
+                "majority_answer": response.majority_answer,
+                "majority_count": response.majority_count
+            }
+        except grpc.RpcError as e:
+            logger.error(f"Batch generation failed: {e.code().name}")
+            return {
+                "responses": [],
+                "self_consistency_score": 0.0,
+                "majority_answer": f"LLM Service Error: {e.details()}",
+                "majority_count": 0
+            }

@@ -2,7 +2,11 @@ syntax = "proto3";
 package llm;
 
 service LLMService {
+  // Streaming text generation
   rpc Generate(GenerateRequest) returns (stream GenerateResponse);
+  
+  // Batch generation for self-consistency scoring (Phase 2: Agent0)
+  rpc GenerateBatch(GenerateBatchRequest) returns (GenerateBatchResponse);
 }
 
 message GenerateRequest {
@@ -15,5 +19,21 @@ message GenerateRequest {
 message GenerateResponse {
   string token = 1;
   bool is_final = 2;
-    bool is_valid_json = 3;
+  bool is_valid_json = 3;
+}
+
+// Phase 2: Batch generation for self-consistency scoring
+message GenerateBatchRequest {
+  string prompt = 1;
+  int32 num_samples = 2;      // k responses to generate
+  int32 max_tokens = 3;
+  float temperature = 4;
+  string response_format = 5;
+}
+
+message GenerateBatchResponse {
+  repeated string responses = 1;           // k generated responses
+  float self_consistency_score = 2;        // p̂ = proportion agreeing with majority
+  string majority_answer = 3;              // Most common answer
+  int32 majority_count = 4;                // How many responses agree
 }

@@ -41,6 +41,15 @@ class OrchestratorConfig:
     # Checkpoint settings
     checkpoint_db_path: str = "agent_memory.sqlite"
     
+    # Sandbox service connection
+    sandbox_host: str = "sandbox_service"
+    sandbox_port: int = 50057
+    
+    # Self-consistency settings (Agent0 Phase 2)
+    enable_self_consistency: bool = False
+    self_consistency_samples: int = 5
+    self_consistency_threshold: float = 0.6
+    
     @classmethod
     def from_env(cls) -> "OrchestratorConfig":
         """Load configuration from environment variables."""
@@ -59,4 +68,9 @@ class OrchestratorConfig:
             max_tool_calls_per_turn=int(os.getenv("AGENT_MAX_TOOL_CALLS", "5")),
             timeout_seconds=int(os.getenv("AGENT_TIMEOUT", "120")),
             checkpoint_db_path=os.getenv("CHECKPOINT_DB_PATH", "agent_memory.sqlite"),
+            sandbox_host=os.getenv("SANDBOX_HOST", "sandbox_service"),
+            sandbox_port=int(os.getenv("SANDBOX_PORT", "50057")),
+            enable_self_consistency=os.getenv("ENABLE_SELF_CONSISTENCY", "false").lower() == "true",
+            self_consistency_samples=int(os.getenv("SELF_CONSISTENCY_SAMPLES", "5")),
+            self_consistency_threshold=float(os.getenv("SELF_CONSISTENCY_THRESHOLD", "0.6")),
         )
