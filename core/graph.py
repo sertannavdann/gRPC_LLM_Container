@@ -110,17 +110,17 @@ class AgentWorkflow:
         
         # Check for tool keywords
         if any(keyword in query_lower for keyword in tool_keywords):
-            logger.info(f"Tool usage detected via keywords")
+            logger.debug("Tool usage detected via keywords")
             return True
         
         # Check for mathematical expressions (e.g., "2+2", "15*23")
         if re.search(r'\d+\s*[\+\-\*/\^]\s*\d+', query):
-            logger.info(f"Tool usage detected via math expression")
+            logger.debug("Tool usage detected via math expression")
             return True
         
         # Check for URLs
         if re.search(r'https?://', query_lower):
-            logger.info(f"Tool usage detected via URL")
+            logger.debug("Tool usage detected via URL")
             return True
         
         # Conversational greetings/small talk - NEVER need tools
@@ -130,7 +130,7 @@ class AgentWorkflow:
             'nice to meet', 'thanks', 'thank you', 'bye', 'goodbye', 'see you'
         ]
         if any(pattern in query_lower for pattern in greeting_patterns):
-            logger.info(f"Conversational greeting detected - no tools needed")
+            logger.debug("Conversational greeting detected - no tools needed")
             return False
         
         # Factual question detection: question words about specific topics
@@ -143,10 +143,10 @@ class AgentWorkflow:
             # But exclude simple opinion questions
             opinion_words = ['think', 'feel', 'opinion', 'prefer', 'like', 'favorite']
             if not any(w in query_lower for w in opinion_words):
-                logger.info(f"Factual question detected - tools may be needed")
+                logger.debug("Factual question detected - tools may be needed")
                 return True
         
-        logger.info(f"No tool usage needed for query")
+        logger.debug("No tool usage needed for query")
         return False
     
     def _build_graph(self) -> StateGraph:

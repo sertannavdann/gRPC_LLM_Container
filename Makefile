@@ -51,9 +51,11 @@ BOLD := \033[1m
         build-% restart-% logs-% shell-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
         test test-unit test-integration test-e2e \
-        dev dev-ui dev-backend query chat \
+        dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
-        install-deps check-deps lint format
+        install-deps check-deps lint format \
+        rebuild-orchestrator rebuild-all restart-orchestrator restart-all \
+        verify-code logs-orch logs-tail health-all
 
 # ============================================================================
 # HELP
@@ -67,6 +69,7 @@ help:
 	@echo "$(BOLD)$(GREEN)🚀 Quick Start:$(RESET)"
 	@echo "  $(CYAN)make start$(RESET)              - Build and start all services"
 	@echo "  $(CYAN)make dev$(RESET)                - Start backend + UI in dev mode"
+	@echo "  $(CYAN)make dev-ui-local$(RESET)       - Start UI npm dev server (port 3000)"
 	@echo "  $(CYAN)make stop$(RESET)               - Stop all services"
 	@echo "  $(CYAN)make status$(RESET)             - Show service status and health"
 	@echo ""
@@ -121,6 +124,12 @@ help:
 	@echo "  $(CYAN)make health$(RESET)             - Check all service health"
 	@echo "  $(CYAN)make ps$(RESET)                 - Show running containers"
 	@echo "  $(CYAN)make stats$(RESET)              - Show container resource usage"
+	@echo ""
+	@echo "$(BOLD)$(GREEN)🔄 Cache Bust & Rebuild:$(RESET)"
+	@echo "  $(CYAN)make rebuild-orchestrator$(RESET) - Force rebuild orchestrator (no cache)"
+	@echo "  $(CYAN)make rebuild-all$(RESET)        - Force rebuild all services (no cache)"
+	@echo "  $(CYAN)make restart-all$(RESET)        - Quick restart all services"
+	@echo "  $(CYAN)make verify-code$(RESET)        - Verify code is current in container"
 	@echo ""
 	@echo "$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service"
 	@echo ""
@@ -362,10 +371,19 @@ dev-ui:
 	@cd ui_service && npm run dev &
 	@echo "$(GREEN)✓ UI dev server starting at http://localhost:3000$(RESET)"
 
+dev-ui-local:
+	@echo "$(CYAN)Starting local npm dev server (port 3000)...$(RESET)"
+	@echo "$(YELLOW)Prerequisite: npm install in ui_service/$(RESET)"
+	@if [ ! -d "ui_service/node_modules" ]; then \
+		echo "$(RED)✗ node_modules not found. Run: cd ui_service && npm install$(RESET)"; \
+		exit 1; \
+	fi
+	@cd ui_service && npm run dev
+
 dev-ui-docker:
-	@echo "$(CYAN)Starting UI service in Docker...$(RESET)"
+	@echo "$(CYAN)Starting UI service in Docker (port 5001)...$(RESET)"
 	@$(COMPOSE_CMD) up -d ui_service
-	@echo "$(GREEN)✓ UI service started$(RESET)"
+	@echo "$(GREEN)✓ UI service started at http://localhost:5001$(RESET)"
 
 # Watch orchestrator logs during development
 watch-orchestrator:
@@ -579,3 +597,61 @@ u: up
 d: down
 q: query
 c: chat
+
+# ============================================================================
+# Docker Cache Bust & Rebuild Targets
+# ============================================================================
+
+# Force rebuild orchestrator without cache
+rebuild-orchestrator:
+	@echo "$(CYAN)Removing old orchestrator image...$(RESET)"
+	@$(DOCKER_CMD) rmi grpc_llm-orchestrator:latest -f 2>/dev/null || true
+	@echo "$(CYAN)Building orchestrator without cache...$(RESET)"
+	@$(COMPOSE_CMD) build --no-cache orchestrator
+	@echo "$(CYAN)Recreating orchestrator container...$(RESET)"
+	@$(COMPOSE_CMD) up -d --force-recreate orchestrator
+	@echo "$(GREEN)✓ Done. Check logs with: make logs-orchestrator$(RESET)"
+
+# Force rebuild all services without cache
+rebuild-all:
+	@echo "$(CYAN)Rebuilding all services without cache...$(RESET)"
+	@$(COMPOSE_CMD) build --no-cache
+	@$(COMPOSE_CMD) up -d --force-recreate
+	@echo "$(GREEN)✓ Done. Check status with: make status$(RESET)"
+
+# Quick restart (uses cache, faster)
+restart-orchestrator:
+	@$(COMPOSE_CMD) restart orchestrator
+
+# Quick restart all services (alias for existing restart target)
+restart-all: restart
+
+# Verify code is current inside container
+verify-code:
+	@echo "$(CYAN)Checking orchestrator code version...$(RESET)"
+	@$(DOCKER_CMD) exec orchestrator python -c "from tools.builtin.user_context import get_commute_time; print('$(GREEN)✓ user_context imported$(RESET)')" 2>/dev/null || echo "$(RED)✗ Import failed$(RESET)"
+	@$(DOCKER_CMD) exec orchestrator python -c "from tools.registry import tool_registry; print(f'$(GREEN)✓ {len(tool_registry._tools)} tools registered$(RESET)')" 2>/dev/null || echo "$(RED)✗ Registry check failed$(RESET)"
+
+# Tail orchestrator logs (convenience alias)
+logs-orch:
+	@$(COMPOSE_CMD) logs -f --tail=100 orchestrator
+
+# Tail all logs with limited history
+logs-tail:
+	@$(COMPOSE_CMD) logs -f --tail=50
+
+# Health check all services (enhanced view)
+health-all:
+	@echo "$(CYAN)Checking service health...$(RESET)"
+	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}"
+
+# ============================================================================
+# Docker Troubleshooting Guide
+# ============================================================================
+# | Symptom                      | Cause              | Fix                      |
+# |------------------------------|--------------------|--------------------------|
+# | Code changes not reflected   | Docker cache       | make rebuild-orchestrator|
+# | "Module not found" error     | Stale build        | make rebuild-all         |
+# | Tool returns old data        | Container restart  | make restart-orchestrator|
+# | Service not responding       | Check logs         | make logs-orchestrator   |
+# ============================================================================

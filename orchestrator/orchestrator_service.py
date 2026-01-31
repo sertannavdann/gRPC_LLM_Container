@@ -58,6 +58,7 @@ from shared.providers import (
 
 import os
 import asyncio
+import threading
 
 # Protobuf imports
 from shared.generated import agent_pb2
@@ -73,12 +74,15 @@ logger = logging.getLogger("orchestrator")
 
 class OnlineProviderWrapper:
     """
-    Wrapper that adapts async OnlineProvider interface to sync LLMClient interface.
-    
+    Thread-safe wrapper that adapts async OnlineProvider interface to sync LLMClient interface.
+
     This enables seamless switching between local gRPC-based LLM and cloud APIs
     (Perplexity, OpenAI, Anthropic) without changing the orchestrator code.
+
+    Uses thread-local event loops to ensure thread safety when called from
+    multiple gRPC worker threads concurrently.
     """
-    
+
     def __init__(
         self,
         provider: BaseProvider,
@@ -87,7 +91,7 @@ class OnlineProviderWrapper:
     ):
         """
         Initialize the wrapper.
-        
+
         Args:
             provider: Online provider instance (PerplexityProvider, OpenAIProvider, etc.)
             model: Model name to use for completions
@@ -96,13 +100,27 @@ class OnlineProviderWrapper:
         self.provider = provider
         self.model = model
         self.temperature = temperature
-        # Create a dedicated event loop for this wrapper
-        self._loop = asyncio.new_event_loop()
+        # Thread-local storage for event loops (thread-safe with concurrent requests)
+        self._thread_local = threading.local()
         logger.info(f"OnlineProviderWrapper initialized: model={model}, temp={temperature}")
-    
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Get or create thread-local event loop."""
+        if not hasattr(self._thread_local, 'loop') or self._thread_local.loop.is_closed():
+            self._thread_local.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._thread_local.loop)
+        return self._thread_local.loop
+
     def _run_async(self, coro):
-        """Run async coroutine synchronously using dedicated event loop."""
-        return self._loop.run_until_complete(coro)
+        """Run async coroutine in thread-local event loop.
+
+        Wraps coroutine in a task to ensure proper async context
+        for aiohttp's timeout context manager.
+        """
+        loop = self._get_loop()
+        # Wrap in task to ensure proper async context for aiohttp timeout
+        task = loop.create_task(coro)
+        return loop.run_until_complete(task)
     
     def generate(
         self,
@@ -200,9 +218,9 @@ class LLMEngineWrapper:
     """
     
     def __init__(
-        self, 
-        llm_client: LLMClient, 
-        temperature: float = 0.7, 
+        self,
+        llm_client: LLMClient,
+        temperature: float = 0.7,
         max_tokens: int = 512,
         max_tool_iterations: int = 5,
         sandbox_client = None  # Optional SandboxClient for code execution
@@ -212,7 +230,7 @@ class LLMEngineWrapper:
         self.max_tokens = max_tokens
         self.max_tool_iterations = max_tool_iterations
         self.sandbox_client = sandbox_client
-        logger.info(
+        logger.debug(
             f"LLMEngineWrapper initialized: temp={temperature}, "
             f"max_tokens={max_tokens}, max_tool_iterations={max_tool_iterations}"
         )
@@ -232,7 +250,7 @@ class LLMEngineWrapper:
         Returns:
             dict with 'content' and optionally 'tool_calls'
         """
-        logger.info(f"LLMEngineWrapper.generate() called with {len(messages)} messages, {len(tools) if tools else 0} tools")
+        logger.debug(f"LLMEngineWrapper.generate() called with {len(messages)} messages, {len(tools) if tools else 0} tools")
         
         # Use provided values or defaults
         temp = temperature if temperature is not None else self.temperature
@@ -294,7 +312,7 @@ class LLMEngineWrapper:
         # Check if we have tool results in the messages (second call after tool execution)
         has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
         logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
-        logger.info(f"has_tool_results={has_tool_results} (messages count: {len(messages)})")
+        logger.debug(f"has_tool_results={has_tool_results} (messages count: {len(messages)})")
         
         # Track multi-turn context
         rollout_context = conversation
@@ -415,7 +433,7 @@ Your response (JSON only):"""
         try:
             # Clean response text
             response_text = response_text.strip()
-            logger.info(f"Raw LLM response length={len(response_text)}, first 500 chars: {response_text[:500] if response_text else '(empty)'}")
+            logger.debug(f"Raw LLM response length={len(response_text)}, first 500 chars: {response_text[:500] if response_text else '(empty)'}")
             
             # Remove markdown code blocks if present (e.g., ```json {...} ```)
             code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
@@ -451,7 +469,14 @@ Your response (JSON only):"""
                             logger.debug(f"Text after JSON: {after_json[:100]}...")
                     
                     response_text = json_str
-            
+
+            # Normalize Python-style booleans (True/False/None) to JSON (true/false/null)
+            # LLMs sometimes return Python syntax instead of proper JSON
+            import re as re_mod
+            response_text = re_mod.sub(r'\bTrue\b', 'true', response_text)
+            response_text = re_mod.sub(r'\bFalse\b', 'false', response_text)
+            response_text = re_mod.sub(r'\bNone\b', 'null', response_text)
+
             parsed = json.loads(response_text)
             
             response_type = parsed.get("type", "answer")
@@ -998,7 +1023,8 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         for tr in tool_results:
             if isinstance(tr, dict):
-                tool_name = tr.get("tool", "unknown")
+                # Handle both ToolExecutionResult.to_dict() format (tool_name) and legacy format (tool)
+                tool_name = tr.get("tool_name") or tr.get("tool", "unknown")
                 status = tr.get("status", "unknown")
                 sources["tools_used"].append({
                     "tool": tool_name,

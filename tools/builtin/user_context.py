@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import logging
 
+from .context_bridge import fetch_context_sync, is_mock_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -342,11 +344,22 @@ def get_user_context(
     try:
         if categories is None:
             categories = ["all"]
-        
+
         logger.debug(f"Getting user context for categories: {categories}, destination: {destination}")
-        
-        # Get context data (mock for now, will integrate with dashboard service)
-        context = _get_mock_context()
+
+        # Try real aggregator first (unless mock mode is forced)
+        context = None
+        if not is_mock_mode():
+            # Map "all" to actual category list for the aggregator
+            fetch_categories = None if "all" in categories else categories
+            context = fetch_context_sync(categories=fetch_categories)
+            if context:
+                logger.debug("Using real context from DashboardAggregator")
+
+        # Fallback to mock data if aggregator unavailable or returned empty
+        if not context:
+            logger.debug("Using mock context data")
+            context = _get_mock_context()
         
         # Build summaries for requested categories
         summaries = {}
@@ -471,7 +484,18 @@ def get_commute_time(destination: str = None) -> Dict[str, Any]:
         ...     print(f"ETA: {result['eta_minutes']} minutes")
     """
     try:
-        context = _get_mock_context()
+        # Try real aggregator first
+        context = None
+        if not is_mock_mode():
+            context = fetch_context_sync(categories=["navigation"])
+            if context:
+                logger.debug("Using real navigation context from DashboardAggregator")
+
+        # Fallback to mock data
+        if not context:
+            logger.debug("Using mock navigation context")
+            context = _get_mock_context()
+
         nav_data = context.get('navigation', {})
         
         if destination:

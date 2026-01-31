@@ -86,6 +86,8 @@ graph TB
 
 ## 🚀 Quick Start
 
+Ops reference: see [RUNBOOK_DOCKER.md](RUNBOOK_DOCKER.md) for rebuild/restart/health workflows.
+
 ### Prerequisites
 
 - **Docker** and **Docker Compose**

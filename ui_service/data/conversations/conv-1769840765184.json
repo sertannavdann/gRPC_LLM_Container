@@ -1,0 +1,15 @@
+{
+  "id": "conv-1769840765184",
+  "title": "what is my income",
+  "messages": [
+    {
+      "id": "user-1769840763168",
+      "role": "user",
+      "content": "what is my income",
+      "timestamp": "2026-01-31T06:26:03.168Z"
+    }
+  ],
+  "createdAt": "2026-01-31T06:26:05.184Z",
+  "updatedAt": "2026-01-31T06:26:05.184Z",
+  "messageCount": 1
+}
