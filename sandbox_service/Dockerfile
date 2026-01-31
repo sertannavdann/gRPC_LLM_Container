@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install
-COPY requirements.txt .
+COPY sandbox_service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared protobuf files
