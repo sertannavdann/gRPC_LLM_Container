@@ -36,8 +36,9 @@ from tools.builtin.web_search import web_search
 from tools.builtin.math_solver import math_solver  
 from tools.builtin.web_loader import load_web_page
 from tools.builtin.code_executor import execute_code, set_sandbox_client
+from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
 
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # New imports for Registry and Worker clients
 from shared.clients.registry_client import RegistryClient
@@ -290,6 +291,11 @@ class LLMEngineWrapper:
         # Build conversation history including tool results
         conversation = self._format_messages_with_tools(messages)
         
+        # Check if we have tool results in the messages (second call after tool execution)
+        has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
+        logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
+        logger.info(f"has_tool_results={has_tool_results} (messages count: {len(messages)})")
+        
         # Track multi-turn context
         rollout_context = conversation
         tool_calls_made = []
@@ -298,18 +304,42 @@ class LLMEngineWrapper:
         while iteration < self.max_tool_iterations:
             iteration += 1
             
-            # Construct prompt with tool instructions
-            prompt = f"""You are a helpful AI assistant with access to tools.
+            # Adjust instructions based on whether we have tool results
+            if has_tool_results:
+                # We have tool results - check if we have ALL the info needed
+                prompt = f"""You are a helpful AI assistant with access to tools.
+
+Available tools:
+{tools_desc}
+
+Conversation with tool results:
+{rollout_context}
+
+Instructions:
+1. Review the user's ORIGINAL question and the tool results above
+2. If you have ALL the information needed to fully answer the user's question, respond with: {{"type": "answer", "content": "your complete answer"}}
+3. If you need MORE information that another tool can provide, call that tool: {{"type": "tool_call", "tool": "tool_name", "arguments": {{...}}}}
+
+IMPORTANT: 
+- If user asked about BOTH schedule AND commute, you need results from BOTH get_user_context AND get_commute_time
+- Only give a final answer when you have all needed information
+- Respond with ONLY valid JSON
+
+Your response (JSON only):"""
+            else:
+                # First iteration: Determine if tools needed
+                prompt = f"""You are a helpful AI assistant with access to tools.
 
 Available tools:
 {tools_desc}
 
 Instructions:
-- To use a tool, respond with ONLY valid JSON in this exact format: {{"type": "tool_call", "tool": "tool_name", "arguments": {{"arg1": "value"}}}}
+- Analyze the user's question to extract relevant values
+- To use a tool, respond with ONLY valid JSON in this exact format: {{"type": "tool_call", "tool": "tool_name", "arguments": {{"param_name": "actual_value_from_query"}}}}
 - To answer directly without tools, respond with ONLY valid JSON: {{"type": "answer", "content": "your answer here"}}
-- IMPORTANT: Respond with ONLY the JSON object, no additional text before or after
-- Choose the appropriate tool based on the user's question
-- If you have already received tool results, use them to formulate your final answer
+- IMPORTANT: Extract actual values from the user's question - do NOT use parameter names as values
+- For example, if user asks "how long to the office?", use {{"type": "tool_call", "tool": "get_commute_time", "arguments": {{"destination": "office"}}}}
+- If user asks "what's my schedule?", use {{"type": "tool_call", "tool": "get_user_context", "arguments": {{"categories": ["calendar"]}}}}
 - If no tool is needed, provide a direct answer
 
 Conversation:
@@ -380,9 +410,48 @@ Your response (JSON only):"""
     
     def _parse_tool_response(self, response_text: str) -> dict:
         """Parse LLM's JSON response into content or tool_calls."""
+        import re
+        
         try:
             # Clean response text
             response_text = response_text.strip()
+            logger.info(f"Raw LLM response length={len(response_text)}, first 500 chars: {response_text[:500] if response_text else '(empty)'}")
+            
+            # Remove markdown code blocks if present (e.g., ```json {...} ```)
+            code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+            if code_block_match:
+                logger.debug("Extracted JSON from markdown code block")
+                response_text = code_block_match.group(1).strip()
+            
+            # Try to extract JSON from mixed response (JSON + text)
+            # Find the first complete JSON object by matching braces
+            json_start = response_text.find('{')
+            if json_start != -1:
+                # Count braces to find complete JSON object
+                brace_count = 0
+                json_end = -1
+                for i, char in enumerate(response_text[json_start:]):
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_end = json_start + i + 1
+                            break
+                
+                if json_end > json_start:
+                    json_str = response_text[json_start:json_end]
+                    # Check if there's extra text before or after JSON
+                    before_json = response_text[:json_start].strip()
+                    after_json = response_text[json_end:].strip()
+                    
+                    if before_json or after_json:
+                        logger.warning(f"Extra text found around JSON, extracting JSON only")
+                        if after_json:
+                            logger.debug(f"Text after JSON: {after_json[:100]}...")
+                    
+                    response_text = json_str
+            
             parsed = json.loads(response_text)
             
             response_type = parsed.get("type", "answer")
@@ -621,6 +690,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.tool_registry.register(web_search)
         self.tool_registry.register(math_solver)
         self.tool_registry.register(load_web_page)
+        
+        # Register user context tools for personalized assistance
+        self.tool_registry.register(get_user_context)
+        self.tool_registry.register(get_daily_briefing)
+        self.tool_registry.register(get_commute_time)
         
         # Register code executor if sandbox is available
         if self.sandbox_client:

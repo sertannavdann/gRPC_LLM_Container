@@ -5,8 +5,9 @@ import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { ConversationHistory } from '../history/ConversationHistory';
+import { Dashboard } from '../dashboard';
 import { Message, ChatResponse } from '@/types/chat';
-import { Bot, Settings, Save, FileText } from 'lucide-react';
+import { Bot, Settings, Save, FileText, LayoutDashboard, PanelRightClose, PanelRight, Maximize2 } from 'lucide-react';
 
 // Auto-save debounce delay in ms
 const AUTO_SAVE_DELAY = 2000;
@@ -20,6 +21,8 @@ export function ChatContainer() {
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
+  const [isDashboardOpen, setIsDashboardOpen] = useState(false);
+  const [isDashboardFullscreen, setIsDashboardFullscreen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [summary, setSummary] = useState<string | undefined>(undefined);
@@ -204,7 +207,7 @@ export function ChatContainer() {
       />
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="border-b bg-card p-4">
           <div className="flex items-center justify-between">
@@ -238,6 +241,27 @@ export function ChatContainer() {
                 </div>
               )}
               <button
+                onClick={() => setIsDashboardFullscreen(true)}
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors"
+                title="Open Dashboard Fullscreen"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setIsDashboardOpen(!isDashboardOpen)}
+                className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors ${
+                  isDashboardOpen ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                }`}
+                title={isDashboardOpen ? 'Hide Dashboard' : 'Show Dashboard'}
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                {isDashboardOpen ? (
+                  <PanelRightClose className="h-4 w-4" />
+                ) : (
+                  <PanelRight className="h-4 w-4" />
+                )}
+              </button>
+              <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors"
               >
@@ -254,6 +278,28 @@ export function ChatContainer() {
         {/* Input */}
         <ChatInput onSend={handleSendMessage} disabled={isLoading} />
       </div>
+
+      {/* Dashboard Panel - Side Panel */}
+      {isDashboardOpen && !isDashboardFullscreen && (
+        <div className="w-[450px] border-l border-gray-800 flex-shrink-0 overflow-hidden">
+          <Dashboard 
+            onToggleFullscreen={() => setIsDashboardFullscreen(true)}
+            onClose={() => setIsDashboardOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* Dashboard Fullscreen */}
+      {isDashboardFullscreen && (
+        <Dashboard 
+          isFullscreen={true}
+          onToggleFullscreen={() => setIsDashboardFullscreen(false)}
+          onClose={() => {
+            setIsDashboardFullscreen(false);
+            setIsDashboardOpen(false);
+          }}
+        />
+      )}
 
       {/* Settings Panel */}
       <SettingsPanel isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />

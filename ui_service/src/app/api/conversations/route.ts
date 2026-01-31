@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 
-// Directory for storing conversations
-const CONVERSATIONS_DIR = process.env.CONVERSATIONS_DIR || '/app/data/conversations';
+// Directory for storing conversations - use local path for development
+const CONVERSATIONS_DIR = process.env.CONVERSATIONS_DIR || join(process.cwd(), 'data', 'conversations');
 
 interface Message {
   id: string;

@@ -1,7 +1,309 @@
 Build Configurable Multi-Provider Agent UI
 Create a modular settings UI for your gRPC LLM framework that enables runtime configuration of LLM providers, tools, and inference endpoints—implementing the "control plane" pattern that separates orchestration configuration from execution.
 
-Steps
+---
+
+## Document Conventions
+- Sections above the Appendix are the active roadmap.
+- The Appendix is preserved verbatim-ish for full context, but may contain duplicates/outdated sequences.
+- When in doubt, treat the checklists in “IMPLEMENTATION PROGRESS” and the explicit TODO blocks as the current source of truth.
+
+## Table of Contents
+- [Recent Changes & Notes](#recent-changes)
+- [Implementation Progress](#implementation-progress)
+- [Cleanup Plan](#cleanup-plan)
+- [Running-Container Testing Cookbook](#docker-testing)
+- [Clawdbot Workstream](#clawdbot-workstream)
+- [Optional Research Track](#research-track)
+- [Architecture (Dashboard)](#architecture-dashboard)
+- [Appendix (Archived Draft Notes)](#appendix-archived)
+
+<a id="recent-changes"></a>
+
+## ✅ RECENT CHANGES & NOTES (Updated: January 31, 2026)
+
+### What Changed (last working session)
+- Provider runtime: switched default LLM provider usage to Perplexity Sonar (OpenAI-compatible API) to improve tool selection reliability vs. tiny local models.
+- Orchestrator tool-calling: hardened parsing so responses containing mixed content (e.g., JSON wrapped in markdown fences or JSON + extra prose) still execute.
+- Tool results + multi-step flow: revised prompt/loop behavior so the model can continue calling tools after tool results when needed.
+- Tool robustness:
+  - `get_commute_time()` now matches destinations via saved destination address as well as key/name.
+  - Added alias handling so “work” can resolve to the same destination as “office”.
+- Ops/devex: expanded Makefile commands for provider switching, service lifecycle, health checks, and smoke tests.
+- UI settings: fixed container env path assumptions that caused `ENOENT: no such file or directory, open '/app/.env'`.
+
+### Pain Points (Root Causes)
+- LLM output discipline: some providers/models return tool-call JSON wrapped in ```json fences or mixed with narrative text.
+- Multi-step intent ambiguity: “What time should I leave?” requires calendar + commute; the model sometimes answers early without calling the second tool.
+- Parameter grounding: the model sometimes uses meeting titles as `destination` instead of resolving to `office/work`.
+- Docker caching: code changes (especially tools) can be masked by cached layers/containers; forced rebuild/recreate is sometimes required.
+
+### Immediate Outcome
+- Multi-tool queries like “meeting time + commute to office” now reliably execute both tools and synthesize a clean answer.
+- Remaining gap: ambiguous “leave time” queries need a clearer destination resolution strategy (infer from meeting location, map common terms, or ask a single follow-up).
+
+<a id="implementation-progress"></a>
+
+## 🎯 IMPLEMENTATION PROGRESS (Updated: January 31, 2026)
+
+### ✅ COMPLETED
+
+#### Phase 1: Provider Abstraction Layer
+- [x] `shared/providers/base_provider.py` - Abstract BaseProvider class with generate/stream interfaces
+- [x] `shared/providers/local_provider.py` - Wraps existing LLMClient for llama.cpp
+- [x] `shared/providers/anthropic_provider.py` - Claude API integration
+- [x] `shared/providers/openai_provider.py` - OpenAI GPT-4/o3 integration
+- [x] `shared/providers/perplexity_provider.py` - Sonar search/reasoning
+- [x] `shared/providers/registry.py` - Provider registration and routing
+
+#### Phase 2: Settings UI
+- [x] `ui_service/src/components/settings/SettingsPanel.tsx` - Provider selection UI
+- [x] `ui_service/src/app/api/settings/route.ts` - Settings API endpoint
+- [x] Provider switching with status indicators
+- [x] API key configuration (server-side storage in .env)
+
+#### Phase 3: Conversation History & Context
+- [x] `ui_service/src/components/history/ConversationHistory.tsx` - Sidebar with conversation list
+- [x] `ui_service/src/app/api/conversations/route.ts` - CRUD for conversations
+- [x] Auto-save with debounce (2s delay)
+- [x] Auto-summarization at 20 message threshold
+- [x] `ui_service/src/app/api/summarize/route.ts` - LLM-powered summarization
+
+#### Phase 4: User Data Container Dashboard ✨ NEW
+- [x] **Canonical Data Schemas** (`shared/schemas/canonical.py`)
+  - FinancialTransaction, FinancialAccount, TransactionCategory
+  - CalendarEvent, EventStatus, RecurrenceRule
+  - HealthMetric, MetricType, HealthSummary
+  - NavigationRoute, TrafficLevel, GeoPoint
+  - Contact, UnifiedContext
+  
+- [x] **Adapter Pattern** (`shared/adapters/`)
+  - `base.py` - Protocol-based adapter interface
+  - `registry.py` - @register_adapter decorator, singleton registry
+  - Mock adapters for all 4 categories (finance, calendar, health, navigation)
+  
+- [x] **Dashboard Aggregator** (`dashboard_service/`)
+  - `aggregator.py` - Parallel fetching, caching, context building
+  - `relevance.py` - HIGH/MEDIUM/LOW classification engine
+  
+- [x] **Dashboard UI** (`ui_service/src/components/dashboard/`)
+  - `Dashboard.tsx` - Main container with grid/row/column/focus views
+  - `CalendarWidget.tsx` - Events with urgency indicators
+  - `FinanceWidget.tsx` - Transactions, cashflow, spending
+  - `HealthWidget.tsx` - Steps, HRV, sleep, readiness
+  - `NavigationWidget.tsx` - Routes, traffic, ETA
+  - `HighPriorityAlerts.tsx` - Relevance-based alerts
+  - `AdaptersPanel.tsx` - Connect/disconnect data sources
+  
+- [x] **Dashboard API** (`ui_service/src/app/api/dashboard/`)
+  - `route.ts` - GET unified context, POST config
+  - `adapters/route.ts` - List, connect, disconnect adapters
+  
+- [x] **LLM Tool Integration** (`tools/builtin/user_context.py`)
+  - `get_user_context` - Retrieve user's personal context for LLM
+  - `get_daily_briefing` - Quick daily summary
+  - Natural language summaries for calendar, finance, health, navigation
+
+- [x] **Flexible UI**
+  - Fullscreen dashboard mode
+  - Grid/Row/Column layout options
+  - Panel toggle buttons (show/hide categories)
+  - Side panel and fullscreen modes in ChatContainer
+
+### 🔄 IN PROGRESS
+
+#### Phase 5: Real Adapter Integrations
+- [ ] Google Calendar OAuth adapter
+- [ ] Plaid/Wealthsimple finance adapter
+- [ ] Apple Health / Oura / Whoop adapter
+- [ ] Google Maps / Waze adapter
+
+#### Phase 6: Multi-User & Persistence
+- [ ] PostgreSQL migration with RLS
+- [ ] User authentication (NextAuth.js)
+- [ ] Per-user settings storage
+
+### 📋 PLANNED
+
+#### Phase 7: MCP Integration
+- [ ] @mcp_tool decorator implementation
+- [ ] Perplexity MCP server bridge
+- [ ] Auto-discovery of MCP tools
+
+#### Phase 8: Clawdbot Entry Point
+- [ ] IInputAdapter interface
+- [ ] Telegram/Discord bot adapter
+- [ ] Message bus (Redis Streams)
+- [ ] See detailed workstream: “NEW WORKSTREAM: CLAWDBOT AS A DOCKERIZED MICROSERVICE”
+
+---
+
+<a id="cleanup-plan"></a>
+
+## 🧹 CLEANUP PLAN (Complexity & Reliability)
+
+### A) Tool-Calling Reliability (Orchestrator)
+- [ ] Consolidate “tool-call JSON parsing” into a single utility (strip markdown fences, extract the first valid JSON object, ignore trailing prose).
+- [ ] Add a multi-step guardrail for “leave time” queries:
+  - require destination resolution (`office/work/home/...`)
+  - if not resolvable from context, ask one clarifying question
+- [ ] Reduce/debug logging added during investigations; keep only tool-call detection, arguments, tool result status/latency, and final synthesis.
+
+### B) Tool Layer Cleanup
+- [ ] Normalize destination aliases across tools (`office`, `work`, `the office`, etc.) in one place.
+- [ ] Add unit tests for destination matching (key/name/address/alias) and “unknown destination” behavior.
+
+### C) Docker/Build Hygiene
+- [ ] Add explicit “cache bust” make targets for fast iteration on `orchestrator` and `tools`.
+- [ ] Document when to use `--no-cache` vs `--force-recreate` to avoid “container has old code” confusion.
+- [ ] Reduce rebuild cost by shrinking build contexts where possible (especially large model artifacts).
+
+---
+
+<a id="docker-testing"></a>
+
+## 🧪 RUNNING-CONTAINER TESTING COOKBOOK (Docker + gRPC)
+
+### Inspect the stack
+- List running containers: `docker compose ps`
+- Tail logs (example): `docker logs -f orchestrator --tail 200`
+
+### Verify gRPC surface (reflection)
+- List services: `grpcurl -plaintext localhost:50054 list`
+- Describe service: `grpcurl -plaintext localhost:50054 describe agent.AgentService`
+
+### Issue a basic query
+Orchestrator method: `agent.AgentService/QueryAgent` with field `user_query`.
+
+- Example:
+  - `grpcurl -plaintext -d '{"user_query":"What time is my 1:1 with Manager meeting?"}' localhost:50054 agent.AgentService/QueryAgent`
+
+### Debug tool execution
+- Grep for tool calls in logs:
+  - `docker logs orchestrator --tail 200 | grep -E "Tool call|Tool get_|Final answer"`
+- Sanity-check tool data inside the container (useful when Docker caching bites):
+  - `docker exec orchestrator python -c "from tools.builtin.user_context import _get_mock_context; print(sorted(_get_mock_context()['navigation']['saved_destinations'].keys()))"`
+
+### Force a rebuild when changes don’t show up
+Try these in increasing strength:
+
+- Restart: `docker compose restart orchestrator`
+- Rebuild + up: `docker compose build orchestrator && docker compose up -d orchestrator`
+- Force recreate: `docker compose up -d --force-recreate orchestrator`
+- Hard reset (when cached layers keep stale code):
+  - `docker rmi grpc_llm-orchestrator:latest -f && docker compose build --no-cache orchestrator && docker compose up -d orchestrator`
+
+---
+
+<a id="clawdbot-workstream"></a>
+
+## 🧩 NEW WORKSTREAM: CLAWDBOT AS A DOCKERIZED MICROSERVICE (Entry Gateway)
+
+### Goal
+Add Clawdbot as an external-facing gateway (Telegram + local UI) that can:
+- fetch dashboard context (HTTP)
+- delegate reasoning to orchestrator (gRPC)
+- optionally expose a callback gRPC service for notifications
+
+### TODOs (Clawdbot integration)
+- [ ] Extend `docker-compose.yaml` with a new `clawdbot` service.
+- [ ] Add `shared/proto/clawdbot.proto` (example: SendMessage, GetContextSnapshot).
+- [ ] Generate protobuf stubs into `shared/generated/` and add a minimal client wrapper under `shared/clients/`.
+- [ ] Decide directionality:
+  - Clawdbot -> Orchestrator for “pull” reasoning (required)
+  - Orchestrator -> Clawdbot callback for “push” notifications (optional)
+- [ ] Add an integration test:
+  - spin services
+  - call Clawdbot gRPC
+  - verify it can call orchestrator and return a message
+
+---
+
+<a id="research-track"></a>
+
+## 🔭 OPTIONAL RESEARCH TRACK: Agent0 / ToolOrchestra-style routing
+Keep this as a separate track from stability + settings control plane.
+
+### TODOs (future)
+- [ ] Define a lightweight routing policy interface (no RL yet): heuristic-based “escalate provider” rules using tool frequency + uncertainty.
+- [ ] Add structured metrics: tool call counts, failures, provider latency, token usage.
+- [ ] Add self-consistency sampling toggles per request or per conversation, store outcomes for routing analysis.
+
+<a id="architecture-dashboard"></a>
+
+## Architecture: User Data Container Dashboard
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         USER DATA CONTAINER DASHBOARD                        │
+│                      (Data-Oriented Polymorphism Design)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                        CANONICAL SCHEMAS                             │   │
+│  │  shared/schemas/canonical.py                                         │   │
+│  │  • Platform-agnostic data structures                                 │   │
+│  │  • FinancialTransaction, CalendarEvent, HealthMetric, NavigationRoute│   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      CATEGORY-FIRST ADAPTERS                         │   │
+│  │  shared/adapters/                                                    │   │
+│  │  ├── finance/   (wealthsimple, cibc, affirm, plaid)                  │   │
+│  │  ├── calendar/  (google, apple, outlook)                             │   │
+│  │  ├── health/    (apple_health, oura, whoop, fitbit, garmin)          │   │
+│  │  └── navigation/(google_maps, apple_maps, waze)                      │   │
+│  │                                                                      │   │
+│  │  Protocol: Adapter.fetch() → CanonicalType                           │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     DASHBOARD AGGREGATOR                             │   │
+│  │  dashboard_service/aggregator.py                                     │   │
+│  │  • Parallel fetching from all adapters                               │   │
+│  │  • In-memory cache with TTL                                          │   │
+│  │  • Unified context building                                          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      RELEVANCE ENGINE                                │   │
+│  │  dashboard_service/relevance.py                                      │   │
+│  │  • HIGH: Calendar <2h, budget exceeded, low HRV, heavy traffic       │   │
+│  │  • MEDIUM: Events 2-24h, pending transactions                        │   │
+│  │  • LOW: Events >24h, historical data                                 │   │
+│  │                                                                      │   │
+│  │  Storage Tiering: HIGH→Redis, MEDIUM→PostgreSQL, LOW→S3              │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                    ┌───────────────┴───────────────┐                       │
+│                    ▼                               ▼                        │
+│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐ │
+│  │      DASHBOARD UI           │  │        LLM TOOL                      │ │
+│  │  components/dashboard/      │  │  tools/builtin/user_context.py      │ │
+│  │  • Grid/Row/Column layouts  │  │  • get_user_context                  │ │
+│  │  • Fullscreen mode          │  │  • get_daily_briefing                │ │
+│  │  • Panel toggle controls    │  │  • Natural language summaries        │ │
+│  │  • High priority alerts     │  │  • Personalized LLM responses        │ │
+│  └─────────────────────────────┘  └─────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+<a id="appendix-archived"></a>
+
+## Appendix: Archived Draft Notes (Reference)
+These sections are kept to preserve the full narrative/design space explored so far. They may include duplicated plans or steps that are already completed.
+
+<details>
+<summary>Click to expand archived drafts</summary>
+
+### Legacy Draft: “Steps” (ARCHIVED)
+
 Create Settings gRPC Service — Add shared/proto/settings.proto defining SettingsService with RPCs: GetConfig, UpdateConfig, ListProviders, ListTools, SetToolState. This becomes the central configuration contract.
 
 Implement Settings Backend — Create settings_service/ or extend orchestrator_service.py with a SettingsServicer that persists config to SQLite (reusing checkpointing pattern), supports hot-reload of tools, and validates provider credentials.
@@ -966,3 +1268,5 @@ DAW Integration Protocol?
 OSC (Open Sound Control): Universal, Ableton/Logic/Houdini support
 Max4Live: Ableton-specific, deepest integration
 Recommend: OSC adapter that speaks to multiple DAWs
+
+</details>

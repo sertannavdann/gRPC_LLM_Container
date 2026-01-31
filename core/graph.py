@@ -99,6 +99,13 @@ class AgentWorkflow:
             # Web loading indicators
             'load', 'fetch', 'get', 'download', 'scrape',
             'website', 'url', 'page', 'link',
+            
+            # User context indicators (personal data)
+            'commute', 'drive', 'driving', 'traffic', 'eta', 'route',
+            'schedule', 'calendar', 'meeting', 'appointment', 'event',
+            'budget', 'spending', 'finance', 'money', 'balance', 'account',
+            'health', 'steps', 'sleep', 'heart rate', 'fitness', 'wellness',
+            'briefing', 'summary', 'day', 'my', 'mine',
         }
         
         # Check for tool keywords
@@ -312,6 +319,9 @@ class AgentWorkflow:
             tool_name = tool_call["function"]["name"]
             tool_args = tool_call["function"]["arguments"]
             tool_call_id = tool_call.get("id", f"call_{tool_name}")
+            
+            # DEBUG: Log actual arguments being passed
+            logger.info(f"Tool {tool_name} called with args: {tool_args}")
             
             start_time = datetime.now()
             
