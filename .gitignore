@@ -2,6 +2,16 @@
 .DS_Store
 Thumbs.db
 
+# Session logs
+session.txt
+
+# Old plan versions
+Plan_v2.md
+
+# Root package files (ui_service has its own)
+/package-lock.json
+/package.json
+
 # Python artifacts
 __pycache__/
 *.py[cod]
@@ -11,6 +21,14 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Python cache (recursive)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# macOS (recursive)
+**/.DS_Store
 
 # Virtual environments and local env files
 .venv/
