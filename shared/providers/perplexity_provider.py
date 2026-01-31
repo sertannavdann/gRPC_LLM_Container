@@ -16,27 +16,27 @@ class PerplexityProvider(OnlineProvider):
     Features integrated search and reasoning capabilities.
     """
 
-    # Perplexity Sonar models
+    # Perplexity Sonar models (updated Jan 2026)
     PERPLEXITY_MODELS = [
-        ModelInfo(
-            name="sonar-reasoning",
-            description="Perplexity Sonar Reasoning - Advanced reasoning with search",
-            supports_streaming=True,
-            supports_function_calling=False,
-            context_window=127000,
-            max_tokens=4000,
-        ),
         ModelInfo(
             name="sonar-pro",
             description="Perplexity Sonar Pro - Fast reasoning with real-time search",
             supports_streaming=True,
             supports_function_calling=False,
             context_window=200000,
-            max_tokens=4000,
+            max_tokens=8000,
         ),
         ModelInfo(
             name="sonar",
             description="Perplexity Sonar - Balanced search and reasoning",
+            supports_streaming=True,
+            supports_function_calling=False,
+            context_window=127000,
+            max_tokens=4000,
+        ),
+        ModelInfo(
+            name="sonar-deep-research",
+            description="Perplexity Sonar Deep Research - Comprehensive research with extended context",
             supports_streaming=True,
             supports_function_calling=False,
             context_window=127000,

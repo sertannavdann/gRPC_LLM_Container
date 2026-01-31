@@ -16,3 +16,6 @@ pydantic==2.10.2
 tenacity==9.0.0
 requests==2.32.3
 beautifulsoup4==4.12.3
+
+# Provider support (for online LLM providers)
+aiohttp==3.10.10

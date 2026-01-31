@@ -64,6 +64,13 @@ services:
       - SELF_CONSISTENCY_SAMPLES=5
       - SELF_CONSISTENCY_THRESHOLD=0.6
       - SERPER_API_KEY=${SERPER_API_KEY:-}
+      # LLM Provider settings - switch providers via .env file
+      - LLM_PROVIDER=${LLM_PROVIDER:-local}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LLM_PROVIDER_MODEL=${LLM_PROVIDER_MODEL:-}
+      - LLM_PROVIDER_TIMEOUT=${LLM_PROVIDER_TIMEOUT:-60}
     volumes:
       - ./data:/app/data
     networks:
@@ -134,6 +141,12 @@ services:
       - orchestrator
     environment:
       - AGENT_SERVICE_ADDRESS=orchestrator:50054
+      - ENV_FILE_PATH=/app/config/.env
+      - CONVERSATIONS_DIR=/app/data/conversations
+    volumes:
+      - ./.env:/app/config/.env:rw
+      - ./data/conversations:/app/data/conversations:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - rag_net
 

@@ -32,20 +32,21 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Install docker-cli for orchestrator restart capability
+RUN apk add --no-cache docker-cli
+
+# Note: We run as root to access docker socket
+# In production, consider using a dedicated socket proxy service
 
 # Copy necessary files
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 # Copy proto files for runtime gRPC
-COPY --from=builder --chown=nextjs:nodejs /app/proto ./proto
+COPY --from=builder /app/proto ./proto
 # Copy startup script
 COPY ui_service/start.sh ./start.sh
 RUN chmod +x ./start.sh
-
-USER nextjs
 
 EXPOSE 5000
 

@@ -3,11 +3,17 @@ Orchestrator service configuration.
 
 Consolidates configuration from agent_service and llm_service into a single
 unified config for the orchestrator.
+
+Supports multiple LLM providers:
+- local: Uses local llama.cpp via gRPC (default)
+- perplexity: Uses Perplexity Sonar API
+- openai: Uses OpenAI API
+- anthropic: Uses Anthropic Claude API
 """
 
 import os
-from typing import Optional
-from dataclasses import dataclass
+from typing import Optional, Dict, Any
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -21,7 +27,14 @@ class OrchestratorConfig:
     host: str = "0.0.0.0"
     port: int = 50054
     
-    # LLM service connection
+    # LLM Provider settings (NEW)
+    provider_type: str = "local"  # local, perplexity, openai, anthropic
+    provider_api_key: Optional[str] = None
+    provider_base_url: Optional[str] = None
+    provider_model: Optional[str] = None  # Model name for online providers
+    provider_timeout: int = 60
+    
+    # LLM service connection (for local provider)
     llm_host: str = "llm_service"
     llm_port: int = 50051
     
@@ -53,9 +66,39 @@ class OrchestratorConfig:
     @classmethod
     def from_env(cls) -> "OrchestratorConfig":
         """Load configuration from environment variables."""
+        # Determine provider type
+        provider_type = os.getenv("LLM_PROVIDER", "local")
+        
+        # Get API key based on provider type
+        api_key = None
+        if provider_type == "perplexity":
+            api_key = os.getenv("PERPLEXITY_API_KEY")
+        elif provider_type == "openai":
+            api_key = os.getenv("OPENAI_API_KEY")
+        elif provider_type == "anthropic":
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        # Get model based on provider type
+        provider_model = os.getenv("LLM_PROVIDER_MODEL")
+        if not provider_model:
+            # Set reasonable defaults per provider
+            if provider_type == "perplexity":
+                provider_model = "sonar-pro"
+            elif provider_type == "openai":
+                provider_model = "gpt-4o-mini"
+            elif provider_type == "anthropic":
+                provider_model = "claude-3-5-sonnet-20241022"
+        
         return cls(
             host=os.getenv("ORCHESTRATOR_HOST", "0.0.0.0"),
             port=int(os.getenv("ORCHESTRATOR_PORT", "50054")),
+            # Provider settings
+            provider_type=provider_type,
+            provider_api_key=api_key,
+            provider_base_url=os.getenv("LLM_PROVIDER_BASE_URL"),
+            provider_model=provider_model,
+            provider_timeout=int(os.getenv("LLM_PROVIDER_TIMEOUT", "60")),
+            # Local LLM settings (fallback)
             llm_host=os.getenv("LLM_HOST", "llm_service"),
             llm_port=int(os.getenv("LLM_PORT", "50051")),
             chroma_host=os.getenv("CHROMA_HOST", "chroma_service"),

@@ -43,7 +43,20 @@ from langchain_core.messages import HumanMessage, AIMessage
 from shared.clients.registry_client import RegistryClient
 from shared.clients.worker_client import WorkerClient
 from shared.clients.sandbox_client import SandboxClient
+
+# Provider system imports
+from shared.providers import (
+    setup_providers,
+    get_provider,
+    ProviderConfig,
+    ProviderType,
+    ChatRequest,
+    ChatMessage,
+    BaseProvider,
+)
+
 import os
+import asyncio
 
 # Protobuf imports
 from shared.generated import agent_pb2
@@ -55,6 +68,123 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("orchestrator")
+
+
+class OnlineProviderWrapper:
+    """
+    Wrapper that adapts async OnlineProvider interface to sync LLMClient interface.
+    
+    This enables seamless switching between local gRPC-based LLM and cloud APIs
+    (Perplexity, OpenAI, Anthropic) without changing the orchestrator code.
+    """
+    
+    def __init__(
+        self,
+        provider: BaseProvider,
+        model: str,
+        temperature: float = 0.7,
+    ):
+        """
+        Initialize the wrapper.
+        
+        Args:
+            provider: Online provider instance (PerplexityProvider, OpenAIProvider, etc.)
+            model: Model name to use for completions
+            temperature: Default temperature setting
+        """
+        self.provider = provider
+        self.model = model
+        self.temperature = temperature
+        # Create a dedicated event loop for this wrapper
+        self._loop = asyncio.new_event_loop()
+        logger.info(f"OnlineProviderWrapper initialized: model={model}, temp={temperature}")
+    
+    def _run_async(self, coro):
+        """Run async coroutine synchronously using dedicated event loop."""
+        return self._loop.run_until_complete(coro)
+    
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        temperature: float = None,
+        response_format: str = None,
+    ) -> str:
+        """
+        Generate completion using online provider.
+        
+        Matches LLMClient.generate() interface.
+        
+        Args:
+            prompt: The prompt text
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature override
+            response_format: Format hint (e.g., "json")
+            
+        Returns:
+            Generated text content
+        """
+        temp = temperature if temperature is not None else self.temperature
+        
+        # Build ChatRequest
+        request = ChatRequest(
+            messages=[ChatMessage(role="user", content=prompt)],
+            model=self.model,
+            temperature=temp,
+            max_tokens=max_tokens,
+        )
+        
+        if response_format == "json":
+            request.extra["response_format"] = {"type": "json_object"}
+        
+        # Run async generate
+        response = self._run_async(self.provider.generate(request))
+        
+        return response.content
+    
+    def generate_stream(self, prompt: str, max_tokens: int = 2048, temperature: float = None):
+        """
+        Generate streaming completion using online provider.
+        
+        Matches LLMClient.generate_stream() interface.
+        
+        Note: Returns a generator that yields response-like objects with 'token' and 'is_final'.
+        """
+        temp = temperature if temperature is not None else self.temperature
+        
+        request = ChatRequest(
+            messages=[ChatMessage(role="user", content=prompt)],
+            model=self.model,
+            temperature=temp,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        
+        # For streaming, we need to adapt the async iterator
+        # This is a simplified implementation - yields tokens as they come
+        async def _stream():
+            collected = []
+            async for token in self.provider.generate_stream(request):
+                collected.append(token)
+                yield token
+        
+        # Run in sync context
+        class StreamResponse:
+            def __init__(self, token, is_final=False):
+                self.token = token
+                self.is_final = is_final
+        
+        async def collect_stream():
+            tokens = []
+            async for token in self.provider.generate_stream(request):
+                tokens.append(StreamResponse(token, False))
+            if tokens:
+                tokens[-1].is_final = True
+            return tokens
+        
+        results = self._run_async(collect_stream())
+        for r in results:
+            yield r
 
 
 class LLMEngineWrapper:
@@ -433,14 +563,19 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     Unified orchestrator service combining agent workflow and routing.
     
     Acts as the Supervisor in the Supervisor-Worker architecture.
+    Supports multiple LLM providers (local, perplexity, openai, anthropic).
     """
     
     def __init__(self, config: OrchestratorConfig = None):
         self.config = config or OrchestratorConfig.from_env()
         logger.info("Initializing Orchestrator on 0.0.0.0:50054")
         
-        # Initialize clients
-        self.llm_client = LLMClient(host=self.config.llm_host, port=self.config.llm_port)
+        # Initialize provider system
+        setup_providers()
+        logger.info(f"Provider type: {self.config.provider_type}")
+        
+        # Initialize LLM provider based on config
+        self.llm_client = self._initialize_provider()
         
         # Initialize Sandbox Client
         try:
@@ -530,6 +665,56 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self._run_startup_recovery()
         
         logger.info("Orchestrator initialization complete")
+    
+    def _initialize_provider(self):
+        """
+        Initialize LLM provider based on config.
+        
+        Returns appropriate provider instance (local gRPC client or online API client).
+        For online providers (perplexity, openai, anthropic), returns a wrapper that
+        exposes the same interface as LLMClient.
+        """
+        provider_type = self.config.provider_type.lower()
+        
+        if provider_type == "local":
+            # Use local llama.cpp via gRPC
+            logger.info(f"Using LOCAL provider: {self.config.llm_host}:{self.config.llm_port}")
+            return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
+        
+        # Map string to ProviderType enum
+        provider_type_map = {
+            "perplexity": ProviderType.PERPLEXITY,
+            "openai": ProviderType.OPENAI,
+            "anthropic": ProviderType.ANTHROPIC,
+        }
+        
+        if provider_type not in provider_type_map:
+            logger.warning(f"Unknown provider type '{provider_type}', falling back to local")
+            return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
+        
+        # Check API key
+        if not self.config.provider_api_key:
+            logger.warning(f"No API key for {provider_type}, falling back to local")
+            return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
+        
+        # Create online provider config
+        provider_config = ProviderConfig(
+            provider_type=provider_type_map[provider_type],
+            api_key=self.config.provider_api_key,
+            base_url=self.config.provider_base_url,
+            timeout=self.config.provider_timeout,
+        )
+        
+        # Get provider instance
+        provider = get_provider(provider_config, name=f"orchestrator_{provider_type}")
+        logger.info(f"Using {provider_type.upper()} provider with model: {self.config.provider_model}")
+        
+        # Wrap online provider to match LLMClient interface
+        return OnlineProviderWrapper(
+            provider=provider,
+            model=self.config.provider_model,
+            temperature=self.config.temperature,
+        )
     
     def _run_startup_recovery(self):
         """Run crash recovery on service startup."""
