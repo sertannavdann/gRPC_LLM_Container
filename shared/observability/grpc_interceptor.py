@@ -12,7 +12,13 @@ import logging
 from typing import Callable, Any, Optional
 
 import grpc
-from grpc import ServerInterceptor, ClientInterceptor
+from grpc import ServerInterceptor
+# ClientInterceptor was added in grpc 1.63.0+, use aio version for compatibility
+try:
+    from grpc import ClientInterceptor
+except ImportError:
+    # Fallback for older grpc versions
+    ClientInterceptor = object  # type: ignore
 
 from .metrics import (
     create_request_metrics,

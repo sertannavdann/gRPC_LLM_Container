@@ -32,7 +32,11 @@ def get_tracer(name: str = "grpc_llm") -> Tracer:
     """Get or create the tracer for this application."""
     global _tracer
     if _tracer is None:
-        _tracer = trace.get_tracer(name, version="1.0.0")
+        # Note: 'version' parameter was removed in newer opentelemetry versions
+        try:
+            _tracer = trace.get_tracer(name, version="1.0.0")
+        except TypeError:
+            _tracer = trace.get_tracer(name)
     return _tracer
 
 
