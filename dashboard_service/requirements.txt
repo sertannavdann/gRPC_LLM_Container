@@ -1,0 +1,11 @@
+# FastAPI and ASGI server
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.2
+
+# HTTP client for adapters
+aiohttp==3.10.10
+httpx==0.28.1
+
+# Utilities
+python-multipart==0.0.12

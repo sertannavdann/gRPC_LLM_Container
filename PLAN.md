@@ -11,6 +11,7 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 ## Table of Contents
 - [Recent Changes & Notes](#recent-changes)
 - [Implementation Progress](#implementation-progress)
+- [Architecture Evaluation & Critical Actions](#architecture-evaluation) ← **NEW**
 - [Cleanup Plan](#cleanup-plan)
 - [Running-Container Testing Cookbook](#docker-testing)
 - [Clawdbot Workstream](#clawdbot-workstream)
@@ -138,9 +139,141 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 
 ---
 
+<a id="architecture-evaluation"></a>
+
+## 🏗️ ARCHITECTURE EVALUATION & CRITICAL ACTIONS
+
+*Living roadmap for infrastructure and reliability improvements. Updated: February 1, 2026*
+
+### Current State Summary
+
+| Component | Status | Scalability | Extensibility |
+|-----------|--------|-------------|---------------|
+| Provider Layer | ✅ Good | Medium | High |
+| Tool Registry | ✅ Good | Low | High |
+| Checkpointing | ⚠️ SQLite only | Low | Medium |
+| Observability | ✅ Integrated | Medium | High |
+| Database | ⚠️ SQLite only | Low | Low |
+| RL/Curriculum | ⚠️ Partial | N/A | N/A |
+
+### Microservice Architecture Guide
+
+| Service | Role | Key Functionality |
+|---------|------|------------------|
+| **Orchestrator** | Central Nervous System | Request lifecycle, Provider routing, Tool execution, RL state tracking |
+| **LLM Service** | Inference Engine | Wraps local models (llama.cpp) or acts as proxy for embeddings/generation |
+| **Chroma Service** | Long-term Memory | Vector database for RAG (Retrieval Augmented Generation) |
+| **Registry Service** | Configuration | Tracks available tools, service health, prompt templates |
+| **Sandbox Service** | Safety Containment | Executes unstable code (Python) in isolated environment |
+| **Dashboard Service** | User Data Aggregator | Fetches personal data (Calendar, Finance, Health) via adapters |
+| **Clawdbot** (Planned) | Entry Gateway | Telegram/Discord bot interface for "frontend-less" access |
+
+### Critical Actions (Priority 1)
+
+- [x] **Observability Stack** - Prometheus + Grafana + structured logging *(Feb 1, 2026)*
+- [ ] **PostgreSQL Migration** - Replace SQLite for shared state
+- [ ] **Rate Limiting** - Token bucket per provider
+
+### High Priority (Agent0/ToolOrchestra)
+
+- [x] **Metrics Collection** - Endpoint stats, tool frequency, cost tracking *(Feb 1, 2026)*
+- [x] **Dynamic Provider Router** - Fallback chains (local → perplexity → claude) *(Feb 1, 2026)*
+- [ ] **Self-Consistency Integration** - Enable and use uncertainty signal
+
+### Medium Priority
+
+- [x] **Dashboard Service Containerization** - Real adapters in Docker *(Feb 1, 2026)*
+- [ ] **Message Queue (Redis)** - Async job processing
+- [ ] **Health Checks Fix** - Reliable health endpoints
+
+### Implementation Roadmap (Living Checklist)
+
+```
+┌──────┬──────────────────────┬───────────────────────────────────────────────┬────────┬─────────┐
+│ Week │ Focus                │ Deliverables                                  │ Owner  │ Status  │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 1    │ Observability        │ Prometheus + Grafana + structured logging     │ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 2    │ Database             │ PostgreSQL migration, connection pooling      │ Claude │ ⬜      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 3    │ Provider Router      │ Dynamic selection, fallback chains            │ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 4    │ Metrics Collection   │ Endpoint stats, tool frequency, cost tracking │ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 5    │ RL Foundation        │ Reward function, offline training pipeline    │ Claude │ ⚠️ Partial|
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 6    │ Clawdbot Integration │ Bidirectional gRPC, Telegram gateway          │ Claude │ ⬜      │
+└──────┴──────────────────────┴───────────────────────────────────────────────┴────────┴─────────┘
+```
+
+### Sprint Details (Key Patterns)
+
+<details>
+<summary><b>Week 3: Provider Router Pattern</b></summary>
+
+```python
+# orchestrator/provider_router.py
+class ProviderRouter:
+    """Dynamic provider selection with fallback chains."""
+
+    FALLBACK_CHAIN = ["local", "perplexity", "claude"]
+
+    def select_provider(self, query: str, context: Dict) -> str:
+        complexity = self._estimate_complexity(query)
+        if complexity < 0.3:
+            return "local"  # Fast, cheap
+        elif complexity < 0.7:
+            return "perplexity"  # Search-augmented
+        else:
+            return "claude"  # Complex reasoning
+```
+</details>
+
+<details>
+<summary><b>Week 4: Metrics Collection Pattern</b></summary>
+
+```python
+# orchestrator/rl/metrics.py
+@dataclass
+class EndpointMetrics:
+    success_rate: Dict[str, float]  # per provider
+    avg_latency_ms: Dict[str, float]
+    tool_frequency: Dict[str, int]
+    cost_usd: Dict[str, float]
+
+    def to_prometheus(self) -> List[Metric]:
+        """Export for Prometheus scraping."""
+```
+</details>
+
+<details>
+<summary><b>Week 5: Agent0 Reward Function (Simplified)</b></summary>
+
+```python
+# orchestrator/rl/reward.py
+def compute_reward(task, responses, tools_used, cost) -> float:
+    """
+    R = α·uncertainty + β·tool_complexity + γ·cost_efficiency
+
+    - uncertainty: variance in executor responses (self-consistency)
+    - tool_complexity: diversity × avg tool difficulty
+    - cost_efficiency: 1/(1+cost)
+    """
+    R_uncertainty = self._compute_disagreement(responses)
+    R_tool = self._compute_tool_score(tools_used)
+    R_cost = 1.0 / (1.0 + cost)
+
+    return 0.5*R_uncertainty + 0.3*R_tool + 0.2*R_cost
+```
+</details>
+
+---
+
 <a id="cleanup-plan"></a>
 
 ## 🧹 CLEANUP PLAN (Complexity & Reliability)
+
+→ *See [Architecture Evaluation](#architecture-evaluation) for observability and database migration actions*
 
 ### A) Tool-Calling Reliability (Orchestrator)
 - [ ] Consolidate “tool-call JSON parsing” into a single utility (strip markdown fences, extract the first valid JSON object, ignore trailing prose).
@@ -199,6 +332,8 @@ Try these in increasing strength:
 
 ## 🧩 NEW WORKSTREAM: CLAWDBOT AS A DOCKERIZED MICROSERVICE (Entry Gateway)
 
+→ *See [Architecture Evaluation Week 6](#architecture-evaluation) for integration timeline*
+
 ### Goal
 Add Clawdbot as an external-facing gateway (Telegram + local UI) that can:
 - fetch dashboard context (HTTP)
@@ -222,6 +357,9 @@ Add Clawdbot as an external-facing gateway (Telegram + local UI) that can:
 <a id="research-track"></a>
 
 ## 🔭 OPTIONAL RESEARCH TRACK: Agent0 / ToolOrchestra-style routing
+
+→ *See [Architecture Evaluation Week 4-5](#architecture-evaluation) for metrics and RL foundation*
+
 Keep this as a separate track from stability + settings control plane.
 
 ### TODOs (future)
