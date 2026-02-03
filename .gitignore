@@ -106,3 +106,4 @@ config/.env
 ui_servicedata/conversations/
 data/logs/
 
+clawdbot_integration/skills/*

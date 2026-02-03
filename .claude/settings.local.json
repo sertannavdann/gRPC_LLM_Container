@@ -10,7 +10,10 @@
       "Bash(xargs:*)",
       "Bash(make status:*)",
       "Bash(grpcurl:*)",
-      "Bash(make restart-all:*)"
+      "Bash(make restart-all:*)",
+      "mcp__perplexity__reason",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
