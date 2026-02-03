@@ -41,10 +41,12 @@ services:
     container_name: orchestrator
     ports:
       - "50054:50054"
+      - "8888:8888"   # Prometheus metrics endpoint
     depends_on:
       - llm_service
       - chroma_service
       - sandbox_service
+      - otel-collector
     env_file:
       - .env
     environment:
@@ -71,6 +73,13 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - LLM_PROVIDER_MODEL=${LLM_PROVIDER_MODEL:-}
       - LLM_PROVIDER_TIMEOUT=${LLM_PROVIDER_TIMEOUT:-60}
+      # OpenTelemetry settings
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=orchestrator
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
     volumes:
       - ./data:/app/data
     networks:
@@ -80,6 +89,51 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard_service/Dockerfile
+    container_name: dashboard_service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./dashboard_service/data:/app/data
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  clawdbot:
+    image: clawdbot/gateway:latest
+    container_name: clawdbot-gateway
+    ports:
+      - "18789:18789"  # Control UI
+      - "50060:50060"  # gRPC endpoint
+    volumes:
+      - clawdbot_config:/home/node/.clawdbot:rw
+      - clawdbot_workspace:/home/node/clawd:rw
+      - ./clawdbot_integration/fetch_context.sh:/home/node/clawd/scripts/fetch_context.sh:ro
+      - ./clawdbot_integration/skills:/home/node/clawd/skills:ro
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DASHBOARD_API_URL=http://dashboard_service:8001
+      - ORCHESTRATOR_URL=grpc://orchestrator:50054
+      - CONTEXT_REFRESH_INTERVAL=300
+    networks:
+      - rag_net
+    depends_on:
+      - dashboard
+      - orchestrator
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
 
   registry_service:
     build:
@@ -150,5 +204,103 @@ services:
     networks:
       - rag_net
 
+  # =============================================================================
+  # OBSERVABILITY STACK (Week 1 of Architecture Roadmap)
+  # =============================================================================
+
+  # OpenTelemetry Collector - Central telemetry hub
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Metrics endpoint
+      - "8889:8889"   # Prometheus exporter
+      - "13133:13133" # Health check
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Prometheus - Metrics storage and querying
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - otel-collector
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Tempo - Distributed tracing backend (optional but recommended)
+  tempo:
+    image: grafana/tempo:2.4.0
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4319:4317"   # OTLP gRPC (internal, different external port)
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - rag_net
+    restart: unless-stopped
+
 networks:
   rag_net:
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  tempo-data:

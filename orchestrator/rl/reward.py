@@ -1,86 +1,103 @@
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Optional
 import numpy as np
 
-@dataclass
-class RewardConfig:
-    """Configuration for reward function weights."""
-    alpha_uncertainty: float = 0.5
-    beta_tool_complexity: float = 0.3
-    gamma_cost_efficiency: float = 0.2
-    
-def compute_reward(
-    task: str,
-    responses: List[str],
-    tools_used: List[str],
-    cost: float,
-    config: Optional[RewardConfig] = None
-) -> float:
+class Agent0RewardFunction:
     """
-    Compute reward signal for RL training based on:
-    R = α·uncertainty + β·tool_complexity + γ·cost_efficiency
-    
-    Args:
-        task: The user query or task description
-        responses: List of responses from the model (for self-consistency check)
-        tools_used: List of tool names used during execution
-        cost: Estimated cost in USD
-        config: Optional RewardConfig implementation
-        
-    Returns:
-        Float reward value between 0.0 and 1.0 (approximate)
+    Agent0-inspired reward for curriculum generation.
+    Incentivizes tasks that challenge executors optimally.
     """
-    if config is None:
-        config = RewardConfig()
+    
+    def __init__(self, alpha: float = 0.5, beta: float = 0.3, gamma: float = 0.2):
+        self.alpha = alpha  # Weight for uncertainty
+        self.beta = beta    # Weight for tool complexity
+        self.gamma = gamma  # Weight for cost efficiency
+    
+    def compute_reward(
+        self,
+        task: Dict,
+        executor_responses: List[str],
+        tools_used: List[str],
+        cost: float
+    ) -> float:
+        """
+        R_total = α·R_uncertainty + β·R_tool + γ·R_cost
         
-    # 1. Uncertainty Reward (Lower uncertainty = Higher reward)
-    # Ideally checking semantic similarity of responses
-    # For now, placeholder: if we have self-consistency samples, check identity
-    r_uncertainty = _compute_disagreement(responses)
+        R_uncertainty: Variance in executor responses (self-consistency)
+        R_tool: Frequency and complexity of tool usage
+        R_cost: Inverse of API cost (prefer efficient solutions)
+        """
+        # Uncertainty reward (high variance = challenging task)
+        R_uncertainty = self._compute_uncertainty(executor_responses)
+        
+        # Tool complexity reward (more tools = harder curriculum)
+        R_tool = self._compute_tool_complexity(tools_used)
+        
+        # Cost efficiency reward (prefer lower-cost solutions)
+        R_cost = 1.0 / (1.0 + max(0.0, cost))  # Normalize
+        
+        return (
+            self.alpha * R_uncertainty +
+            self.beta * R_tool +
+            self.gamma * R_cost
+        )
     
-    # 2. Tool Complexity Reward (Encourage using appropriate tools)
-    # Simple heuristic: using tools is good if task is complex
-    r_tool = _compute_tool_score(tools_used)
+    def _compute_uncertainty(self, responses: List[str]) -> float:
+        """
+        Measure disagreement between multiple executor attempts.
+        Agent0 uses this to detect frontier tasks. [web:159][web:169]
+        """
+        if len(responses) < 2:
+            return 0.0
+        
+        # Pairwise similarity (simplified)
+        # In a real implementation, use embeddings. 
+        # Here using Jaccard similarity of sets of words for a lightweight proxy.
+        similarities = []
+        for i in range(len(responses)):
+            for j in range(i + 1, len(responses)):
+                sim = self._text_similarity(responses[i], responses[j])
+                similarities.append(sim)
+        
+        # High disagreement = high reward (frontier task)
+        # If all agree (similarity 1.0), uncertainty is 0.0.
+        avg_sim = np.mean(similarities) if similarities else 1.0
+        return 1.0 - avg_sim
     
-    # 3. Cost Efficiency (Lower cost = Higher reward)
-    # Normalize: 1.0 / (1.0 + cost) implies diminishing returns on cost savings
-    r_cost = 1.0 / (1.0 + max(0.0, cost))
-    
-    reward = (
-        config.alpha_uncertainty * r_uncertainty +
-        config.beta_tool_complexity * r_tool +
-        config.gamma_cost_efficiency * r_cost
-    )
-    
-    return reward
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """Simple Jaccard similarity on lowercased words."""
+        s1 = set(text1.lower().split())
+        s2 = set(text2.lower().split())
+        if not s1 and not s2:
+            return 1.0
+        return len(s1.intersection(s2)) / len(s1.union(s2)) if s1.union(s2) else 0.0
 
-def _compute_disagreement(responses: List[str]) -> float:
-    """
-    Compute disagreement score. 
-    1.0 = All agree (perfect consistency)
-    0.0 = All disagree
-    """
-    if not responses:
-        return 0.0
-    if len(responses) == 1:
-        return 1.0
+    def _compute_tool_complexity(self, tools_used: List[str]) -> float:
+        """
+        Reward based on tool diversity and frequency.
+        Agent0 tracks tool-call frequency as curriculum signal. [web:159][web:162]
+        """
+        tool_complexity = {
+            'dashboard_finance': 0.6,
+            'dashboard_calendar': 0.5,
+            'dashboard_health': 0.5,
+            'web_search': 0.7,
+            'execute_code': 0.9,
+            'llm_claude': 0.8,
+            'llm_local': 0.4
+        }
         
-    # Placeholder: In a real implementation, use embeddings or semantic similarity
-    # Here just checking exact string match for simplicity
-    unique_responses = set(responses)
-    agreement_ratio = 1.0 / len(unique_responses)
-    return agreement_ratio
+        if not tools_used:
+            return 0.0
+        
+        # Complexity = average tool difficulty + diversity bonus
+        avg_complexity = np.mean([
+            tool_complexity.get(tool, 0.5) for tool in tools_used
+        ])
+        diversity_bonus = len(set(tools_used)) / len(tools_used)
+        
+        # Normalized to be roughly in [0, 1.5] range, capped at 1.0 for reward calc usually
+        raw_score = avg_complexity * (1.0 + diversity_bonus * 0.5)
+        return min(1.0, raw_score)
 
-def _compute_tool_score(tools_used: List[str]) -> float:
-    """
-    Score based on tool usage.
-    """
-    if not tools_used:
-        # Some tasks validly don't need tools, but in an agent context, 
-        # we often prize tool use. Let's return 0.5 neutral.
-        return 0.5
-        
-    # Reward variance/complexity
-    # e.g. using multiple different tools is better than spamming one
-    unique_tools = len(set(tools_used))
-    return min(1.0, unique_tools * 0.3)
+# For backward compatibility with init logic
+compute_reward = Agent0RewardFunction().compute_reward
