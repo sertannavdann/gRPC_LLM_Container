@@ -7,18 +7,35 @@ Provides endpoints for:
 - Category-specific data
 - Health checks
 - Cache management
+- Prometheus metrics (/metrics)
 """
 import os
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .aggregator import DashboardAggregator, UserConfig
 from shared.adapters import adapter_registry
+
+# OpenTelemetry imports
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+# Prometheus metrics
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +43,98 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# OBSERVABILITY SETUP
+# =============================================================================
+
+def setup_observability() -> None:
+    """Initialize OpenTelemetry tracing and metrics."""
+    if os.getenv("ENABLE_OBSERVABILITY", "true").lower() != "true":
+        logger.info("Observability disabled via ENABLE_OBSERVABILITY env var")
+        return
+
+    service_name = os.getenv("OTEL_SERVICE_NAME", "dashboard-service")
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+
+    # Create resource
+    resource = Resource.create({
+        SERVICE_NAME: service_name,
+        SERVICE_VERSION: "1.0.0",
+        "deployment.environment": os.getenv("ENVIRONMENT", "development"),
+    })
+
+    # Setup tracing
+    tracer_provider = TracerProvider(resource=resource)
+    try:
+        span_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+        tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+        trace.set_tracer_provider(tracer_provider)
+        logger.info(f"Tracing configured with OTLP endpoint: {otlp_endpoint}")
+    except Exception as e:
+        logger.warning(f"Failed to configure OTLP tracing: {e}")
+
+    # Setup metrics
+    try:
+        metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint, insecure=True)
+        metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=15000)
+        meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        metrics.set_meter_provider(meter_provider)
+        logger.info(f"Metrics configured with OTLP endpoint: {otlp_endpoint}")
+    except Exception as e:
+        logger.warning(f"Failed to configure OTLP metrics: {e}")
+
+
+# =============================================================================
+# PROMETHEUS METRICS
+# =============================================================================
+
+# Request metrics
+DASHBOARD_REQUESTS = Counter(
+    "dashboard_requests_total",
+    "Total dashboard API requests",
+    ["endpoint", "method", "status"]
+)
+
+DASHBOARD_REQUEST_DURATION = Histogram(
+    "dashboard_request_duration_seconds",
+    "Dashboard request duration in seconds",
+    ["endpoint"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+)
+
+# Aggregator metrics
+AGGREGATOR_FETCH_DURATION = Histogram(
+    "dashboard_aggregator_fetch_seconds",
+    "Time to fetch data from adapters",
+    ["category"],
+    buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+)
+
+AGGREGATOR_CACHE_HITS = Counter(
+    "dashboard_cache_hits_total",
+    "Number of cache hits",
+    ["category"]
+)
+
+AGGREGATOR_CACHE_MISSES = Counter(
+    "dashboard_cache_misses_total",
+    "Number of cache misses",
+    ["category"]
+)
+
+# Context metrics
+CONTEXT_ITEMS = Gauge(
+    "dashboard_context_items",
+    "Number of items in user context",
+    ["user_id", "category", "relevance"]
+)
+
+ACTIVE_USERS = Gauge(
+    "dashboard_active_users",
+    "Number of active user aggregators"
+)
 
 
 # =============================================================================
@@ -97,6 +206,10 @@ def get_aggregator(user_id: str) -> DashboardAggregator:
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Dashboard Service starting up...")
+    
+    # Initialize observability
+    setup_observability()
+    
     logger.info(f"Registered adapters: {adapter_registry.to_dict()}")
     yield
     logger.info("Dashboard Service shutting down...")
@@ -111,6 +224,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Instrument FastAPI with OpenTelemetry
+FastAPIInstrumentor.instrument_app(app)
+
 # CORS middleware for frontend access
 app.add_middleware(
     CORSMiddleware,
@@ -119,6 +235,56 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# METRICS MIDDLEWARE
+# =============================================================================
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Record request metrics for all endpoints."""
+    start_time = time.time()
+    
+    # Skip metrics endpoint to avoid recursion
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    
+    response = await call_next(request)
+    
+    # Record metrics
+    duration = time.time() - start_time
+    endpoint = request.url.path
+    
+    DASHBOARD_REQUESTS.labels(
+        endpoint=endpoint,
+        method=request.method,
+        status=response.status_code
+    ).inc()
+    
+    DASHBOARD_REQUEST_DURATION.labels(endpoint=endpoint).observe(duration)
+    
+    # Update active users gauge
+    ACTIVE_USERS.set(len(_aggregators))
+    
+    return response
+
+
+# =============================================================================
+# PROMETHEUS METRICS ENDPOINT
+# =============================================================================
+
+@app.get("/metrics", tags=["System"], include_in_schema=False)
+async def prometheus_metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes all dashboard service metrics in Prometheus text format.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
 
 
 # =============================================================================

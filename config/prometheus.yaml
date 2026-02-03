@@ -39,9 +39,9 @@ scrape_configs:
   # Dashboard service metrics
   - job_name: 'dashboard-service'
     static_configs:
-      - targets: ['dashboard_service:8888']
+      - targets: ['dashboard_service:8001']
     metrics_path: /metrics
-    scrape_interval: 30s
+    scrape_interval: 15s
 
   # Prometheus self-monitoring
   - job_name: 'prometheus'

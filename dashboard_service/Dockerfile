@@ -26,17 +26,17 @@ ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 # Configuration via environment variables
 ENV HOST="0.0.0.0"
-ENV PORT="8080"
+ENV PORT="8001"
 ENV CACHE_TTL_SECONDS="300"
 ENV CORS_ORIGINS="*"
 ENV DEBUG="false"
 
 # Expose HTTP port
-EXPOSE 8080
+EXPOSE 8001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Run the service
-CMD ["python", "-m", "uvicorn", "dashboard_service.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the service - Use shell form to expand PORT env var
+CMD python -m uvicorn dashboard_service.main:app --host 0.0.0.0 --port ${PORT}
