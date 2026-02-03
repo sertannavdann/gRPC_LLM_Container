@@ -19,4 +19,6 @@ beautifulsoup4==4.12.3
 
 # Provider support (for online LLM providers)
 aiohttp==3.10.10
-torch>=2.0.0
+
+# Optional: heavy ML/RL dependencies (install only where needed, e.g., RL training service)
+# torch>=2.0.0
