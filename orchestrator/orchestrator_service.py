@@ -58,9 +58,7 @@ from tools.builtin.user_context import get_user_context, get_daily_briefing, get
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-# New imports for Registry and Worker clients
-from shared.clients.registry_client import RegistryClient
-from shared.clients.worker_client import WorkerClient
+# Client imports
 from shared.clients.sandbox_client import SandboxClient
 
 # Provider system imports
@@ -749,10 +747,8 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             logger.warning(f"Sandbox client initialization failed: {e}. Code execution disabled.")
             self.sandbox_client = None
         
-        # Initialize Registry Client
-        registry_host = os.getenv("REGISTRY_HOST", "registry_service")
-        registry_port = int(os.getenv("REGISTRY_PORT", "50055"))
-        self.registry_client = RegistryClient(host=registry_host, port=registry_port)
+        # NOTE: Registry/Worker mesh disabled - can be re-enabled when needed
+        # Registry and Worker services removed in cleanup
         
         # Initialize Self-Consistency Verifier (Agent0 Phase 2)
         self.self_consistency_verifier = None
@@ -791,8 +787,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             self.tool_registry.register(execute_code)
             logger.info("Code executor tool registered")
         
-        # Register delegation tool
-        self.tool_registry.register(self.delegate_to_worker)
+        # NOTE: delegate_to_worker removed - worker mesh disabled
         
         logger.info(f"Total tools registered: {len(self.tool_registry.tools)}")
     
@@ -960,39 +955,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             pass
         return None
     
-    def delegate_to_worker(self, task: str, capability: str) -> str:
-        """
-        Delegate a task to a specialized worker agent.
-        
-        Args:
-            task (str): The instruction for the worker.
-            capability (str): The required capability (e.g., 'coding', 'rag').
-            
-        Returns:
-            str: The result from the worker.
-        """
-        logger.info(f"Delegating task '{task}' to worker with capability '{capability}'")
-        
-        # Discover workers
-        agents = self.registry_client.discover(capability)
-        if not agents:
-            return f"Error: No workers found with capability '{capability}'"
-        
-        # Pick the first one (simple load balancing)
-        worker_profile = agents[0]
-        logger.info(f"Selected worker: {worker_profile.name} at {worker_profile.endpoint}")
-        
-        # Execute task
-        worker_client = WorkerClient(worker_profile.endpoint)
-        response = worker_client.execute_task(
-            task_id=str(uuid.uuid4()),
-            instruction=task
-        )
-        
-        if response and response.status == "success":
-            return response.result
-        else:
-            return f"Error executing task: {response.error_message if response else 'Unknown error'}"
+    # NOTE: Worker delegation disabled - services removed in cleanup
+    # Uncomment and restore registry_client/worker_client if worker mesh is needed
+    # def delegate_to_worker(self, task: str, capability: str) -> str:
+    #     """Delegate a task to a specialized worker agent."""
+    #     ...
 
     def QueryAgent(self, request, context):
         """
