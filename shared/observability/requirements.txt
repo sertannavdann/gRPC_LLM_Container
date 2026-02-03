@@ -1,0 +1,17 @@
+# OpenTelemetry Core
+opentelemetry-api>=1.22.0
+opentelemetry-sdk>=1.22.0
+
+# Exporters
+opentelemetry-exporter-otlp-proto-grpc>=1.22.0
+opentelemetry-exporter-prometheus>=0.43b0
+
+# Auto-instrumentation
+opentelemetry-instrumentation-grpc>=0.43b0
+opentelemetry-instrumentation-aiohttp-client>=0.43b0
+
+# Structured logging
+structlog>=24.1.0
+
+# Prometheus client (for custom metrics if needed)
+prometheus-client>=0.19.0

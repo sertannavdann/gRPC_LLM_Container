@@ -131,6 +131,13 @@ help:
 	@echo "  $(CYAN)make restart-all$(RESET)        - Quick restart all services"
 	@echo "  $(CYAN)make verify-code$(RESET)        - Verify code is current in container"
 	@echo ""
+	@echo "$(BOLD)$(GREEN)📊 Observability:$(RESET)"
+	@echo "  $(CYAN)make observability-up$(RESET)   - Start Prometheus, Grafana, OTel Collector"
+	@echo "  $(CYAN)make observability-down$(RESET) - Stop observability stack"
+	@echo "  $(CYAN)make observability-health$(RESET) - Check observability services health"
+	@echo "  $(CYAN)make open-grafana$(RESET)       - Open Grafana in browser (localhost:3001)"
+	@echo "  $(CYAN)make open-prometheus$(RESET)    - Open Prometheus in browser (localhost:9090)"
+	@echo ""
 	@echo "$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service"
 	@echo ""
 
@@ -644,6 +651,55 @@ logs-tail:
 health-all:
 	@echo "$(CYAN)Checking service health...$(RESET)"
 	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}"
+
+# ============================================================================
+# Observability Stack Commands
+# ============================================================================
+
+# Start observability services only
+observability-up:
+	@echo "$(CYAN)Starting observability stack (Prometheus, Grafana, OTel Collector)...$(RESET)"
+	@$(COMPOSE_CMD) up -d otel-collector prometheus grafana tempo
+	@echo "$(GREEN)✓ Observability stack started$(RESET)"
+	@echo "  Grafana:    http://localhost:3001 (admin/admin)"
+	@echo "  Prometheus: http://localhost:9090"
+
+# Stop observability services
+observability-down:
+	@echo "$(CYAN)Stopping observability stack...$(RESET)"
+	@$(COMPOSE_CMD) stop otel-collector prometheus grafana tempo
+	@echo "$(GREEN)✓ Observability stack stopped$(RESET)"
+
+# View Grafana logs
+logs-grafana:
+	@$(COMPOSE_CMD) logs -f grafana
+
+# View Prometheus logs
+logs-prometheus:
+	@$(COMPOSE_CMD) logs -f prometheus
+
+# View OTel Collector logs
+logs-otel:
+	@$(COMPOSE_CMD) logs -f otel-collector
+
+# Open Grafana in browser (macOS)
+open-grafana:
+	@open http://localhost:3001
+
+# Open Prometheus in browser (macOS)
+open-prometheus:
+	@open http://localhost:9090
+
+# Check observability health
+observability-health:
+	@echo "$(BOLD)$(CYAN)Observability Health:$(RESET)"
+	@echo "─────────────────────────────────────────"
+	@printf "  %-20s " "otel-collector:"; \
+		(curl -s http://localhost:13133/ >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
+	@printf "  %-20s " "prometheus:"; \
+		(curl -s http://localhost:9090/-/healthy >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
+	@printf "  %-20s " "grafana:"; \
+		(curl -s http://localhost:3001/api/health >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
 
 # ============================================================================
 # Docker Troubleshooting Guide

@@ -22,6 +22,24 @@ import grpc
 from grpc_reflection.v1alpha import reflection
 from grpc_health.v1 import health, health_pb2_grpc, health_pb2
 
+# Observability imports
+from shared.observability import (
+    setup_observability,
+    shutdown_observability,
+    create_request_metrics,
+    create_tool_metrics,
+    create_provider_metrics,
+    create_span,
+    get_correlation_id,
+    set_correlation_id,
+    increment_active_requests,
+    decrement_active_requests,
+    RequestMetrics,
+    ToolMetrics,
+    ProviderMetrics,
+)
+from shared.observability.grpc_interceptor import ObservabilityServerInterceptor
+
 # Import configuration
 from .config import OrchestratorConfig
 
@@ -88,6 +106,8 @@ class OnlineProviderWrapper:
         provider: BaseProvider,
         model: str,
         temperature: float = 0.7,
+        provider_metrics: Optional[ProviderMetrics] = None,
+        provider_name: str = "unknown",
     ):
         """
         Initialize the wrapper.
@@ -96,10 +116,14 @@ class OnlineProviderWrapper:
             provider: Online provider instance (PerplexityProvider, OpenAIProvider, etc.)
             model: Model name to use for completions
             temperature: Default temperature setting
+            provider_metrics: Optional metrics for tracking provider calls
+            provider_name: Name of the provider for metrics labels
         """
         self.provider = provider
         self.model = model
         self.temperature = temperature
+        self.provider_metrics = provider_metrics
+        self.provider_name = provider_name
         # Thread-local storage for event loops (thread-safe with concurrent requests)
         self._thread_local = threading.local()
         logger.info(f"OnlineProviderWrapper initialized: model={model}, temp={temperature}")
@@ -131,20 +155,21 @@ class OnlineProviderWrapper:
     ) -> str:
         """
         Generate completion using online provider.
-        
+
         Matches LLMClient.generate() interface.
-        
+
         Args:
             prompt: The prompt text
             max_tokens: Maximum tokens to generate
             temperature: Temperature override
             response_format: Format hint (e.g., "json")
-            
+
         Returns:
             Generated text content
         """
         temp = temperature if temperature is not None else self.temperature
-        
+        start_time = time.time()
+
         # Build ChatRequest
         request = ChatRequest(
             messages=[ChatMessage(role="user", content=prompt)],
@@ -152,14 +177,33 @@ class OnlineProviderWrapper:
             temperature=temp,
             max_tokens=max_tokens,
         )
-        
+
         if response_format == "json":
             request.extra["response_format"] = {"type": "json_object"}
-        
-        # Run async generate
-        response = self._run_async(self.provider.generate(request))
-        
-        return response.content
+
+        try:
+            # Run async generate
+            response = self._run_async(self.provider.generate(request))
+
+            # Record provider metrics
+            if self.provider_metrics:
+                duration_ms = (time.time() - start_time) * 1000
+                self.provider_metrics.provider_requests_total.add(
+                    1, {"provider": self.provider_name, "model": self.model, "status": "success"}
+                )
+                self.provider_metrics.provider_latency_ms.record(
+                    duration_ms, {"provider": self.provider_name, "model": self.model}
+                )
+
+            return response.content
+
+        except Exception as e:
+            # Record error metrics
+            if self.provider_metrics:
+                self.provider_metrics.provider_errors_total.add(
+                    1, {"provider": self.provider_name, "model": self.model, "error_type": type(e).__name__}
+                )
+            raise
     
     def generate_stream(self, prompt: str, max_tokens: int = 2048, temperature: float = None):
         """
@@ -655,15 +699,36 @@ Your response (JSON only):"""
 class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     """
     Unified orchestrator service combining agent workflow and routing.
-    
+
     Acts as the Supervisor in the Supervisor-Worker architecture.
     Supports multiple LLM providers (local, perplexity, openai, anthropic).
     """
-    
+
     def __init__(self, config: OrchestratorConfig = None):
         self.config = config or OrchestratorConfig.from_env()
         logger.info("Initializing Orchestrator on 0.0.0.0:50054")
-        
+
+        # Initialize observability if enabled
+        self.observability_enabled = os.getenv("ENABLE_OBSERVABILITY", "false").lower() == "true"
+        self.request_metrics: Optional[RequestMetrics] = None
+        self.tool_metrics: Optional[ToolMetrics] = None
+        self.provider_metrics: Optional[ProviderMetrics] = None
+
+        if self.observability_enabled:
+            logger.info("Initializing observability stack...")
+            setup_observability(
+                service_name="orchestrator",
+                service_version="1.0.0",
+                enable_prometheus=True,
+            )
+            # Create metrics instances
+            self.request_metrics = create_request_metrics()
+            self.tool_metrics = create_tool_metrics()
+            self.provider_metrics = create_provider_metrics()
+            logger.info("Observability initialized with metrics")
+        else:
+            logger.info("Observability disabled (set ENABLE_OBSERVABILITY=true to enable)")
+
         # Initialize provider system
         setup_providers()
         logger.info(f"Provider type: {self.config.provider_type}")
@@ -768,34 +833,39 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     def _initialize_provider(self):
         """
         Initialize LLM provider based on config.
-        
+
         Returns appropriate provider instance (local gRPC client or online API client).
         For online providers (perplexity, openai, anthropic), returns a wrapper that
         exposes the same interface as LLMClient.
         """
         provider_type = self.config.provider_type.lower()
-        
+
         if provider_type == "local":
             # Use local llama.cpp via gRPC
             logger.info(f"Using LOCAL provider: {self.config.llm_host}:{self.config.llm_port}")
+            # Record provider initialization metric
+            if self.observability_enabled and self.provider_metrics:
+                self.provider_metrics.provider_requests_total.add(
+                    1, {"provider": "local", "operation": "init"}
+                )
             return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
-        
+
         # Map string to ProviderType enum
         provider_type_map = {
             "perplexity": ProviderType.PERPLEXITY,
             "openai": ProviderType.OPENAI,
             "anthropic": ProviderType.ANTHROPIC,
         }
-        
+
         if provider_type not in provider_type_map:
             logger.warning(f"Unknown provider type '{provider_type}', falling back to local")
             return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
-        
+
         # Check API key
         if not self.config.provider_api_key:
             logger.warning(f"No API key for {provider_type}, falling back to local")
             return LLMClient(host=self.config.llm_host, port=self.config.llm_port)
-        
+
         # Create online provider config
         provider_config = ProviderConfig(
             provider_type=provider_type_map[provider_type],
@@ -803,16 +873,24 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             base_url=self.config.provider_base_url,
             timeout=self.config.provider_timeout,
         )
-        
+
         # Get provider instance
         provider = get_provider(provider_config, name=f"orchestrator_{provider_type}")
         logger.info(f"Using {provider_type.upper()} provider with model: {self.config.provider_model}")
-        
+
+        # Record provider initialization metric
+        if self.observability_enabled and self.provider_metrics:
+            self.provider_metrics.provider_requests_total.add(
+                1, {"provider": provider_type, "operation": "init"}
+            )
+
         # Wrap online provider to match LLMClient interface
         return OnlineProviderWrapper(
             provider=provider,
             model=self.config.provider_model,
             temperature=self.config.temperature,
+            provider_metrics=self.provider_metrics if self.observability_enabled else None,
+            provider_name=provider_type,
         )
     
     def _run_startup_recovery(self):
@@ -919,51 +997,104 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     def QueryAgent(self, request, context):
         """
         Process user query through orchestrator.
-        
+
         Executes appropriate agent workflow using LLM decision making.
         """
         request_id = str(uuid.uuid4())
         start_time = time.time()
         logger.info(f"[{request_id}] Query: '{request.user_query}'")
-        
+
+        # Set correlation ID for tracing
+        if self.observability_enabled:
+            set_correlation_id(request_id)
+            increment_active_requests()
+
         try:
             # Get or create thread_id
             thread_id = self._get_thread_id(context) or request_id
-            
+
+            # Record request metric
+            if self.observability_enabled and self.request_metrics:
+                self.request_metrics.requests_total.add(
+                    1, {"method": "QueryAgent", "type": "unary"}
+                )
+
             # Mark thread as incomplete (for crash recovery)
             self.checkpoint_manager.mark_thread_incomplete(thread_id)
-            
-            # Process through agent workflow
-            result = self._process_query(
-                query=request.user_query,
-                thread_id=thread_id
-            )
-            
+
+            # Process through agent workflow with tracing
+            if self.observability_enabled:
+                with create_span(
+                    name="QueryAgent.process",
+                    attributes={
+                        "request_id": request_id,
+                        "thread_id": thread_id,
+                        "query_length": len(request.user_query),
+                    }
+                ):
+                    result = self._process_query(
+                        query=request.user_query,
+                        thread_id=thread_id
+                    )
+            else:
+                result = self._process_query(
+                    query=request.user_query,
+                    thread_id=thread_id
+                )
+
             # Mark thread as complete
             self.checkpoint_manager.mark_thread_complete(thread_id)
-            
+
             # Extract response
             content = result.get("content") or "Sorry, I couldn't generate a response."
             sources = self._build_sources_metadata(result, thread_id)
-            
+
             elapsed = time.time() - start_time
             logger.info(f"[{request_id}] Completed in {elapsed:.2f}s")
-            
+
+            # Record request duration metric
+            if self.observability_enabled and self.request_metrics:
+                self.request_metrics.request_duration_ms.record(
+                    elapsed * 1000, {"method": "QueryAgent", "status": "ok"}
+                )
+                # Record tools per request
+                if self.tool_metrics:
+                    tools_used = len(sources.get("tools_used", []))
+                    self.tool_metrics.tools_per_request.record(
+                        tools_used, {"method": "QueryAgent"}
+                    )
+
             return agent_pb2.AgentReply(
                 final_answer=content,
                 context_used=json.dumps([]),
                 sources=json.dumps(sources),
                 execution_graph=""
             )
-            
+
         except Exception as e:
             logger.exception(f"[{request_id}] Error: {e}")
+
+            # Record error metrics
+            if self.observability_enabled and self.request_metrics:
+                elapsed = time.time() - start_time
+                self.request_metrics.errors_total.add(
+                    1, {"method": "QueryAgent", "error_type": type(e).__name__}
+                )
+                self.request_metrics.request_duration_ms.record(
+                    elapsed * 1000, {"method": "QueryAgent", "status": "error"}
+                )
+
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(f"Internal error. Request ID: {request_id}")
             return agent_pb2.AgentReply(
                 final_answer=f"Sorry, an error occurred. (Request ID: {request_id})",
                 sources=json.dumps({"error": str(e), "request_id": request_id})
             )
+
+        finally:
+            # Decrement active requests
+            if self.observability_enabled:
+                decrement_active_requests()
     
     def _process_query(
         self,
@@ -978,10 +1109,10 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                 "query": query
             }
         )
-        
+
         # Add user query as HumanMessage
         state["messages"] = [HumanMessage(content=query)]
-        
+
         # Configure thread
         config = {
             "configurable": {
@@ -989,25 +1120,61 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                 "checkpoint_ns": "orchestrator"
             }
         }
-        
-        # Invoke compiled workflow
-        final_state = self.compiled_workflow.invoke(state, config=config)
-        
+
+        # Invoke compiled workflow with tracing
+        if self.observability_enabled:
+            with create_span(
+                name="workflow.invoke",
+                attributes={
+                    "thread_id": thread_id,
+                    "query_length": len(query),
+                }
+            ):
+                final_state = self.compiled_workflow.invoke(state, config=config)
+        else:
+            final_state = self.compiled_workflow.invoke(state, config=config)
+
         # Extract results
         messages = final_state.get("messages", [])
         last_message = messages[-1] if messages else None
-        
+
         content = ""
         if last_message:
             if isinstance(last_message, AIMessage):
                 content = last_message.content
             else:
                 content = str(last_message.content)
-        
+
+        # Record tool metrics
+        tool_results = final_state.get("tool_results", [])
+        if self.observability_enabled and self.tool_metrics and tool_results:
+            for tr in tool_results:
+                if isinstance(tr, dict):
+                    tool_name = tr.get("tool_name") or tr.get("tool", "unknown")
+                    status = tr.get("status", "unknown")
+                    duration = tr.get("duration_ms", 0)
+
+                    # Record tool call
+                    self.tool_metrics.tool_calls_total.add(
+                        1, {"tool": tool_name, "status": status}
+                    )
+
+                    # Record tool duration if available
+                    if duration > 0:
+                        self.tool_metrics.tool_duration_ms.record(
+                            duration, {"tool": tool_name}
+                        )
+
+                    # Record tool errors
+                    if status == "error":
+                        self.tool_metrics.tool_errors_total.add(
+                            1, {"tool": tool_name}
+                        )
+
         return {
             "content": content,
             "messages": messages,
-            "tool_results": final_state.get("tool_results", []),
+            "tool_results": tool_results,
             "iteration": final_state.get("iteration", 0)
         }
     
@@ -1037,24 +1204,34 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
 def serve(config: Optional[OrchestratorConfig] = None):
     """Start the orchestrator gRPC server."""
     config = config or OrchestratorConfig.from_env()
-    
+
+    # Check if observability is enabled
+    observability_enabled = os.getenv("ENABLE_OBSERVABILITY", "false").lower() == "true"
+
+    # Build interceptors list
+    interceptors = []
+    if observability_enabled:
+        interceptors.append(ObservabilityServerInterceptor())
+        logger.info("Observability server interceptor enabled")
+
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=10),
+        interceptors=interceptors,
         options=[
             ('grpc.max_send_message_length', 50 * 1024 * 1024),
             ('grpc.max_receive_message_length', 50 * 1024 * 1024),
         ]
     )
-    
+
     # Add orchestrator service
     orchestrator_service = OrchestratorService(config)
     agent_pb2_grpc.add_AgentServiceServicer_to_server(orchestrator_service, server)
-    
+
     # Add health check
     health_servicer = health.HealthServicer()
     health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-    
+
     # Add reflection
     SERVICE_NAMES = (
         agent_pb2.DESCRIPTOR.services_by_name['AgentService'].full_name,
@@ -1062,17 +1239,22 @@ def serve(config: Optional[OrchestratorConfig] = None):
         reflection.SERVICE_NAME,
     )
     reflection.enable_server_reflection(SERVICE_NAMES, server)
-    
+
     # Start server
     server.add_insecure_port(f'{config.host}:{config.port}')
     server.start()
     logger.info(f"Orchestrator server started on {config.host}:{config.port}")
-    
+
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
         logger.info("Shutting down orchestrator server...")
         server.stop(grace=5)
+
+        # Shutdown observability gracefully
+        if observability_enabled:
+            logger.info("Shutting down observability stack...")
+            shutdown_observability()
 
 
 if __name__ == '__main__':

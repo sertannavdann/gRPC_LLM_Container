@@ -1,5 +1,24 @@
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 import numpy as np
+
+
+@dataclass
+class RewardConfig:
+    """Configuration for reward function weights."""
+    alpha: float = 0.5  # Weight for uncertainty (self-consistency disagreement)
+    beta: float = 0.3   # Weight for tool complexity
+    gamma: float = 0.2  # Weight for cost efficiency
+
+    def __post_init__(self):
+        """Validate weights sum to 1.0."""
+        total = self.alpha + self.beta + self.gamma
+        if abs(total - 1.0) > 0.01:
+            # Normalize if not close to 1.0
+            self.alpha /= total
+            self.beta /= total
+            self.gamma /= total
+
 
 class Agent0RewardFunction:
     """
@@ -99,5 +118,46 @@ class Agent0RewardFunction:
         raw_score = avg_complexity * (1.0 + diversity_bonus * 0.5)
         return min(1.0, raw_score)
 
-# For backward compatibility with init logic
-compute_reward = Agent0RewardFunction().compute_reward
+# Module-level convenience function
+_default_reward_fn: Optional[Agent0RewardFunction] = None
+
+
+def compute_reward(
+    responses: List[str],
+    tools_used: List[str],
+    cost_usd: float,
+    task: Optional[Dict] = None,
+    config: Optional[RewardConfig] = None,
+) -> float:
+    """
+    Compute reward for a task execution.
+
+    Args:
+        responses: List of executor responses (for self-consistency)
+        tools_used: List of tool names that were called
+        cost_usd: Total cost in USD
+        task: Optional task metadata
+        config: Optional RewardConfig to customize weights
+
+    Returns:
+        Reward value between 0.0 and 1.0
+    """
+    global _default_reward_fn
+
+    if config:
+        reward_fn = Agent0RewardFunction(
+            alpha=config.alpha,
+            beta=config.beta,
+            gamma=config.gamma
+        )
+    else:
+        if _default_reward_fn is None:
+            _default_reward_fn = Agent0RewardFunction()
+        reward_fn = _default_reward_fn
+
+    return reward_fn.compute_reward(
+        task=task or {},
+        executor_responses=responses,
+        tools_used=tools_used,
+        cost=cost_usd
+    )
