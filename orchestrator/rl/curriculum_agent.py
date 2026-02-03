@@ -8,7 +8,7 @@ class CurriculumAgent(nn.Module):
     Trained via GRPO (Group Relative Policy Optimization). [web:166]
     """
     
-    def __init__(self, state_dim: int = 10, num_executors: int = 5):
+    def __init__(self, state_dim: int = 12, num_executors: int = 5):
         super().__init__()
         self.policy_net = nn.Sequential(
             nn.Linear(state_dim, 256),
@@ -91,10 +91,7 @@ class CurriculumAgent(nn.Module):
         for executor in self.executors:
             features.append(endpoint_stats.get(executor, {}).get('success_rate', 0.5))
             
-        # Ensure we match state_dim (pad or truncate)
-        # In init, state_dim=10. 
-        # Here: 4 query + 3 context + 5 executors = 12 features.
-        # We should update init default or pad/truncate. 
-        # Let's behave robustly and return tensor.
+        # Total features: 4 query + 3 context + 5 executors = 12 features
+        # Matches state_dim=12 default in __init__
         
         return torch.tensor(features, dtype=torch.float32)

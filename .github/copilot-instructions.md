@@ -1,6 +1,6 @@
 # Development Guidelines
 
-## Pre-Implementation Analysis Protocol: ** Before writing any code **
+## Pre-Implementation Analysis Protocol: **Before writing any code**
 
 ### ANALYSIS_REQUIRED:
 1. Map the dependency tree of affected components
