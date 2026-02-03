@@ -41,7 +41,7 @@ services:
     container_name: orchestrator
     ports:
       - "50054:50054"
-      - "8888:8888"   # Prometheus metrics endpoint
+      - "8890:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8890)
     depends_on:
       - llm_service
       - chroma_service
@@ -97,53 +97,62 @@ services:
     container_name: dashboard_service
     ports:
       - "8001:8001"
+      - "8002:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8002)
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8001
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=dashboard-service
+      - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
+      - CACHE_TTL_SECONDS=300
     volumes:
       - ./dashboard_service/data:/app/data
     networks:
       - rag_net
+    depends_on:
+      - otel-collector
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
       retries: 3
 
-  clawdbot:
-    image: clawdbot/gateway:latest
-    container_name: clawdbot-gateway
+  # =============================================================================
+  # BRIDGE SERVICE - MCP Server for OpenClaw ↔ gRPC bidirectional communication
+  # =============================================================================
+  bridge_service:
+    build:
+      context: .
+      dockerfile: bridge_service/Dockerfile
+    container_name: bridge_service
     ports:
-      - "18789:18789"  # Control UI
-      - "50060:50060"  # gRPC endpoint
-    volumes:
-      - clawdbot_config:/home/node/.clawdbot:rw
-      - clawdbot_workspace:/home/node/clawd:rw
-      - ./clawdbot_integration/fetch_context.sh:/home/node/clawd/scripts/fetch_context.sh:ro
-      - ./clawdbot_integration/skills:/home/node/clawd/skills:ro
+      - "8100:8100"   # MCP/HTTP endpoint
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - DASHBOARD_API_URL=http://dashboard_service:8001
-      - ORCHESTRATOR_URL=grpc://orchestrator:50054
-      - CONTEXT_REFRESH_INTERVAL=300
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8100
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=50054
+      - CHROMA_HOST=chroma_service
+      - CHROMA_PORT=50052
+      - SANDBOX_HOST=sandbox_service
+      - SANDBOX_PORT=50057
+      - DASHBOARD_URL=http://dashboard:8001
     networks:
       - rag_net
     depends_on:
-      - dashboard
       - orchestrator
+      - chroma_service
+      - sandbox_service
+      - dashboard
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.0'
 
-  registry_service:
-    build:
-      context: .
-      dockerfile: registry_service/Dockerfile
-    container_name: registry_service
-    ports:
-      - "50055:50055"
-    networks:
-      - rag_net
+  # NOTE: clawdbot service removed - use external OpenClaw installation instead
+  # Configure OpenClaw to connect to bridge_service:8100 for MCP tools
 
   sandbox_service:
     build:
@@ -164,25 +173,8 @@ services:
       timeout: 5s
       retries: 3
 
-  worker_coding:
-    build:
-      context: .
-      dockerfile: worker_service/Dockerfile
-    container_name: worker_coding
-    environment:
-      - WORKER_ID=coding-worker-1
-      - WORKER_NAME=CodingAgent
-      - WORKER_CAPABILITIES=coding,python
-      - WORKER_PORT=50056
-      - REGISTRY_HOST=registry_service
-      - REGISTRY_PORT=50055
-      - HOST_IP=worker_coding
-    ports:
-      - "50056:50056"
-    depends_on:
-      - registry_service
-    networks:
-      - rag_net
+  # NOTE: worker_coding service removed - worker mesh architecture not actively used
+  # Can be re-added when distributed worker delegation is needed
 
   ui_service:
     build:
