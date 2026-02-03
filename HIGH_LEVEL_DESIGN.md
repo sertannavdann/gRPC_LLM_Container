@@ -1,7 +1,7 @@
 # High-Level Design (HLD) - gRPC LLM Agent Framework
 
-> **Last Updated**: November 2025  
-> **Version**: 2.0 (Agent0 Architecture)  
+> **Last Updated**: February 2026  
+> **Version**: 2.1 (OpenClaw MCP Integration)  
 > **Branch**: `Agent0`
 
 ## 1. Executive Summary
@@ -66,6 +66,8 @@ graph TD
 | Registry Service | 50055 | gRPC | Worker discovery |
 | Worker: Coding | 50056 | gRPC | Code specialist |
 | Sandbox Service | 50057 | gRPC | Secure code execution |
+| Dashboard Service | 8001 | HTTP | Context aggregation |
+| **Bridge Service** | **8100** | **HTTP/MCP** | **OpenClaw bridge** |
 
 ---
 
@@ -403,21 +405,73 @@ Based on research from the Agent0 paper (arXiv:2511.16043), the following advanc
 
 ---
 
-## 11. Future Roadmap
+## 11. OpenClaw MCP Bridge Integration
+
+### 11.1 Architecture
+
+```mermaid
+graph TD
+    OC[🔌 OpenClaw Gateway<br/>:8000] <-->|MCP JSON-RPC| Bridge[🌉 Bridge Service<br/>HTTP :8100]
+    
+    subgraph "MCP Server"
+        Bridge -->|gRPC| Orch[🧠 Orchestrator<br/>:50054]
+        Bridge -->|gRPC| Chroma[📚 ChromaDB<br/>:50052]
+        Bridge -->|gRPC| Sandbox[🔒 Sandbox<br/>:50057]
+        Bridge -->|HTTP| Dashboard[📊 Dashboard<br/>:8001]
+    end
+    
+    style Bridge fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+### 11.2 Available MCP Tools
+
+| Tool | Description | Rate Limit |
+|------|-------------|------------|
+| `query_agent` | Query the AI orchestrator | 30/min |
+| `get_context` | Aggregated user context | 60/min |
+| `search_knowledge` | ChromaDB vector search | 60/min |
+| `execute_code` | Sandboxed code execution | 10/min |
+| `list_available_tools` | Available orchestrator tools | 10/min |
+| `get_service_health` | All service health status | 30/min |
+| `get_daily_briefing` | AI-generated daily summary | 10/min |
+| `plan_day` | AI day planner | 10/min |
+
+### 11.3 Features
+
+- **Pydantic Validation**: All tool inputs validated with clear error messages
+- **Rate Limiting**: Per-tool limits using token bucket algorithm
+- **Caching**: Context (5min TTL), Health (30s TTL)
+- **Metrics**: `/metrics` endpoint for monitoring
+- **OpenClaw Skill**: Auto-discovered via `grpc-agent.SKILL.md`
+
+### 11.4 Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Bridge health check |
+| `/tools` | GET | List available tools |
+| `/tools/{name}` | POST | Execute tool |
+| `/mcp` | POST | JSON-RPC 2.0 handler |
+| `/metrics` | GET | Usage metrics |
+
+---
+
+## 12. Future Roadmap
 
 | Phase | Feature | Status |
 |-------|---------|--------|
 | Phase 1 | Multi-Turn Tool Rollouts | ✅ Complete |
 | Phase 2 | Self-Consistency Scoring | ✅ Complete |
 | Phase 3 | Sandbox Service | ✅ Complete |
-| Phase 4 | Enhanced RAG Pipeline | 🔄 Planned |
-| Phase 5 | Multi-modal Support (Image/Audio) | 🔄 Planned |
-| Phase 6 | Kubernetes Helm Charts | 🔄 Planned |
-| Phase 7 | ADPO Training Loop | 🔄 Planned |
+| Phase 4 | OpenClaw MCP Bridge | ✅ Complete |
+| Phase 5 | Enhanced RAG Pipeline | 🔄 Planned |
+| Phase 6 | Multi-modal Support (Image/Audio) | 🔄 Planned |
+| Phase 7 | Kubernetes Helm Charts | 🔄 Planned |
+| Phase 8 | ADPO Training Loop | 🔄 Planned |
 
 ---
 
-## 12. Quick Reference Commands
+## 13. Quick Reference Commands
 
 ```bash
 # Build and start all services
@@ -435,4 +489,9 @@ pytest tests/integration/ -v
 
 # Regenerate protobufs
 make proto-gen
+
+# MCP Bridge commands
+make bridge-query QUERY="Hello"
+make bridge-health-check
+make bridge-briefing
 ```

@@ -93,6 +93,7 @@ help:
 	@echo "  $(CYAN)make provider-perplexity$(RESET) - Use Perplexity Sonar API"
 	@echo "  $(CYAN)make provider-openai$(RESET)    - Use OpenAI GPT API"
 	@echo "  $(CYAN)make provider-anthropic$(RESET) - Use Anthropic Claude API"
+	@echo "  $(CYAN)make provider-openclaw$(RESET)  - Use OpenClaw Gateway (gpt-5.x)"
 	@echo "  $(CYAN)make provider-status$(RESET)    - Show current provider config"
 	@echo ""
 	@echo "$(BOLD)$(GREEN)💬 Chat & Query:$(RESET)"
@@ -138,7 +139,15 @@ help:
 	@echo "  $(CYAN)make open-grafana$(RESET)       - Open Grafana in browser (localhost:3001)"
 	@echo "  $(CYAN)make open-prometheus$(RESET)    - Open Prometheus in browser (localhost:9090)"
 	@echo ""
-	@echo "$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service"
+	@echo "$(BOLD)$(GREEN)🔗 OpenClaw Bridge (Bidirectional Integration):$(RESET)"
+	@echo "  $(CYAN)make bridge-up$(RESET)          - Start MCP bridge service"
+	@echo "  $(CYAN)make bridge-down$(RESET)        - Stop bridge service"
+	@echo "  $(CYAN)make bridge-health$(RESET)      - Check bridge service health"
+	@echo "  $(CYAN)make bridge-tools$(RESET)       - List tools exposed via MCP"
+	@echo "  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge"
+	@echo "  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup"
+	@echo ""
+	@echo "$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service, bridge_service"
 	@echo ""
 
 # ============================================================================
@@ -253,6 +262,9 @@ provider-status:
 		elif [ "$$PROVIDER" = "anthropic" ]; then \
 			KEY=$$(grep -E "^ANTHROPIC_API_KEY=" $(ENV_FILE) | cut -d= -f2); \
 			if [ -n "$$KEY" ]; then echo "  API Key:  $(GREEN)configured$(RESET)"; else echo "  API Key:  $(RED)missing$(RESET)"; fi; \
+		elif [ "$$PROVIDER" = "openclaw" ]; then \
+			URL=$$(grep -E "^OPENCLAW_URL=" $(ENV_FILE) | cut -d= -f2); \
+			if [ -n "$$URL" ]; then echo "  Gateway:  $(GREEN)$$URL$(RESET)"; else echo "  Gateway:  $(GREEN)host.docker.internal:18789$(RESET) (default)"; fi; \
 		fi; \
 	else \
 		echo "  $(RED)No .env file found$(RESET)"; \
@@ -288,6 +300,15 @@ provider-anthropic:
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=claude-3-5-sonnet-20241022/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
 	@echo "$(GREEN)✓ Now using Anthropic Claude$(RESET)"
+	@$(MAKE) --no-print-directory provider-status
+
+provider-openclaw:
+	@echo "$(CYAN)Switching to OpenClaw Gateway provider...$(RESET)"
+	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=openclaw/' $(ENV_FILE)
+	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=gpt-5.2/' $(ENV_FILE)
+	@grep -q "^OPENCLAW_URL=" $(ENV_FILE) || echo "OPENCLAW_URL=http://host.docker.internal:18789/v1" >> $(ENV_FILE)
+	@$(MAKE) --no-print-directory restart-orchestrator
+	@echo "$(GREEN)✓ Now using OpenClaw Gateway (gpt-5.2)$(RESET)"
 	@$(MAKE) --no-print-directory provider-status
 
 # Set custom model for current provider
@@ -700,6 +721,89 @@ observability-health:
 		(curl -s http://localhost:9090/-/healthy >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
 	@printf "  %-20s " "grafana:"; \
 		(curl -s http://localhost:3001/api/health >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
+
+# ============================================================================
+# Bridge Service Commands (OpenClaw ↔ gRPC Bidirectional Communication)
+# ============================================================================
+
+# Start bridge service only
+bridge-up:
+	@echo "$(CYAN)Starting bridge service (MCP server)...$(RESET)"
+	@$(COMPOSE_CMD) up -d bridge_service
+	@echo "$(GREEN)✓ Bridge service started at http://localhost:8100$(RESET)"
+
+# Stop bridge service
+bridge-down:
+	@echo "$(CYAN)Stopping bridge service...$(RESET)"
+	@$(COMPOSE_CMD) stop bridge_service
+	@echo "$(GREEN)✓ Bridge service stopped$(RESET)"
+
+# Rebuild bridge service
+bridge-rebuild:
+	@echo "$(CYAN)Rebuilding bridge service...$(RESET)"
+	@$(COMPOSE_CMD) build --no-cache bridge_service
+	@$(COMPOSE_CMD) up -d bridge_service
+	@echo "$(GREEN)✓ Bridge service rebuilt and started$(RESET)"
+
+# View bridge service logs
+logs-bridge:
+	@$(COMPOSE_CMD) logs -f bridge_service
+
+# Check bridge service health
+bridge-health:
+	@echo "$(BOLD)$(CYAN)Bridge Service Health:$(RESET)"
+	@echo "─────────────────────────────────────────"
+	@printf "  %-20s " "bridge_service:"; \
+		(curl -s http://localhost:8100/health >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
+
+# List available tools exposed via MCP
+bridge-tools:
+	@echo "$(CYAN)Fetching tools from bridge service...$(RESET)"
+	@curl -s http://localhost:8100/tools | jq '.' 2>/dev/null || echo "$(RED)Bridge service not running$(RESET)"
+
+# Test query through bridge
+bridge-query:
+	@if [ -z "$(Q)" ]; then \
+		echo "$(RED)Usage: make bridge-query Q=\"your question here\"$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(CYAN)Sending query through bridge...$(RESET)"
+	@curl -s -X POST http://localhost:8100/tools/query_agent \
+		-H "Content-Type: application/json" \
+		-d '{"arguments": {"query": "$(Q)"}}' | jq '.' 2>/dev/null || \
+		echo "$(RED)Error: Could not connect to bridge service$(RESET)"
+
+# Test service health through bridge
+bridge-health-check:
+	@echo "$(CYAN)Checking service health via bridge...$(RESET)"
+	@curl -s -X POST http://localhost:8100/tools/get_service_health \
+		-H "Content-Type: application/json" \
+		-d '{"arguments": {}}' | jq '.' 2>/dev/null || \
+		echo "$(RED)Error: Could not connect to bridge service$(RESET)"
+
+# Test daily briefing
+bridge-briefing:
+	@echo "$(CYAN)Getting daily briefing via bridge...$(RESET)"
+	@curl -s -X POST http://localhost:8100/tools/get_daily_briefing \
+		-H "Content-Type: application/json" \
+		-d '{"arguments": {"include_weather": true, "include_commute": true}}' | jq '.' 2>/dev/null || \
+		echo "$(RED)Error: Could not connect to bridge service$(RESET)"
+
+# Build OpenClaw skill package
+skill-build:
+	@echo "$(CYAN)Building OpenClaw skill package...$(RESET)"
+	@cd clawdbot_integration/skills/grpc-llm-skill && npm install && npm run build
+	@echo "$(GREEN)✓ Skill package built$(RESET)"
+
+# Full OpenClaw bidirectional setup
+openclaw-setup: bridge-up skill-build
+	@echo ""
+	@echo "$(GREEN)✓ OpenClaw bidirectional integration ready!$(RESET)"
+	@echo ""
+	@echo "  Bridge MCP Server:  http://localhost:8100"
+	@echo "  OpenClaw Gateway:   http://localhost:18789"
+	@echo ""
+	@echo "  To test: make bridge-query Q=\"What services are available?\""
 
 # ============================================================================
 # Docker Troubleshooting Guide
