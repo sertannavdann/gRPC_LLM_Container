@@ -1,7 +1,11 @@
 # Sandbox Service Requirements
-grpcio>=1.60.0
-grpcio-tools>=1.60.0
-grpcio-reflection>=1.60.0
-grpcio-health-checking>=1.60.0
-protobuf>=4.25.0
+
+# gRPC - pinned versions for consistency
+grpcio==1.67.1
+grpcio-tools==1.67.1
+grpcio-reflection==1.67.1
+grpcio-health-checking==1.67.1
+protobuf==5.28.3
+
+# Secure code execution
 RestrictedPython>=7.0

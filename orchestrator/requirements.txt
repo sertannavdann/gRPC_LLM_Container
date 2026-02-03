@@ -19,4 +19,11 @@ beautifulsoup4==4.12.3
 
 # Provider support (for online LLM providers)
 aiohttp==3.10.10
-torch>=2.0.0
+
+# Observability - OpenTelemetry (versions compatible with protobuf 5.x)
+opentelemetry-api>=1.27.0
+opentelemetry-sdk>=1.27.0
+opentelemetry-exporter-otlp-proto-grpc>=1.27.0
+opentelemetry-exporter-prometheus>=0.48b0
+opentelemetry-instrumentation-grpc>=0.48b0
+prometheus-client==0.19.0
