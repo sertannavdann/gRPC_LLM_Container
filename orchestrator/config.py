@@ -9,6 +9,7 @@ Supports multiple LLM providers:
 - perplexity: Uses Perplexity Sonar API
 - openai: Uses OpenAI API
 - anthropic: Uses Anthropic Claude API
+- openclaw: Uses OpenClaw Gateway (gpt-5.x via Copilot proxy)
 """
 
 import os
@@ -28,7 +29,7 @@ class OrchestratorConfig:
     port: int = 50054
     
     # LLM Provider settings (NEW)
-    provider_type: str = "local"  # local, perplexity, openai, anthropic
+    provider_type: str = "local"  # local, perplexity, openai, anthropic, openclaw
     provider_api_key: Optional[str] = None
     provider_base_url: Optional[str] = None
     provider_model: Optional[str] = None  # Model name for online providers
@@ -71,12 +72,21 @@ class OrchestratorConfig:
         
         # Get API key based on provider type
         api_key = None
+        base_url = None
         if provider_type == "perplexity":
             api_key = os.getenv("PERPLEXITY_API_KEY")
         elif provider_type == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
         elif provider_type == "anthropic":
             api_key = os.getenv("ANTHROPIC_API_KEY")
+        elif provider_type == "openclaw":
+            # OpenClaw uses token auth, API key is optional
+            api_key = os.getenv("OPENCLAW_API_KEY", "openclaw")
+            # Default to host.docker.internal for Docker-to-host communication
+            base_url = os.getenv("OPENCLAW_URL", "http://host.docker.internal:18789/v1")
+        
+        # Allow override via generic base URL env var
+        base_url = os.getenv("LLM_PROVIDER_BASE_URL", base_url)
         
         # Get model based on provider type
         provider_model = os.getenv("LLM_PROVIDER_MODEL")
@@ -88,6 +98,8 @@ class OrchestratorConfig:
                 provider_model = "gpt-4o-mini"
             elif provider_type == "anthropic":
                 provider_model = "claude-3-5-sonnet-20241022"
+            elif provider_type == "openclaw":
+                provider_model = "gpt-5.2"
         
         return cls(
             host=os.getenv("ORCHESTRATOR_HOST", "0.0.0.0"),
@@ -95,7 +107,7 @@ class OrchestratorConfig:
             # Provider settings
             provider_type=provider_type,
             provider_api_key=api_key,
-            provider_base_url=os.getenv("LLM_PROVIDER_BASE_URL"),
+            provider_base_url=base_url,
             provider_model=provider_model,
             provider_timeout=int(os.getenv("LLM_PROVIDER_TIMEOUT", "60")),
             # Local LLM settings (fallback)
