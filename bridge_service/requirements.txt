@@ -1,0 +1,19 @@
+# Bridge Service - MCP Server
+# Connects OpenClaw to gRPC microservices
+
+# Core dependencies
+grpcio==1.67.1
+grpcio-tools==1.67.1
+protobuf==5.28.3
+
+# HTTP/async
+aiohttp==3.10.10
+
+# Validation & utilities
+pydantic==2.10.2
+
+# Rate limiting
+aiolimiter==1.1.0
+
+# Caching
+cachetools==5.3.2
