@@ -1,14 +1,14 @@
-# OpenTelemetry Core
-opentelemetry-api>=1.22.0
-opentelemetry-sdk>=1.22.0
+# OpenTelemetry Core (versions compatible with protobuf 5.x)
+opentelemetry-api>=1.27.0
+opentelemetry-sdk>=1.27.0
 
 # Exporters
-opentelemetry-exporter-otlp-proto-grpc>=1.22.0
-opentelemetry-exporter-prometheus>=0.43b0
+opentelemetry-exporter-otlp-proto-grpc>=1.27.0
+opentelemetry-exporter-prometheus>=0.48b0
 
 # Auto-instrumentation
-opentelemetry-instrumentation-grpc>=0.43b0
-opentelemetry-instrumentation-aiohttp-client>=0.43b0
+opentelemetry-instrumentation-grpc>=0.48b0
+opentelemetry-instrumentation-aiohttp-client>=0.48b0
 
 # Structured logging
 structlog>=24.1.0
