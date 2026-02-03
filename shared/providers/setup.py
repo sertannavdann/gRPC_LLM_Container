@@ -7,6 +7,7 @@ from .local_provider import LocalProvider
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
 from .perplexity_provider import PerplexityProvider
+from .openclaw_provider import OpenClawProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,5 +33,9 @@ def setup_providers() -> None:
 
     registry.register(ProviderType.PERPLEXITY, PerplexityProvider)
     logger.info("Registered PerplexityProvider")
+
+    # Register OpenClaw gateway provider
+    registry.register(ProviderType.OPENCLAW, OpenClawProvider)
+    logger.info("Registered OpenClawProvider")
 
     logger.info(f"Available providers: {registry.list_available()}")

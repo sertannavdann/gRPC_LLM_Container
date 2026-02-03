@@ -18,6 +18,7 @@ from .online_provider import OnlineProvider
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
 from .perplexity_provider import PerplexityProvider
+from .openclaw_provider import OpenClawProvider
 
 __all__ = [
     # Base classes
@@ -44,6 +45,7 @@ __all__ = [
     "AnthropicProvider",
     "OpenAIProvider",
     "PerplexityProvider",
+    "OpenClawProvider",
     # Config
     "ProviderConfigLoader",
 ]

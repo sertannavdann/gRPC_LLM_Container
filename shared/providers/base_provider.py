@@ -14,6 +14,7 @@ class ProviderType(str, Enum):
     GEMINI = "gemini"
     PERPLEXITY = "perplexity"
     OLLAMA = "ollama"
+    OPENCLAW = "openclaw"
 
 
 @dataclass
