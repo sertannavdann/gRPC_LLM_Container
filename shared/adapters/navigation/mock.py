@@ -19,8 +19,8 @@ from ...schemas.canonical import (
 )
 
 
-# Mock locations for route generation
-MOCK_LOCATIONS = {
+# Configuration constant: default mock locations used for route generation
+MOCK_LOCATION_DATA = {
     "home": GeoPoint(43.6532, -79.3832, "123 Home Street, Toronto, ON"),
     "office": GeoPoint(43.6510, -79.3470, "456 King St W, Toronto, ON"),
     "gym": GeoPoint(43.6480, -79.3920, "789 Queen St W, Toronto, ON"),
@@ -122,8 +122,8 @@ class MockNavigationAdapter(BaseAdapter[NavigationRoute]):
         origin_name = settings.get("origin", "home")
         destination_name = settings.get("destination", "office")
         
-        origin = MOCK_LOCATIONS.get(origin_name, MOCK_LOCATIONS["home"])
-        destination = MOCK_LOCATIONS.get(destination_name, MOCK_LOCATIONS["office"])
+        origin = MOCK_LOCATION_DATA.get(origin_name, MOCK_LOCATION_DATA["home"])
+        destination = MOCK_LOCATION_DATA.get(destination_name, MOCK_LOCATION_DATA["office"])
         
         # Generate primary route
         primary_route = self._generate_route(origin, destination)
@@ -142,12 +142,12 @@ class MockNavigationAdapter(BaseAdapter[NavigationRoute]):
         # Generate commute suggestions
         commute = {
             "home_to_work": self._generate_route(
-                MOCK_LOCATIONS["home"],
-                MOCK_LOCATIONS["office"],
+                MOCK_LOCATION_DATA["home"],
+                MOCK_LOCATION_DATA["office"],
             ),
             "work_to_home": self._generate_route(
-                MOCK_LOCATIONS["office"],
-                MOCK_LOCATIONS["home"],
+                MOCK_LOCATION_DATA["office"],
+                MOCK_LOCATION_DATA["home"],
             ),
         }
         
@@ -157,7 +157,7 @@ class MockNavigationAdapter(BaseAdapter[NavigationRoute]):
             "commute": commute,
             "saved_locations": {
                 name: {"lat": loc.latitude, "lng": loc.longitude, "address": loc.address}
-                for name, loc in MOCK_LOCATIONS.items()
+                for name, loc in MOCK_LOCATION_DATA.items()
             },
             "mock": True,
         }

@@ -35,8 +35,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Install docker-cli for orchestrator restart capability
 RUN apk add --no-cache docker-cli
 
-# Note: We run as root to access docker socket
-# In production, consider using a dedicated socket proxy service
+# Security Note: Running as root to access Docker socket
+# This is acceptable for development but poses security risks in production.
+# Production recommendations:
+# 1. Use a dedicated Docker socket proxy (e.g., tecnativa/docker-socket-proxy)
+# 2. Implement proper socket permission restrictions with user namespaces
+# 3. Consider using Docker API with proper authentication instead of socket mounting
+# 4. Use least-privilege principles with specific socket access controls
 
 # Copy necessary files
 COPY --from=builder /app/public ./public

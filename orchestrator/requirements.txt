@@ -27,3 +27,6 @@ opentelemetry-exporter-otlp-proto-grpc>=1.27.0
 opentelemetry-exporter-prometheus>=0.48b0
 opentelemetry-instrumentation-grpc>=0.48b0
 prometheus-client==0.19.0
+
+# Optional: heavy ML/RL dependencies (install only where needed, e.g., RL training service)
+# torch>=2.0.0
