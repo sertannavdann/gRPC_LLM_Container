@@ -5,11 +5,15 @@ ARG CACHE_BUST=1
 
 WORKDIR /app
 
-# System dependencies
+# System dependencies + grpc_health_probe for health checks
 RUN apt-get update && apt-get install -y \
     protobuf-compiler \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && GRPC_HEALTH_PROBE_VERSION=v0.4.25 \
+    && curl -fsSL https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 -o /usr/local/bin/grpc_health_probe \
+    && chmod +x /usr/local/bin/grpc_health_probe
 
 # Python dependencies
 COPY orchestrator/requirements.txt .

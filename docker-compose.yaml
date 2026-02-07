@@ -107,6 +107,7 @@ services:
       - CACHE_TTL_SECONDS=300
     volumes:
       - ./dashboard_service/data:/app/data
+      - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
     networks:
       - rag_net
     depends_on:
@@ -115,6 +116,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
   # =============================================================================

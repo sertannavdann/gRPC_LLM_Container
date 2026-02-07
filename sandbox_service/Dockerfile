@@ -5,9 +5,13 @@ WORKDIR /app
 # Security: Create non-root user for sandbox execution
 RUN groupadd -r sandbox && useradd -r -g sandbox sandbox
 
-# Install system dependencies
+# Install system dependencies + grpc_health_probe for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && GRPC_HEALTH_PROBE_VERSION=v0.4.25 \
+    && curl -fsSL https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 -o /usr/local/bin/grpc_health_probe \
+    && chmod +x /usr/local/bin/grpc_health_probe
 
 # Copy requirements and install
 COPY sandbox_service/requirements.txt .
