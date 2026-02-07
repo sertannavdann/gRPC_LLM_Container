@@ -86,16 +86,24 @@ class TestBasicFunctionality:
         logger.info(f"✓ Greeting response: {response.final_answer[:100]}...")
     
     def test_factual_question(self, agent_client):
-        """Test factual knowledge query."""
+        """Test factual knowledge query with math - answer must be in response."""
         response = agent_client.query("What is 2 + 2?")
         
         assert response is not None
         assert len(response.final_answer) > 0
         
-        # Check if "4" appears in response
-        assert "4" in response.final_answer
+        # The answer "4" MUST appear in the final response
+        # If tool was called but answer not formatted into response, this is a BUG
+        has_answer = "4" in response.final_answer or "four" in response.final_answer.lower()
         
-        logger.info(f"✓ Math response: {response.final_answer[:100]}...")
+        assert has_answer, (
+            f"FORMATTING BUG: Answer '4' not found in final_answer. "
+            f"Tool was called: {'math_solver' in response.sources.lower()}. "
+            f"The orchestrator must format tool results into the final answer. "
+            f"Got: '{response.final_answer}' | Sources: {response.sources}"
+        )
+        
+        logger.info(f"✓ Math response contains answer: {response.final_answer[:100]}...")
     
     def test_debug_mode(self, agent_client):
         """Test debug mode with execution details."""
