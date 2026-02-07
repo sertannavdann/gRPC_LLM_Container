@@ -17,10 +17,12 @@ from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .aggregator import DashboardAggregator, UserConfig
+from .bank_service import BankService
 from shared.adapters import adapter_registry
 
 # OpenTelemetry imports
@@ -183,6 +185,11 @@ class AdaptersResponse(BaseModel):
 # In-memory aggregator cache (per user)
 _aggregators: dict[str, DashboardAggregator] = {}
 
+# Bank data service (lazy-loaded from CSVs)
+_bank_service = BankService(
+    data_dir=os.getenv("BANK_DATA_DIR", "/app/dashboard_service/Bank")
+)
+
 
 def get_aggregator(user_id: str) -> DashboardAggregator:
     """Get or create an aggregator for a user."""
@@ -235,6 +242,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Mount static files for dashboard frontend
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
 # =============================================================================
@@ -468,6 +481,91 @@ async def get_alerts(
         }
     except Exception as e:
         logger.error(f"Error fetching alerts for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ROOT REDIRECT
+# =============================================================================
+
+@app.get("/", tags=["System"], include_in_schema=False)
+async def root_redirect():
+    """Redirect root to dashboard."""
+    return RedirectResponse(url="/static/index.html")
+
+
+# =============================================================================
+# BANK DATA ENDPOINTS
+# =============================================================================
+
+@app.get("/bank/transactions", tags=["Bank"])
+async def bank_transactions(
+    category: Optional[str] = Query(None, description="Spending category filter"),
+    account: Optional[str] = Query(None, description="Account type filter (credit/chequing)"),
+    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    amount_min: Optional[float] = Query(None, description="Minimum amount"),
+    amount_max: Optional[float] = Query(None, description="Maximum amount"),
+    search: Optional[str] = Query(None, description="Text search on descriptions"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+):
+    """Get paginated bank transactions with optional filters."""
+    try:
+        return await _bank_service.get_transactions(
+            category=category,
+            account=account,
+            date_from=date_from,
+            date_to=date_to,
+            amount_min=amount_min,
+            amount_max=amount_max,
+            search=search,
+            page=page,
+            per_page=per_page,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching bank transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bank/summary", tags=["Bank"])
+async def bank_summary(
+    group_by: str = Query("category", description="Group by: category, company, month, year"),
+    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+):
+    """Get aggregated spending summary."""
+    try:
+        return await _bank_service.get_summary(
+            group_by=group_by,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching bank summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bank/categories", tags=["Bank"])
+async def bank_categories():
+    """List all spending categories with totals."""
+    try:
+        return await _bank_service.get_categories()
+    except Exception as e:
+        logger.error(f"Error fetching bank categories: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bank/search", tags=["Bank"])
+async def bank_search(
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(50, ge=1, le=200, description="Max results"),
+):
+    """Search bank transactions."""
+    try:
+        return await _bank_service.search(query=q, limit=limit)
+    except Exception as e:
+        logger.error(f"Error searching bank transactions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

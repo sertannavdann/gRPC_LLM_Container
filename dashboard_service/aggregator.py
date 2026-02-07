@@ -33,7 +33,7 @@ class UserConfig:
     user_id: str
     
     # Enabled platforms per category
-    finance: List[str] = field(default_factory=lambda: ["mock"])
+    finance: List[str] = field(default_factory=lambda: ["mock", "cibc"])
     calendar: List[str] = field(default_factory=lambda: ["mock"])
     health: List[str] = field(default_factory=lambda: ["mock"])
     navigation: List[str] = field(default_factory=lambda: ["mock"])
