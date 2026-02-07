@@ -107,3 +107,9 @@ ui_servicedata/conversations/
 data/logs/
 
 clawdbot_integration/skills/*
+
+# Bank data (real financial data - local only)
+dashboard_service/Bank/*.csv
+
+**.csv
+**.ipynb

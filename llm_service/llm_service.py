@@ -3,6 +3,7 @@ import grpc
 import logging
 import sys
 import os
+import threading
 from concurrent import futures
 import json
 from json.decoder import JSONDecodeError
@@ -42,6 +43,16 @@ logger = logging.getLogger("llm_service")
 # Load configuration
 CONFIG = get_config()
 CONFIG.log_config()
+
+# =============================================================================
+# CONCURRENCY MANAGEMENT
+# =============================================================================
+# llama-cpp-python is NOT thread-safe for concurrent inference on a single 
+# model instance. We use a threading.Lock to serialize all inference requests.
+# This prevents GGML_ASSERT crashes and thread pool check failures.
+# See: https://github.com/ggml-org/llama.cpp/discussions/499
+# =============================================================================
+_inference_lock = threading.Lock()
 
 JSON_GRAMMAR = r'''
 root ::= object
@@ -85,33 +96,36 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             if request.response_format == "json":
                 gen_config["grammar"] = self._get_json_grammar()
             
-            # Generation loop with JSON validation
-            output_buffer = ""
-            json_valid = True
-            for output in llm(request.prompt, **gen_config):
-                token = output["choices"][0]["text"]
-                output_buffer += token
-                
-                
-                # Validate JSON incrementally
-                if request.response_format == "json":
-                    try:
-                        json.loads(output_buffer)
-                        json_valid = True
-                    except JSONDecodeError:
-                        json_valid = False
+            # Acquire inference lock to prevent concurrent access to llama model
+            # llama-cpp-python is NOT thread-safe for concurrent inference
+            with _inference_lock:
+                # Generation loop with JSON validation
+                output_buffer = ""
+                json_valid = True
+                for output in llm(request.prompt, **gen_config):
+                    token = output["choices"][0]["text"]
+                    output_buffer += token
+                    
+                    
+                    # Validate JSON incrementally
+                    if request.response_format == "json":
+                        try:
+                            json.loads(output_buffer)
+                            json_valid = True
+                        except JSONDecodeError:
+                            json_valid = False
+                        
+                    yield llm_pb2.GenerateResponse(
+                        token=token,
+                        is_final=False,
+                        is_valid_json=json_valid
+                    )
                     
                 yield llm_pb2.GenerateResponse(
-                    token=token,
-                    is_final=False,
+                    token="",
+                    is_final=True,
                     is_valid_json=json_valid
                 )
-                
-            yield llm_pb2.GenerateResponse(
-                token="",
-                is_final=True,
-                is_valid_json=json_valid
-            )
 
         except Exception as e:
             import traceback
@@ -142,12 +156,14 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             if request.response_format == "json":
                 gen_config["grammar"] = self._get_json_grammar()
             
-            # Generate k samples
-            for i in range(num_samples):
-                logger.info(f"Generating sample {i+1}/{num_samples}")
-                output = llm(request.prompt, **gen_config)
-                text = output["choices"][0]["text"].strip()
-                responses.append(text)
+            # Acquire inference lock - llama-cpp-python is NOT thread-safe
+            with _inference_lock:
+                # Generate k samples sequentially (single model instance)
+                for i in range(num_samples):
+                    logger.info(f"Generating sample {i+1}/{num_samples}")
+                    output = llm(request.prompt, **gen_config)
+                    text = output["choices"][0]["text"].strip()
+                    responses.append(text)
             
             # Compute self-consistency via consolidated module
             if compute_self_consistency is not None:
