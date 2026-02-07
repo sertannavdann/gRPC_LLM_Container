@@ -4,6 +4,17 @@ import logging
 from typing import Dict, Type, Optional, List
 from .base_provider import BaseProvider, ProviderConfig, ProviderType, ProviderError
 
+# Import rate limiter
+try:
+    from shared.utils.rate_limiter import (
+        get_rate_limiter,
+        RateLimitExceeded,
+        TokenBucketRateLimiter,
+    )
+    RATE_LIMITING_AVAILABLE = True
+except ImportError:
+    RATE_LIMITING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,13 +27,21 @@ class ProviderRegistry:
     - Dynamic instantiation of providers via config
     - Listing available providers
     - Default provider management
+    - Rate limiting per provider
     """
 
-    def __init__(self):
-        """Initialize the provider registry."""
+    def __init__(self, enable_rate_limiting: bool = True):
+        """
+        Initialize the provider registry.
+        
+        Args:
+            enable_rate_limiting: Whether to enable rate limiting on providers
+        """
         self._providers: Dict[ProviderType, Type[BaseProvider]] = {}
         self._instances: Dict[str, BaseProvider] = {}
         self._default_provider: Optional[str] = None
+        self._rate_limiting_enabled = enable_rate_limiting and RATE_LIMITING_AVAILABLE
+        self._rate_limiters: Dict[str, TokenBucketRateLimiter] = {} if RATE_LIMITING_AVAILABLE else {}
 
     def register(
         self,
@@ -51,6 +70,7 @@ class ProviderRegistry:
         self,
         config: ProviderConfig,
         name: Optional[str] = None,
+        check_rate_limit: bool = True,
     ) -> BaseProvider:
         """
         Get or create a provider instance.
@@ -58,13 +78,25 @@ class ProviderRegistry:
         Args:
             config: ProviderConfig with provider settings
             name: Optional name for caching this instance
+            check_rate_limit: Whether to check rate limits before returning
 
         Returns:
             BaseProvider instance
 
         Raises:
             ProviderError: If provider type not registered or instantiation fails
+            RateLimitExceeded: If rate limit exceeded (when check_rate_limit=True)
         """
+        # Check rate limit if enabled
+        if check_rate_limit and self._rate_limiting_enabled and RATE_LIMITING_AVAILABLE:
+            provider_name = name or config.provider_type.value
+            limiter = self._get_rate_limiter(provider_name)
+            if not limiter.acquire_sync():
+                raise RateLimitExceeded(
+                    retry_after=limiter.retry_after(),
+                    provider=provider_name
+                )
+        
         # Check cache
         if name and name in self._instances:
             return self._instances[name]
@@ -145,6 +177,25 @@ class ProviderRegistry:
             if self._default_provider == name:
                 self._default_provider = None
             logger.info(f"Unregistered provider instance: {name}")
+
+    def _get_rate_limiter(self, provider_name: str) -> TokenBucketRateLimiter:
+        """Get or create rate limiter for a provider."""
+        if provider_name not in self._rate_limiters:
+            self._rate_limiters[provider_name] = get_rate_limiter(provider_name)
+        return self._rate_limiters[provider_name]
+    
+    def get_rate_limit_stats(self) -> Dict[str, Dict]:
+        """Get rate limit stats for all providers."""
+        if not RATE_LIMITING_AVAILABLE:
+            return {}
+        stats = {}
+        for name, limiter in self._rate_limiters.items():
+            stats[name] = {
+                "rate": limiter.rate,
+                "burst": limiter.burst,
+                "available": limiter.available_tokens,
+            }
+        return stats
 
 
 # Global registry instance
