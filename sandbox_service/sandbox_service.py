@@ -90,8 +90,14 @@ def execute_in_sandbox(
     """
     Execute code in a sandboxed subprocess with resource limits.
     
+    Uses subprocess.run with timeout for more reliable execution in Docker.
+    
     Returns dict with stdout, stderr, exit_code, execution_time, etc.
     """
+    import subprocess
+    import tempfile
+    import json
+    
     start_time = time.time()
     result = {
         "stdout": "",
@@ -111,135 +117,135 @@ def execute_in_sandbox(
     # Merge allowed imports with safe defaults
     allowed = SAFE_IMPORTS.union(set(allowed_imports) if allowed_imports else set())
     
-    # Create execution queue for result passing
-    result_queue = multiprocessing.Queue()
+    # Create a wrapper script that executes the code with restrictions
+    wrapper_code = f'''
+import sys
+import json
+import resource
+
+# Set memory limit
+memory_bytes = {memory_limit_mb} * 1024 * 1024
+try:
+    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+except (ValueError, resource.error):
+    pass  # May fail on some systems
+
+# Allowed imports
+ALLOWED = {repr(allowed)}
+
+def restricted_import(name, *args, **kwargs):
+    if name not in ALLOWED:
+        raise ImportError(f"Import of '{{name}}' is not allowed in sandbox")
+    return __builtins__.__import__(name, *args, **kwargs)
+
+# Create restricted builtins
+restricted_builtins = {{
+    "print": print,
+    "range": range,
+    "len": len,
+    "int": int,
+    "float": float,
+    "str": str,
+    "list": list,
+    "dict": dict,
+    "tuple": tuple,
+    "set": set,
+    "bool": bool,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "sorted": sorted,
+    "enumerate": enumerate,
+    "zip": zip,
+    "map": map,
+    "filter": filter,
+    "True": True,
+    "False": False,
+    "None": None,
+    "__import__": restricted_import,
+    "isinstance": isinstance,
+    "type": type,
+    "round": round,
+    "pow": pow,
+    "divmod": divmod,
+    "hex": hex,
+    "bin": bin,
+    "oct": oct,
+    "chr": chr,
+    "ord": ord,
+    "all": all,
+    "any": any,
+    "reversed": reversed,
+    "format": format,
+    "repr": repr,
+}}
+
+# User code to execute
+USER_CODE = {repr(code)}
+
+try:
+    exec(USER_CODE, {{"__builtins__": restricted_builtins}})
+except MemoryError:
+    print("SANDBOX_MEMORY_ERROR", file=sys.stderr)
+    sys.exit(137)
+except Exception as e:
+    print(f"Error: {{e}}", file=sys.stderr)
+    sys.exit(1)
+'''
     
-    def run_code():
-        """Inner function to run in subprocess."""
-        import resource
+    try:
+        # Write wrapper to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(wrapper_code)
+            temp_file = f.name
         
-        # Set memory limit (soft limit)
-        memory_bytes = memory_limit_mb * 1024 * 1024
+        # Prepare environment
+        exec_env = os.environ.copy()
+        exec_env.update(environment)
+        
+        # Run the code in subprocess
+        proc = subprocess.run(
+            [sys.executable, temp_file],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=exec_env,
+            cwd="/tmp"  # Use temp directory for safety
+        )
+        
+        result["stdout"] = proc.stdout
+        result["stderr"] = proc.stderr
+        result["exit_code"] = proc.returncode
+        
+        # Check for memory error
+        if proc.returncode == 137 or "SANDBOX_MEMORY_ERROR" in proc.stderr:
+            result["memory_exceeded"] = True
+            result["error_message"] = "Memory limit exceeded"
+        elif proc.returncode != 0:
+            # Extract error from stderr
+            result["error_message"] = proc.stderr.strip() if proc.stderr else f"Exit code: {proc.returncode}"
+        
+        # Cleanup temp file
         try:
-            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
-        except ValueError:
-            pass  # May fail on some systems
-        
-        # Capture stdout/stderr
-        stdout_capture = StringIO()
-        stderr_capture = StringIO()
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        
-        try:
-            sys.stdout = stdout_capture
-            sys.stderr = stderr_capture
+            os.unlink(temp_file)
+        except:
+            pass
             
-            # Set up environment
-            for key, value in environment.items():
-                os.environ[key] = value
-            
-            # Create restricted globals
-            restricted_globals = {
-                "__builtins__": {
-                    "print": print,
-                    "range": range,
-                    "len": len,
-                    "int": int,
-                    "float": float,
-                    "str": str,
-                    "list": list,
-                    "dict": dict,
-                    "tuple": tuple,
-                    "set": set,
-                    "bool": bool,
-                    "abs": abs,
-                    "min": min,
-                    "max": max,
-                    "sum": sum,
-                    "sorted": sorted,
-                    "enumerate": enumerate,
-                    "zip": zip,
-                    "map": map,
-                    "filter": filter,
-                    "True": True,
-                    "False": False,
-                    "None": None,
-                    "__import__": lambda name: restricted_import(name, allowed),
-                    "isinstance": isinstance,
-                    "type": type,
-                    "round": round,
-                    "pow": pow,
-                    "divmod": divmod,
-                    "hex": hex,
-                    "bin": bin,
-                    "oct": oct,
-                    "chr": chr,
-                    "ord": ord,
-                    "all": all,
-                    "any": any,
-                    "reversed": reversed,
-                    "format": format,
-                    "repr": repr,
-                },
-            }
-            
-            # Execute code
-            exec(code, restricted_globals)
-            
-            result_queue.put({
-                "stdout": stdout_capture.getvalue(),
-                "stderr": stderr_capture.getvalue(),
-                "exit_code": 0,
-                "error_message": ""
-            })
-            
-        except MemoryError:
-            result_queue.put({
-                "stdout": stdout_capture.getvalue(),
-                "stderr": stderr_capture.getvalue(),
-                "exit_code": 137,
-                "error_message": "Memory limit exceeded"
-            })
-        except Exception as e:
-            result_queue.put({
-                "stdout": stdout_capture.getvalue(),
-                "stderr": stderr_capture.getvalue() + str(e),
-                "exit_code": 1,
-                "error_message": str(e)
-            })
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-    
-    # Run in subprocess with timeout
-    process = multiprocessing.Process(target=run_code)
-    process.start()
-    process.join(timeout=timeout_seconds)
-    
-    execution_time_ms = (time.time() - start_time) * 1000
-    
-    if process.is_alive():
-        # Timed out
-        process.terminate()
-        process.join(timeout=1)
-        if process.is_alive():
-            process.kill()
+    except subprocess.TimeoutExpired:
         result["timed_out"] = True
         result["exit_code"] = 124
         result["error_message"] = f"Execution timed out after {timeout_seconds} seconds"
-    else:
-        # Get result from queue
+        # Cleanup temp file
         try:
-            proc_result = result_queue.get_nowait()
-            result.update(proc_result)
-            if proc_result.get("exit_code") == 137:
-                result["memory_exceeded"] = True
-        except Exception:
-            result["exit_code"] = 1
-            result["error_message"] = "Failed to retrieve execution result"
+            os.unlink(temp_file)
+        except:
+            pass
+    except Exception as e:
+        result["exit_code"] = 1
+        result["error_message"] = f"Sandbox error: {str(e)}"
     
-    result["execution_time_ms"] = execution_time_ms
+    result["execution_time_ms"] = (time.time() - start_time) * 1000
     return result
 
 
