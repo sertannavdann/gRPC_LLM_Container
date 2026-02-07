@@ -184,3 +184,81 @@ UI serves on **http://localhost:5001** (mapped from container port 5000).
 **Tip:** Use local npm during active UI development, switch to Docker for integration testing.
 
 ## Full rebuild restart containers via Makefile
+---
+
+## Service Discovery & Network Map
+
+### Network Architecture
+All services run on the `rag_net` Docker network and can reach each other by container name (DNS).
+
+### Service → Port → Protocol Map
+
+| Service | Container Name | Port | Protocol | Health Check |
+|---------|---------------|------|----------|--------------|
+| **Orchestrator** | `orchestrator` | 50054 | gRPC | `grpc_health_probe -addr=:50054` |
+| **LLM Service** | `llm_service` | 50051 | gRPC | `grpc_health_probe -addr=:50051` |
+| **Chroma Service** | `chroma_service` | 50052 | gRPC | `grpc_health_probe -addr=:50052` |
+| **Sandbox Service** | `sandbox_service` | 50057 | gRPC | `grpc_health_probe -addr=:50057` |
+| **Dashboard Service** | `dashboard_service` | 8001 | HTTP | `curl http://localhost:8001/health` |
+| **Bridge Service (MCP)** | `bridge_service` | 8100 | HTTP/SSE | `curl http://localhost:8100/health` |
+| **UI Service** | `ui_service` | 5001→5000 | HTTP | N/A |
+| **Prometheus** | `prometheus` | 9090 | HTTP | `wget http://localhost:9090/-/healthy` |
+| **Grafana** | `grafana` | 3001→3000 | HTTP | `wget http://localhost:3000/api/health` |
+| **OTEL Collector** | `otel-collector` | 4317 (gRPC), 4318 (HTTP) | OTLP | `wget http://localhost:13133/` |
+
+### Internal DNS Resolution
+
+Services communicate using container names as hostnames:
+
+```bash
+# From orchestrator container, reach llm_service:
+docker exec orchestrator getent hosts llm_service
+# Returns: 172.x.x.x  llm_service
+
+# Verify connectivity:
+docker exec orchestrator nc -vz llm_service 50051
+```
+
+### Troubleshooting DNS/Connectivity
+
+```bash
+# 1. Check if services are on the same network
+docker network inspect grpc_llm_rag_net
+
+# 2. Test DNS resolution from inside a container
+docker exec orchestrator sh -c 'for svc in llm_service chroma_service sandbox_service; do getent hosts $svc; done'
+
+# 3. Test gRPC connectivity
+docker exec orchestrator grpc_health_probe -addr=llm_service:50051
+
+# 4. Check port bindings
+docker compose ps --format "table {{.Name}}\t{{.Ports}}"
+```
+
+### Health Check Commands
+
+```bash
+# Quick health check all gRPC services (via Docker)
+make grpc-health
+
+# Individual service health
+docker exec llm_service grpc_health_probe -addr=:50051
+docker exec orchestrator grpc_health_probe -addr=:50054
+
+# HTTP services health
+curl -sf http://localhost:8100/health  # Bridge/MCP
+curl -sf http://localhost:8001/health  # Dashboard
+```
+
+### gRPC Reflection (Service Discovery)
+
+```bash
+# List available gRPC services
+grpcurl -plaintext localhost:50054 list
+
+# Describe a service
+grpcurl -plaintext localhost:50054 describe agent.AgentService
+
+# List methods
+grpcurl -plaintext localhost:50054 list agent.AgentService
+```

@@ -35,7 +35,7 @@ PORT_REGISTRY := 50055
 PORT_SANDBOX := 50057
 PORT_UI := 3000
 
-# Colors for output
+# Colors for output (use printf for ANSI support on macOS)
 CYAN := \033[36m
 GREEN := \033[32m
 YELLOW := \033[33m
@@ -62,130 +62,130 @@ BOLD := \033[1m
 # ============================================================================
 help:
 	@echo ""
-	@echo "$(BOLD)$(CYAN)╔══════════════════════════════════════════════════════════════════╗$(RESET)"
-	@echo "$(BOLD)$(CYAN)║         gRPC LLM Agent Framework - Command Reference             ║$(RESET)"
-	@echo "$(BOLD)$(CYAN)╚══════════════════════════════════════════════════════════════════╝$(RESET)"
+	@printf '$(BOLD)$(CYAN)╔══════════════════════════════════════════════════════════════════╗$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)║         gRPC LLM Agent Framework - Command Reference             ║$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)╚══════════════════════════════════════════════════════════════════╝$(RESET)\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🚀 Quick Start:$(RESET)"
-	@echo "  $(CYAN)make start$(RESET)              - Build and start all services"
-	@echo "  $(CYAN)make dev$(RESET)                - Start backend + UI in dev mode"
-	@echo "  $(CYAN)make dev-ui-local$(RESET)       - Start UI npm dev server (port 3000)"
-	@echo "  $(CYAN)make stop$(RESET)               - Stop all services"
-	@echo "  $(CYAN)make status$(RESET)             - Show service status and health"
+	@printf '$(BOLD)$(GREEN)🚀 Quick Start:$(RESET)\n'
+	@printf '  $(CYAN)make start$(RESET)              - Build and start all services\n'
+	@printf '  $(CYAN)make dev$(RESET)                - Start backend + UI in dev mode\n'
+	@printf '  $(CYAN)make dev-ui-local$(RESET)       - Start UI npm dev server (port 3000)\n'
+	@printf '  $(CYAN)make stop$(RESET)               - Stop all services\n'
+	@printf '  $(CYAN)make status$(RESET)             - Show service status and health\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🔧 Service Management:$(RESET)"
-	@echo "  $(CYAN)make up$(RESET)                 - Start all services (detached)"
-	@echo "  $(CYAN)make down$(RESET)               - Stop and remove containers"
-	@echo "  $(CYAN)make restart$(RESET)            - Restart all services"
-	@echo "  $(CYAN)make restart-<svc>$(RESET)      - Restart specific service"
-	@echo "  $(CYAN)make logs$(RESET)               - Follow all service logs"
-	@echo "  $(CYAN)make logs-<svc>$(RESET)         - Follow specific service logs"
-	@echo "  $(CYAN)make shell-<svc>$(RESET)        - Open shell in service container"
+	@printf '$(BOLD)$(GREEN)🔧 Service Management:$(RESET)\n'
+	@printf '  $(CYAN)make up$(RESET)                 - Start all services (detached)\n'
+	@printf '  $(CYAN)make down$(RESET)               - Stop and remove containers\n'
+	@printf '  $(CYAN)make restart$(RESET)            - Restart all services\n'
+	@printf '  $(CYAN)make restart-<svc>$(RESET)      - Restart specific service\n'
+	@printf '  $(CYAN)make logs$(RESET)               - Follow all service logs\n'
+	@printf '  $(CYAN)make logs-<svc>$(RESET)         - Follow specific service logs\n'
+	@printf '  $(CYAN)make shell-<svc>$(RESET)        - Open shell in service container\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🏗️  Build Commands:$(RESET)"
-	@echo "  $(CYAN)make build$(RESET)              - Build all containers (parallel)"
-	@echo "  $(CYAN)make build-<svc>$(RESET)        - Build specific service"
-	@echo "  $(CYAN)make build-clean$(RESET)        - Full rebuild without cache"
-	@echo "  $(CYAN)make rebuild$(RESET)            - Clean build + restart"
+	@printf '$(BOLD)$(GREEN)🏗️  Build Commands:$(RESET)\n'
+	@printf '  $(CYAN)make build$(RESET)              - Build all containers (parallel)\n'
+	@printf '  $(CYAN)make build-<svc>$(RESET)        - Build specific service\n'
+	@printf '  $(CYAN)make build-clean$(RESET)        - Full rebuild without cache\n'
+	@printf '  $(CYAN)make rebuild$(RESET)            - Clean build + restart\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🤖 LLM Provider Switching:$(RESET)"
-	@echo "  $(CYAN)make provider-local$(RESET)     - Use local LLM (llama.cpp)"
-	@echo "  $(CYAN)make provider-perplexity$(RESET) - Use Perplexity Sonar API"
-	@echo "  $(CYAN)make provider-openai$(RESET)    - Use OpenAI GPT API"
-	@echo "  $(CYAN)make provider-anthropic$(RESET) - Use Anthropic Claude API"
-	@echo "  $(CYAN)make provider-openclaw$(RESET)  - Use OpenClaw Gateway (gpt-5.x)"
-	@echo "  $(CYAN)make provider-status$(RESET)    - Show current provider config"
+	@printf '$(BOLD)$(GREEN)🤖 LLM Provider Switching:$(RESET)\n'
+	@printf '  $(CYAN)make provider-local$(RESET)     - Use local LLM (llama.cpp)\n'
+	@printf '  $(CYAN)make provider-perplexity$(RESET) - Use Perplexity Sonar API\n'
+	@printf '  $(CYAN)make provider-openai$(RESET)    - Use OpenAI GPT API\n'
+	@printf '  $(CYAN)make provider-anthropic$(RESET) - Use Anthropic Claude API\n'
+	@printf '  $(CYAN)make provider-openclaw$(RESET)  - Use OpenClaw Gateway (gpt-5.x)\n'
+	@printf '  $(CYAN)make provider-status$(RESET)    - Show current provider config\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)💬 Chat & Query:$(RESET)"
-	@echo "  $(CYAN)make query Q=\"...\"$(RESET)     - Send query to agent"
-	@echo "  $(CYAN)make chat$(RESET)               - Interactive chat mode"
-	@echo "  $(CYAN)make tool-test$(RESET)          - Test tool calling with sample query"
+	@printf '$(BOLD)$(GREEN)💬 Chat & Query:$(RESET)\n'
+	@printf '  $(CYAN)make query Q=\"...\"$(RESET)     - Send query to agent\n'
+	@printf '  $(CYAN)make chat$(RESET)               - Interactive chat mode\n'
+	@printf '  $(CYAN)make tool-test$(RESET)          - Test tool calling with sample query\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🧪 Testing:$(RESET)"
-	@echo "  $(CYAN)make test$(RESET)               - Run all tests"
-	@echo "  $(CYAN)make test-unit$(RESET)          - Run unit tests only"
-	@echo "  $(CYAN)make test-integration$(RESET)   - Run integration tests"
-	@echo "  $(CYAN)make test-e2e$(RESET)           - Run end-to-end tests"
+	@printf '$(BOLD)$(GREEN)🧪 Testing:$(RESET)\n'
+	@printf '  $(CYAN)make test$(RESET)               - Run all tests\n'
+	@printf '  $(CYAN)make test-unit$(RESET)          - Run unit tests only\n'
+	@printf '  $(CYAN)make test-integration$(RESET)   - Run integration tests\n'
+	@printf '  $(CYAN)make test-e2e$(RESET)           - Run end-to-end tests\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)📦 Proto Generation:$(RESET)"
-	@echo "  $(CYAN)make proto-gen$(RESET)          - Generate all protobuf stubs"
-	@echo "  $(CYAN)make proto-gen-shared$(RESET)   - Generate shared stubs only"
+	@printf '$(BOLD)$(GREEN)📦 Proto Generation:$(RESET)\n'
+	@printf '  $(CYAN)make proto-gen$(RESET)          - Generate all protobuf stubs\n'
+	@printf '  $(CYAN)make proto-gen-shared$(RESET)   - Generate shared stubs only\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🗄️  Database:$(RESET)"
-	@echo "  $(CYAN)make db-reset$(RESET)           - Reset all databases"
-	@echo "  $(CYAN)make db-backup$(RESET)          - Backup databases"
-	@echo "  $(CYAN)make db-restore$(RESET)         - Restore from backup"
+	@printf '$(BOLD)$(GREEN)🗄️  Database:$(RESET)\n'
+	@printf '  $(CYAN)make db-reset$(RESET)           - Reset all databases\n'
+	@printf '  $(CYAN)make db-backup$(RESET)          - Backup databases\n'
+	@printf '  $(CYAN)make db-restore$(RESET)         - Restore from backup\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🧹 Cleanup:$(RESET)"
-	@echo "  $(CYAN)make clean$(RESET)              - Remove generated files"
-	@echo "  $(CYAN)make clean-all$(RESET)          - Full cleanup (volumes, images)"
-	@echo "  $(CYAN)make clean-logs$(RESET)         - Clear log files"
+	@printf '$(BOLD)$(GREEN)🧹 Cleanup:$(RESET)\n'
+	@printf '  $(CYAN)make clean$(RESET)              - Remove generated files\n'
+	@printf '  $(CYAN)make clean-all$(RESET)          - Full cleanup (volumes, images)\n'
+	@printf '  $(CYAN)make clean-logs$(RESET)         - Clear log files\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)📊 Monitoring:$(RESET)"
-	@echo "  $(CYAN)make health$(RESET)             - Check all service health"
-	@echo "  $(CYAN)make ps$(RESET)                 - Show running containers"
-	@echo "  $(CYAN)make stats$(RESET)              - Show container resource usage"
+	@printf '$(BOLD)$(GREEN)📊 Monitoring:$(RESET)\n'
+	@printf '  $(CYAN)make health$(RESET)             - Check all service health\n'
+	@printf '  $(CYAN)make ps$(RESET)                 - Show running containers\n'
+	@printf '  $(CYAN)make stats$(RESET)              - Show container resource usage\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🔄 Cache Bust & Rebuild:$(RESET)"
-	@echo "  $(CYAN)make rebuild-orchestrator$(RESET) - Force rebuild orchestrator (no cache)"
-	@echo "  $(CYAN)make rebuild-all$(RESET)        - Force rebuild all services (no cache)"
-	@echo "  $(CYAN)make restart-all$(RESET)        - Quick restart all services"
-	@echo "  $(CYAN)make verify-code$(RESET)        - Verify code is current in container"
+	@printf '$(BOLD)$(GREEN)🔄 Cache Bust & Rebuild:$(RESET)\n'
+	@printf '  $(CYAN)make rebuild-orchestrator$(RESET) - Force rebuild orchestrator (no cache)\n'
+	@printf '  $(CYAN)make rebuild-all$(RESET)        - Force rebuild all services (no cache)\n'
+	@printf '  $(CYAN)make restart-all$(RESET)        - Quick restart all services\n'
+	@printf '  $(CYAN)make verify-code$(RESET)        - Verify code is current in container\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)📊 Observability:$(RESET)"
-	@echo "  $(CYAN)make observability-up$(RESET)   - Start Prometheus, Grafana, OTel Collector"
-	@echo "  $(CYAN)make observability-down$(RESET) - Stop observability stack"
-	@echo "  $(CYAN)make observability-health$(RESET) - Check observability services health"
-	@echo "  $(CYAN)make open-grafana$(RESET)       - Open Grafana in browser (localhost:3001)"
-	@echo "  $(CYAN)make open-prometheus$(RESET)    - Open Prometheus in browser (localhost:9090)"
+	@printf '$(BOLD)$(GREEN)📊 Observability:$(RESET)\n'
+	@printf '  $(CYAN)make observability-up$(RESET)   - Start Prometheus, Grafana, OTel Collector\n'
+	@printf '  $(CYAN)make observability-down$(RESET) - Stop observability stack\n'
+	@printf '  $(CYAN)make observability-health$(RESET) - Check observability services health\n'
+	@printf '  $(CYAN)make open-grafana$(RESET)       - Open Grafana in browser (localhost:3001)\n'
+	@printf '  $(CYAN)make open-prometheus$(RESET)    - Open Prometheus in browser (localhost:9090)\n'
 	@echo ""
-	@echo "$(BOLD)$(GREEN)🔗 OpenClaw Bridge (Bidirectional Integration):$(RESET)"
-	@echo "  $(CYAN)make bridge-up$(RESET)          - Start MCP bridge service"
-	@echo "  $(CYAN)make bridge-down$(RESET)        - Stop bridge service"
-	@echo "  $(CYAN)make bridge-health$(RESET)      - Check bridge service health"
-	@echo "  $(CYAN)make bridge-tools$(RESET)       - List tools exposed via MCP"
-	@echo "  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge"
-	@echo "  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup"
+	@printf '$(BOLD)$(GREEN)🔗 OpenClaw Bridge (Bidirectional Integration):$(RESET)\n'
+	@printf '  $(CYAN)make bridge-up$(RESET)          - Start MCP bridge service\n'
+	@printf '  $(CYAN)make bridge-down$(RESET)        - Stop bridge service\n'
+	@printf '  $(CYAN)make bridge-health$(RESET)      - Check bridge service health\n'
+	@printf '  $(CYAN)make bridge-tools$(RESET)       - List tools exposed via MCP\n'
+	@printf '  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge\n'
+	@printf '  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup\n'
 	@echo ""
-	@echo "$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service, bridge_service"
+	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service, bridge_service\n'
 	@echo ""
 
 # ============================================================================
 # QUICK START
 # ============================================================================
 all: build up
-	@echo "$(GREEN)✓ All services built and started$(RESET)"
+	@printf '$(GREEN)✓ All services built and started$(RESET)\n'
 
 start: build up status
 	@echo ""
-	@echo "$(GREEN)$(BOLD)✓ gRPC LLM Agent Framework is running!$(RESET)"
+	@printf '$(GREEN)$(BOLD)✓ gRPC LLM Agent Framework is running!$(RESET)\n'
 	@echo "  UI: http://localhost:$(PORT_UI)"
 	@echo "  Orchestrator: localhost:$(PORT_ORCHESTRATOR)"
 
 stop: down
-	@echo "$(GREEN)✓ All services stopped$(RESET)"
+	@printf '$(GREEN)✓ All services stopped$(RESET)\n'
 
 # ============================================================================
 # SERVICE MANAGEMENT
 # ============================================================================
 up:
-	@echo "$(CYAN)Starting services...$(RESET)"
+	@printf '$(CYAN)Starting services...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d
-	@echo "$(GREEN)✓ Services started$(RESET)"
+	@printf '$(GREEN)✓ Services started$(RESET)\n'
 
 down:
-	@echo "$(CYAN)Stopping services...$(RESET)"
+	@printf '$(CYAN)Stopping services...$(RESET)\n'
 	@$(COMPOSE_CMD) down
-	@echo "$(GREEN)✓ Services stopped$(RESET)"
+	@printf '$(GREEN)✓ Services stopped$(RESET)\n'
 
 restart: down up
-	@echo "$(GREEN)✓ Services restarted$(RESET)"
+	@printf '$(GREEN)✓ Services restarted$(RESET)\n'
 
 # Pattern rule for restarting individual services
 restart-%:
-	@echo "$(CYAN)Restarting $*...$(RESET)"
+	@printf '$(CYAN)Restarting $*...$(RESET)\n'
 	@$(COMPOSE_CMD) restart $*
-	@echo "$(GREEN)✓ $* restarted$(RESET)"
+	@printf '$(GREEN)✓ $* restarted$(RESET)\n'
 
 # Pattern rule for service logs
 logs-%:
@@ -208,7 +208,7 @@ stats:
 
 status:
 	@echo ""
-	@echo "$(BOLD)$(CYAN)Service Status:$(RESET)"
+	@printf '$(BOLD)$(CYAN)Service Status:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 	@echo ""
@@ -220,33 +220,33 @@ status:
 # BUILD COMMANDS
 # ============================================================================
 build:
-	@echo "$(CYAN)Building all containers (parallel)...$(RESET)"
+	@printf '$(CYAN)Building all containers (parallel)...$(RESET)\n'
 	@$(COMPOSE_CMD) build --parallel
-	@echo "$(GREEN)✓ Build complete$(RESET)"
+	@printf '$(GREEN)✓ Build complete$(RESET)\n'
 
 build-clean:
-	@echo "$(CYAN)Building all containers (no cache)...$(RESET)"
+	@printf '$(CYAN)Building all containers (no cache)...$(RESET)\n'
 	@$(COMPOSE_CMD) build --no-cache --parallel
-	@echo "$(GREEN)✓ Clean build complete$(RESET)"
+	@printf '$(GREEN)✓ Clean build complete$(RESET)\n'
 
 rebuild: build-clean restart
-	@echo "$(GREEN)✓ Rebuild complete$(RESET)"
+	@printf '$(GREEN)✓ Rebuild complete$(RESET)\n'
 
 # Pattern rule for building individual services
 build-%:
-	@echo "$(CYAN)Building $*...$(RESET)"
+	@printf '$(CYAN)Building $*...$(RESET)\n'
 	@$(COMPOSE_CMD) build $*
-	@echo "$(GREEN)✓ $* built$(RESET)"
+	@printf '$(GREEN)✓ $* built$(RESET)\n'
 
 # Quick rebuild and restart for development
 quick-%: build-% restart-%
-	@echo "$(GREEN)✓ $* rebuilt and restarted$(RESET)"
+	@printf '$(GREEN)✓ $* rebuilt and restarted$(RESET)\n'
 
 # ============================================================================
 # LLM PROVIDER MANAGEMENT
 # ============================================================================
 provider-status:
-	@echo "$(BOLD)$(CYAN)LLM Provider Configuration:$(RESET)"
+	@printf '$(BOLD)$(CYAN)LLM Provider Configuration:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@if [ -f $(ENV_FILE) ]; then \
 		PROVIDER=$$(grep -E "^LLM_PROVIDER=" $(ENV_FILE) | cut -d= -f2); \
@@ -271,44 +271,44 @@ provider-status:
 	fi
 
 provider-local:
-	@echo "$(CYAN)Switching to local LLM provider...$(RESET)"
+	@printf '$(CYAN)Switching to local LLM provider...$(RESET)\n'
 	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=local/' $(ENV_FILE)
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=qwen2.5-3b-instruct/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Now using local LLM$(RESET)"
+	@printf '$(GREEN)✓ Now using local LLM$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 provider-perplexity:
-	@echo "$(CYAN)Switching to Perplexity provider...$(RESET)"
+	@printf '$(CYAN)Switching to Perplexity provider...$(RESET)\n'
 	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=perplexity/' $(ENV_FILE)
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=sonar-pro/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Now using Perplexity Sonar$(RESET)"
+	@printf '$(GREEN)✓ Now using Perplexity Sonar$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 provider-openai:
-	@echo "$(CYAN)Switching to OpenAI provider...$(RESET)"
+	@printf '$(CYAN)Switching to OpenAI provider...$(RESET)\n'
 	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=openai/' $(ENV_FILE)
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=gpt-4o-mini/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Now using OpenAI$(RESET)"
+	@printf '$(GREEN)✓ Now using OpenAI$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 provider-anthropic:
-	@echo "$(CYAN)Switching to Anthropic provider...$(RESET)"
+	@printf '$(CYAN)Switching to Anthropic provider...$(RESET)\n'
 	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=anthropic/' $(ENV_FILE)
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=claude-3-5-sonnet-20241022/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Now using Anthropic Claude$(RESET)"
+	@printf '$(GREEN)✓ Now using Anthropic Claude$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 provider-openclaw:
-	@echo "$(CYAN)Switching to OpenClaw Gateway provider...$(RESET)"
+	@printf '$(CYAN)Switching to OpenClaw Gateway provider...$(RESET)\n'
 	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=openclaw/' $(ENV_FILE)
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=gpt-5.2/' $(ENV_FILE)
 	@grep -q "^OPENCLAW_URL=" $(ENV_FILE) || echo "OPENCLAW_URL=http://host.docker.internal:18789/v1" >> $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Now using OpenClaw Gateway (gpt-5.2)$(RESET)"
+	@printf '$(GREEN)✓ Now using OpenClaw Gateway (gpt-5.2)$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 # Set custom model for current provider
@@ -319,7 +319,7 @@ set-model:
 	fi
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=$(MODEL)/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
-	@echo "$(GREEN)✓ Model set to $(MODEL)$(RESET)"
+	@printf '$(GREEN)✓ Model set to $(MODEL)$(RESET)\n'
 
 # ============================================================================
 # CHAT & QUERY COMMANDS
@@ -329,7 +329,7 @@ query:
 		echo "$(RED)Usage: make query Q=\"your question here\"$(RESET)"; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)Querying agent...$(RESET)"
+	@printf '$(CYAN)Querying agent...$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "$(Q)", "debug_mode": true}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
 		jq -r '.finalAnswer // .error // "No response"' 2>/dev/null || \
@@ -337,7 +337,7 @@ query:
 
 # Interactive chat mode
 chat:
-	@echo "$(BOLD)$(CYAN)Interactive Chat Mode$(RESET)"
+	@printf '$(BOLD)$(CYAN)Interactive Chat Mode$(RESET)\n'
 	@echo "Type your message and press Enter. Type 'exit' to quit."
 	@echo "─────────────────────────────────────────"
 	@while true; do \
@@ -357,51 +357,51 @@ chat:
 
 # Test tool calling
 tool-test:
-	@echo "$(CYAN)Testing tool calling with commute query...$(RESET)"
+	@printf '$(CYAN)Testing tool calling with commute query...$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "How long will it take me to drive to the airport?", "debug_mode": true}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent | jq .
 
 # Smoke test - run multiple test queries
 smoke-test:
-	@echo "$(BOLD)$(CYAN)Running Smoke Tests$(RESET)"
+	@printf '$(BOLD)$(CYAN)Running Smoke Tests$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@echo ""
-	@echo "$(CYAN)1. Testing commute to office:$(RESET)"
+	@printf '$(CYAN)1. Testing commute to office:$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "How long to drive to the office?"}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
 		jq -r '.final_answer // .error // "FAILED"' || echo "$(RED)FAILED$(RESET)"
 	@echo ""
-	@echo "$(CYAN)2. Testing calendar:$(RESET)"
+	@printf '$(CYAN)2. Testing calendar:$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "What is my schedule today?"}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
 		jq -r '.final_answer // .error // "FAILED"' || echo "$(RED)FAILED$(RESET)"
 	@echo ""
-	@echo "$(CYAN)3. Testing general question (no tool):$(RESET)"
+	@printf '$(CYAN)3. Testing general question (no tool):$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "What is 2 + 2?"}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
 		jq -r '.final_answer // .error // "FAILED"' || echo "$(RED)FAILED$(RESET)"
 	@echo ""
-	@echo "$(GREEN)✓ Smoke tests complete$(RESET)"
+	@printf '$(GREEN)✓ Smoke tests complete$(RESET)\n'
 
 # ============================================================================
 # DEVELOPMENT MODE
 # ============================================================================
 dev: dev-backend dev-ui
-	@echo "$(GREEN)✓ Development environment ready$(RESET)"
+	@printf '$(GREEN)✓ Development environment ready$(RESET)\n'
 
 dev-backend:
-	@echo "$(CYAN)Starting backend services...$(RESET)"
+	@printf '$(CYAN)Starting backend services...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d $(BACKEND_SERVICES)
-	@echo "$(GREEN)✓ Backend services started$(RESET)"
+	@printf '$(GREEN)✓ Backend services started$(RESET)\n'
 
 dev-ui:
-	@echo "$(CYAN)Starting UI in development mode...$(RESET)"
+	@printf '$(CYAN)Starting UI in development mode...$(RESET)\n'
 	@cd ui_service && npm run dev &
-	@echo "$(GREEN)✓ UI dev server starting at http://localhost:3000$(RESET)"
+	@printf '$(GREEN)✓ UI dev server starting at http://localhost:3000$(RESET)\n'
 
 dev-ui-local:
-	@echo "$(CYAN)Starting local npm dev server (port 3000)...$(RESET)"
-	@echo "$(YELLOW)Prerequisite: npm install in ui_service/$(RESET)"
+	@printf '$(CYAN)Starting local npm dev server (port 3000)...$(RESET)\n'
+	@printf '$(YELLOW)Prerequisite: npm install in ui_service/$(RESET)\n'
 	@if [ ! -d "ui_service/node_modules" ]; then \
 		echo "$(RED)✗ node_modules not found. Run: cd ui_service && npm install$(RESET)"; \
 		exit 1; \
@@ -409,9 +409,9 @@ dev-ui-local:
 	@cd ui_service && npm run dev
 
 dev-ui-docker:
-	@echo "$(CYAN)Starting UI service in Docker (port 5001)...$(RESET)"
+	@printf '$(CYAN)Starting UI service in Docker (port 5001)...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d ui_service
-	@echo "$(GREEN)✓ UI service started at http://localhost:5001$(RESET)"
+	@printf '$(GREEN)✓ UI service started at http://localhost:5001$(RESET)\n'
 
 # Watch orchestrator logs during development
 watch-orchestrator:
@@ -421,10 +421,10 @@ watch-orchestrator:
 # PROTO GENERATION
 # ============================================================================
 proto-gen: proto-gen-chroma proto-gen-llm proto-gen-shared
-	@echo "$(GREEN)✓ All protobufs generated$(RESET)"
+	@printf '$(GREEN)✓ All protobufs generated$(RESET)\n'
 
 proto-gen-chroma:
-	@echo "$(CYAN)Generating chroma protobuf stubs...$(RESET)"
+	@printf '$(CYAN)Generating chroma protobuf stubs...$(RESET)\n'
 	@python -m grpc_tools.protoc \
 		-I$(PROTO_DIR) \
 		--python_out=chroma_service \
@@ -433,7 +433,7 @@ proto-gen-chroma:
 	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' chroma_service/*_pb2_grpc.py
 
 proto-gen-llm:
-	@echo "$(CYAN)Generating llm protobuf stubs...$(RESET)"
+	@printf '$(CYAN)Generating llm protobuf stubs...$(RESET)\n'
 	@python -m grpc_tools.protoc \
 		-I$(PROTO_DIR) \
 		--python_out=llm_service \
@@ -443,7 +443,7 @@ proto-gen-llm:
 
 proto-gen-shared:
 	@mkdir -p shared/generated
-	@echo "$(CYAN)Generating shared protobuf stubs...$(RESET)"
+	@printf '$(CYAN)Generating shared protobuf stubs...$(RESET)\n'
 	@python -m grpc_tools.protoc \
 		-I$(PROTO_DIR) \
 		--python_out=shared/generated \
@@ -460,29 +460,29 @@ proto-gen-shared:
 # TESTING
 # ============================================================================
 test: test-unit test-integration
-	@echo "$(GREEN)✓ All tests complete$(RESET)"
+	@printf '$(GREEN)✓ All tests complete$(RESET)\n'
 
 test-unit:
-	@echo "$(CYAN)Running unit tests...$(RESET)"
+	@printf '$(CYAN)Running unit tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/ -v --tb=short
 
 test-integration:
-	@echo "$(CYAN)Running integration tests...$(RESET)"
+	@printf '$(CYAN)Running integration tests...$(RESET)\n'
 	@cd tests && python -m pytest integration/ -v --tb=short
 
 test-e2e:
-	@echo "$(CYAN)Running end-to-end tests...$(RESET)"
+	@printf '$(CYAN)Running end-to-end tests...$(RESET)\n'
 	@cd tests && python -m pytest integration/test_orchestrator_e2e.py -v
 
 test-tools:
-	@echo "$(CYAN)Running tool tests...$(RESET)"
+	@printf '$(CYAN)Running tool tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_builtin_tools.py -v
 
 # ============================================================================
 # HEALTH CHECKS
 # ============================================================================
 health:
-	@echo "$(BOLD)$(CYAN)Service Health:$(RESET)"
+	@printf '$(BOLD)$(CYAN)Service Health:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@printf "  %-20s " "llm_service:"; \
 		(grpc_health_probe -addr=localhost:$(PORT_LLM) -connect-timeout=2s 2>/dev/null && \
@@ -510,20 +510,20 @@ health-watch:
 # DATABASE MANAGEMENT
 # ============================================================================
 db-reset:
-	@echo "$(YELLOW)⚠ This will delete all database data. Continue? [y/N]$(RESET)"
+	@printf '$(YELLOW)⚠ This will delete all database data. Continue? [y/N]$(RESET)\n'
 	@read ans && [ "$$ans" = "y" ] || (echo "Cancelled" && exit 1)
-	@echo "$(CYAN)Resetting databases...$(RESET)"
+	@printf '$(CYAN)Resetting databases...$(RESET)\n'
 	@rm -rf chroma_service/data/*
 	@rm -rf data/*.sqlite
 	@$(MAKE) --no-print-directory restart-chroma_service
-	@echo "$(GREEN)✓ Databases reset$(RESET)"
+	@printf '$(GREEN)✓ Databases reset$(RESET)\n'
 
 db-backup:
-	@echo "$(CYAN)Backing up databases...$(RESET)"
+	@printf '$(CYAN)Backing up databases...$(RESET)\n'
 	@mkdir -p backups/$(shell date +%Y%m%d_%H%M%S)
 	@cp -r chroma_service/data backups/$(shell date +%Y%m%d_%H%M%S)/chroma_data
 	@cp -r data/*.sqlite backups/$(shell date +%Y%m%d_%H%M%S)/ 2>/dev/null || true
-	@echo "$(GREEN)✓ Backup created in backups/$(shell date +%Y%m%d_%H%M%S)$(RESET)"
+	@printf '$(GREEN)✓ Backup created in backups/$(shell date +%Y%m%d_%H%M%S)$(RESET)\n'
 
 db-restore:
 	@if [ -z "$(BACKUP)" ]; then \
@@ -532,55 +532,55 @@ db-restore:
 		ls -la backups/ 2>/dev/null || echo "  No backups found"; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)Restoring from $(BACKUP)...$(RESET)"
+	@printf '$(CYAN)Restoring from $(BACKUP)...$(RESET)\n'
 	@cp -r $(BACKUP)/chroma_data/* chroma_service/data/
 	@cp $(BACKUP)/*.sqlite data/ 2>/dev/null || true
 	@$(MAKE) --no-print-directory restart
-	@echo "$(GREEN)✓ Database restored$(RESET)"
+	@printf '$(GREEN)✓ Database restored$(RESET)\n'
 
 # ============================================================================
 # CLEANUP
 # ============================================================================
 clean:
-	@echo "$(CYAN)Cleaning generated files...$(RESET)"
+	@printf '$(CYAN)Cleaning generated files...$(RESET)\n'
 	@find . -name "*_pb2*.py" -delete 2>/dev/null || true
 	@find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	@find . -name "*.pyc" -delete 2>/dev/null || true
-	@echo "$(GREEN)✓ Clean complete$(RESET)"
+	@printf '$(GREEN)✓ Clean complete$(RESET)\n'
 
 clean-docker:
-	@echo "$(CYAN)Cleaning Docker resources...$(RESET)"
+	@printf '$(CYAN)Cleaning Docker resources...$(RESET)\n'
 	@$(COMPOSE_CMD) down --volumes --remove-orphans
 	@$(DOCKER_CMD) image prune -f
-	@echo "$(GREEN)✓ Docker cleanup complete$(RESET)"
+	@printf '$(GREEN)✓ Docker cleanup complete$(RESET)\n'
 
 clean-ui:
-	@echo "$(CYAN)Cleaning UI build artifacts...$(RESET)"
+	@printf '$(CYAN)Cleaning UI build artifacts...$(RESET)\n'
 	@rm -rf ui_service/node_modules ui_service/.next ui_service/out
-	@echo "$(GREEN)✓ UI cleanup complete$(RESET)"
+	@printf '$(GREEN)✓ UI cleanup complete$(RESET)\n'
 
 clean-all: clean clean-docker clean-ui
-	@echo "$(CYAN)Removing local images...$(RESET)"
+	@printf '$(CYAN)Removing local images...$(RESET)\n'
 	@$(COMPOSE_CMD) down --rmi local 2>/dev/null || true
-	@echo "$(GREEN)✓ Full cleanup complete$(RESET)"
+	@printf '$(GREEN)✓ Full cleanup complete$(RESET)\n'
 
 clean-logs:
-	@echo "$(CYAN)Clearing log files...$(RESET)"
+	@printf '$(CYAN)Clearing log files...$(RESET)\n'
 	@find . -name "*.log" -delete 2>/dev/null || true
 	@$(DOCKER_CMD) system prune -f --volumes 2>/dev/null || true
-	@echo "$(GREEN)✓ Logs cleared$(RESET)"
+	@printf '$(GREEN)✓ Logs cleared$(RESET)\n'
 
 # ============================================================================
 # DEPENDENCIES & SETUP
 # ============================================================================
 install-deps:
-	@echo "$(CYAN)Installing dependencies...$(RESET)"
+	@printf '$(CYAN)Installing dependencies...$(RESET)\n'
 	@pip install grpcio-tools grpcio-health-checking
 	@cd ui_service && npm install
-	@echo "$(GREEN)✓ Dependencies installed$(RESET)"
+	@printf '$(GREEN)✓ Dependencies installed$(RESET)\n'
 
 check-deps:
-	@echo "$(BOLD)$(CYAN)Dependency Check:$(RESET)"
+	@printf '$(BOLD)$(CYAN)Dependency Check:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@printf "  %-20s " "docker:"; \
 		(command -v docker >/dev/null && echo "$(GREEN)✓ installed$(RESET)") || echo "$(RED)✗ missing$(RESET)"
@@ -601,16 +601,16 @@ check-deps:
 # CODE QUALITY
 # ============================================================================
 lint:
-	@echo "$(CYAN)Running linters...$(RESET)"
+	@printf '$(CYAN)Running linters...$(RESET)\n'
 	@python -m flake8 orchestrator/ core/ tools/ --max-line-length=120 || true
 	@cd ui_service && npm run lint 2>/dev/null || true
-	@echo "$(GREEN)✓ Lint complete$(RESET)"
+	@printf '$(GREEN)✓ Lint complete$(RESET)\n'
 
 format:
-	@echo "$(CYAN)Formatting code...$(RESET)"
+	@printf '$(CYAN)Formatting code...$(RESET)\n'
 	@python -m black orchestrator/ core/ tools/ --line-length=120 || true
 	@cd ui_service && npm run format 2>/dev/null || true
-	@echo "$(GREEN)✓ Format complete$(RESET)"
+	@printf '$(GREEN)✓ Format complete$(RESET)\n'
 
 # ============================================================================
 # UTILITY ALIASES
@@ -632,20 +632,20 @@ c: chat
 
 # Force rebuild orchestrator without cache
 rebuild-orchestrator:
-	@echo "$(CYAN)Removing old orchestrator image...$(RESET)"
+	@printf '$(CYAN)Removing old orchestrator image...$(RESET)\n'
 	@$(DOCKER_CMD) rmi grpc_llm-orchestrator:latest -f 2>/dev/null || true
-	@echo "$(CYAN)Building orchestrator without cache...$(RESET)"
+	@printf '$(CYAN)Building orchestrator without cache...$(RESET)\n'
 	@$(COMPOSE_CMD) build --no-cache orchestrator
-	@echo "$(CYAN)Recreating orchestrator container...$(RESET)"
+	@printf '$(CYAN)Recreating orchestrator container...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d --force-recreate orchestrator
-	@echo "$(GREEN)✓ Done. Check logs with: make logs-orchestrator$(RESET)"
+	@printf '$(GREEN)✓ Done. Check logs with: make logs-orchestrator$(RESET)\n'
 
 # Force rebuild all services without cache
 rebuild-all:
-	@echo "$(CYAN)Rebuilding all services without cache...$(RESET)"
+	@printf '$(CYAN)Rebuilding all services without cache...$(RESET)\n'
 	@$(COMPOSE_CMD) build --no-cache
 	@$(COMPOSE_CMD) up -d --force-recreate
-	@echo "$(GREEN)✓ Done. Check status with: make status$(RESET)"
+	@printf '$(GREEN)✓ Done. Check status with: make status$(RESET)\n'
 
 # Quick restart (uses cache, faster)
 restart-orchestrator:
@@ -656,7 +656,7 @@ restart-all: restart
 
 # Verify code is current inside container
 verify-code:
-	@echo "$(CYAN)Checking orchestrator code version...$(RESET)"
+	@printf '$(CYAN)Checking orchestrator code version...$(RESET)\n'
 	@$(DOCKER_CMD) exec orchestrator python -c "from tools.builtin.user_context import get_commute_time; print('$(GREEN)✓ user_context imported$(RESET)')" 2>/dev/null || echo "$(RED)✗ Import failed$(RESET)"
 	@$(DOCKER_CMD) exec orchestrator python -c "from tools.registry import tool_registry; print(f'$(GREEN)✓ {len(tool_registry._tools)} tools registered$(RESET)')" 2>/dev/null || echo "$(RED)✗ Registry check failed$(RESET)"
 
@@ -670,7 +670,7 @@ logs-tail:
 
 # Health check all services (enhanced view)
 health-all:
-	@echo "$(CYAN)Checking service health...$(RESET)"
+	@printf '$(CYAN)Checking service health...$(RESET)\n'
 	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}"
 
 # ============================================================================
@@ -679,17 +679,17 @@ health-all:
 
 # Start observability services only
 observability-up:
-	@echo "$(CYAN)Starting observability stack (Prometheus, Grafana, OTel Collector)...$(RESET)"
+	@printf '$(CYAN)Starting observability stack (Prometheus, Grafana, OTel Collector)...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d otel-collector prometheus grafana tempo
-	@echo "$(GREEN)✓ Observability stack started$(RESET)"
+	@printf '$(GREEN)✓ Observability stack started$(RESET)\n'
 	@echo "  Grafana:    http://localhost:3001 (admin/admin)"
 	@echo "  Prometheus: http://localhost:9090"
 
 # Stop observability services
 observability-down:
-	@echo "$(CYAN)Stopping observability stack...$(RESET)"
+	@printf '$(CYAN)Stopping observability stack...$(RESET)\n'
 	@$(COMPOSE_CMD) stop otel-collector prometheus grafana tempo
-	@echo "$(GREEN)✓ Observability stack stopped$(RESET)"
+	@printf '$(GREEN)✓ Observability stack stopped$(RESET)\n'
 
 # View Grafana logs
 logs-grafana:
@@ -713,7 +713,7 @@ open-prometheus:
 
 # Check observability health
 observability-health:
-	@echo "$(BOLD)$(CYAN)Observability Health:$(RESET)"
+	@printf '$(BOLD)$(CYAN)Observability Health:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@printf "  %-20s " "otel-collector:"; \
 		(curl -s http://localhost:13133/ >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
@@ -728,22 +728,22 @@ observability-health:
 
 # Start bridge service only
 bridge-up:
-	@echo "$(CYAN)Starting bridge service (MCP server)...$(RESET)"
+	@printf '$(CYAN)Starting bridge service (MCP server)...$(RESET)\n'
 	@$(COMPOSE_CMD) up -d bridge_service
-	@echo "$(GREEN)✓ Bridge service started at http://localhost:8100$(RESET)"
+	@printf '$(GREEN)✓ Bridge service started at http://localhost:8100$(RESET)\n'
 
 # Stop bridge service
 bridge-down:
-	@echo "$(CYAN)Stopping bridge service...$(RESET)"
+	@printf '$(CYAN)Stopping bridge service...$(RESET)\n'
 	@$(COMPOSE_CMD) stop bridge_service
-	@echo "$(GREEN)✓ Bridge service stopped$(RESET)"
+	@printf '$(GREEN)✓ Bridge service stopped$(RESET)\n'
 
 # Rebuild bridge service
 bridge-rebuild:
-	@echo "$(CYAN)Rebuilding bridge service...$(RESET)"
+	@printf '$(CYAN)Rebuilding bridge service...$(RESET)\n'
 	@$(COMPOSE_CMD) build --no-cache bridge_service
 	@$(COMPOSE_CMD) up -d bridge_service
-	@echo "$(GREEN)✓ Bridge service rebuilt and started$(RESET)"
+	@printf '$(GREEN)✓ Bridge service rebuilt and started$(RESET)\n'
 
 # View bridge service logs
 logs-bridge:
@@ -751,14 +751,14 @@ logs-bridge:
 
 # Check bridge service health
 bridge-health:
-	@echo "$(BOLD)$(CYAN)Bridge Service Health:$(RESET)"
+	@printf '$(BOLD)$(CYAN)Bridge Service Health:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
 	@printf "  %-20s " "bridge_service:"; \
 		(curl -s http://localhost:8100/health >/dev/null && echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
 
 # List available tools exposed via MCP
 bridge-tools:
-	@echo "$(CYAN)Fetching tools from bridge service...$(RESET)"
+	@printf '$(CYAN)Fetching tools from bridge service...$(RESET)\n'
 	@curl -s http://localhost:8100/tools | jq '.' 2>/dev/null || echo "$(RED)Bridge service not running$(RESET)"
 
 # Test query through bridge
@@ -767,7 +767,7 @@ bridge-query:
 		echo "$(RED)Usage: make bridge-query Q=\"your question here\"$(RESET)"; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)Sending query through bridge...$(RESET)"
+	@printf '$(CYAN)Sending query through bridge...$(RESET)\n'
 	@curl -s -X POST http://localhost:8100/tools/query_agent \
 		-H "Content-Type: application/json" \
 		-d '{"arguments": {"query": "$(Q)"}}' | jq '.' 2>/dev/null || \
@@ -775,7 +775,7 @@ bridge-query:
 
 # Test service health through bridge
 bridge-health-check:
-	@echo "$(CYAN)Checking service health via bridge...$(RESET)"
+	@printf '$(CYAN)Checking service health via bridge...$(RESET)\n'
 	@curl -s -X POST http://localhost:8100/tools/get_service_health \
 		-H "Content-Type: application/json" \
 		-d '{"arguments": {}}' | jq '.' 2>/dev/null || \
@@ -783,7 +783,7 @@ bridge-health-check:
 
 # Test daily briefing
 bridge-briefing:
-	@echo "$(CYAN)Getting daily briefing via bridge...$(RESET)"
+	@printf '$(CYAN)Getting daily briefing via bridge...$(RESET)\n'
 	@curl -s -X POST http://localhost:8100/tools/get_daily_briefing \
 		-H "Content-Type: application/json" \
 		-d '{"arguments": {"include_weather": true, "include_commute": true}}' | jq '.' 2>/dev/null || \
@@ -791,14 +791,14 @@ bridge-briefing:
 
 # Build OpenClaw skill package
 skill-build:
-	@echo "$(CYAN)Building OpenClaw skill package...$(RESET)"
+	@printf '$(CYAN)Building OpenClaw skill package...$(RESET)\n'
 	@cd clawdbot_integration/skills/grpc-llm-skill && npm install && npm run build
-	@echo "$(GREEN)✓ Skill package built$(RESET)"
+	@printf '$(GREEN)✓ Skill package built$(RESET)\n'
 
 # Full OpenClaw bidirectional setup
 openclaw-setup: bridge-up skill-build
 	@echo ""
-	@echo "$(GREEN)✓ OpenClaw bidirectional integration ready!$(RESET)"
+	@printf '$(GREEN)✓ OpenClaw bidirectional integration ready!$(RESET)\n'
 	@echo ""
 	@echo "  Bridge MCP Server:  http://localhost:8100"
 	@echo "  OpenClaw Gateway:   http://localhost:18789"
