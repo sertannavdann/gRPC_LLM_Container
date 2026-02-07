@@ -43,6 +43,19 @@ from shared.observability.grpc_interceptor import ObservabilityServerInterceptor
 # Import configuration
 from .config import OrchestratorConfig
 
+# Import intent patterns for multi-tool guardrails
+from .intent_patterns import (
+    analyze_intent,
+    detect_intent,
+    get_intent_system_prompt,
+    should_continue_tool_loop,
+    resolve_destination,
+    IntentAnalysis,
+)
+
+# Import shared JSON parser for robust tool response parsing
+from shared.utils.json_parser import extract_tool_json, safe_parse_arguments
+
 # These will be copied from agent_service
 from shared.clients.llm_client import LLMClient
 from core.checkpointing import CheckpointManager, RecoveryManager
@@ -469,64 +482,33 @@ Your response (JSON only):"""
         }
     
     def _parse_tool_response(self, response_text: str) -> dict:
-        """Parse LLM's JSON response into content or tool_calls."""
-        import re
+        """Parse LLM's JSON response into content or tool_calls.
         
+        Uses shared/utils/json_parser.py for robust extraction.
+        """
         try:
             # Clean response text
             response_text = response_text.strip()
             logger.debug(f"Raw LLM response length={len(response_text)}, first 500 chars: {response_text[:500] if response_text else '(empty)'}")
             
-            # Remove markdown code blocks if present (e.g., ```json {...} ```)
-            code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-            if code_block_match:
-                logger.debug("Extracted JSON from markdown code block")
-                response_text = code_block_match.group(1).strip()
+            # Use shared JSON parser for robust extraction
+            parsed = extract_tool_json(response_text)
             
-            # Try to extract JSON from mixed response (JSON + text)
-            # Find the first complete JSON object by matching braces
-            json_start = response_text.find('{')
-            if json_start != -1:
-                # Count braces to find complete JSON object
-                brace_count = 0
-                json_end = -1
-                for i, char in enumerate(response_text[json_start:]):
-                    if char == '{':
-                        brace_count += 1
-                    elif char == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            json_end = json_start + i + 1
-                            break
-                
-                if json_end > json_start:
-                    json_str = response_text[json_start:json_end]
-                    # Check if there's extra text before or after JSON
-                    before_json = response_text[:json_start].strip()
-                    after_json = response_text[json_end:].strip()
-                    
-                    if before_json or after_json:
-                        logger.warning(f"Extra text found around JSON, extracting JSON only")
-                        if after_json:
-                            logger.debug(f"Text after JSON: {after_json[:100]}...")
-                    
-                    response_text = json_str
-
-            # Normalize Python-style booleans (True/False/None) to JSON (true/false/null)
-            # LLMs sometimes return Python syntax instead of proper JSON
-            import re as re_mod
-            response_text = re_mod.sub(r'\bTrue\b', 'true', response_text)
-            response_text = re_mod.sub(r'\bFalse\b', 'false', response_text)
-            response_text = re_mod.sub(r'\bNone\b', 'null', response_text)
-
-            parsed = json.loads(response_text)
+            if parsed is None:
+                # No valid JSON found - treat as direct answer
+                logger.warning(f"No valid JSON in response, treating as direct answer: {response_text[:200]}...")
+                return {
+                    "content": response_text,
+                    "tool_calls": [],
+                    "_parse_note": "No valid JSON found, returned raw text"
+                }
             
             response_type = parsed.get("type", "answer")
             
             if response_type == "tool_call":
                 # Extract tool call
                 tool_name = parsed.get("tool", "")
-                tool_args = parsed.get("arguments", {})
+                tool_args = safe_parse_arguments(parsed.get("arguments", {}))
                 
                 if not tool_name:
                     logger.warning("Tool call missing 'tool' field, treating as direct answer")
@@ -1068,17 +1050,44 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         query: str,
         thread_id: str
     ) -> Dict[str, Any]:
-        """Process query through agent workflow."""
+        """Process query through agent workflow with intent-based guardrails."""
+        
+        # Analyze intent for multi-tool queries
+        intent_analysis = analyze_intent(query)
+        
+        # Check if clarification is needed (e.g., missing destination)
+        if intent_analysis.needs_clarification:
+            logger.info(f"Intent requires clarification: {intent_analysis.clarifying_question}")
+            return {
+                "content": intent_analysis.clarifying_question,
+                "messages": [],
+                "tool_results": [],
+                "iteration": 0,
+                "needs_clarification": True
+            }
+        
+        # Get system prompt enhancement for multi-tool intents
+        intent_prompt = get_intent_system_prompt(query)
+        
         # Create initial state with thread_id as conversation_id
         state = create_initial_state(
             conversation_id=thread_id,
             metadata={
-                "query": query
+                "query": query,
+                "intent": intent_analysis.intent.name if intent_analysis.intent else None,
+                "destination": intent_analysis.destination,
             }
         )
 
-        # Add user query as HumanMessage
-        state["messages"] = [HumanMessage(content=query)]
+        # Add user query as HumanMessage, prepend intent guidance if applicable
+        if intent_prompt:
+            # Inject intent guidance into the conversation
+            state["messages"] = [
+                HumanMessage(content=f"[System Note: {intent_prompt}]\n\nUser: {query}")
+            ]
+            logger.debug(f"Injected intent prompt for '{intent_analysis.intent.name}'")
+        else:
+            state["messages"] = [HumanMessage(content=query)]
 
         # Configure thread
         config = {
