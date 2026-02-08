@@ -194,13 +194,54 @@ _bank_service = BankService(
 def get_aggregator(user_id: str) -> DashboardAggregator:
     """Get or create an aggregator for a user."""
     if user_id not in _aggregators:
-        # Default configuration - uses mock adapters
+        # Build credentials from environment
+        credentials: dict[str, dict[str, str]] = {}
+        settings: dict[str, dict[str, str]] = {}
+
+        # OpenWeather
+        ow_key = os.getenv("OPENWEATHER_API_KEY", "")
+        if ow_key:
+            credentials["openweather"] = {"api_key": ow_key}
+            settings["openweather"] = {
+                "city": os.getenv("OPENWEATHER_CITY", "Toronto,CA"),
+            }
+
+        # Google Calendar
+        gcal_token = os.getenv("GOOGLE_CALENDAR_ACCESS_TOKEN", "")
+        gcal_refresh = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "")
+        if gcal_token or gcal_refresh:
+            credentials["google_calendar"] = {
+                "access_token": gcal_token,
+                "refresh_token": gcal_refresh,
+                "client_id": os.getenv("GOOGLE_CALENDAR_CLIENT_ID", ""),
+                "client_secret": os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", ""),
+            }
+
+        # Clash Royale
+        cr_key = os.getenv("CLASH_ROYALE_API_KEY", "")
+        cr_tag = os.getenv("CLASH_ROYALE_PLAYER_TAG", "")
+        if cr_key:
+            credentials["clashroyale"] = {"api_key": cr_key}
+            if cr_tag:
+                settings["clashroyale"] = {"player_tag": cr_tag}
+
+        # Determine which platforms to enable
+        weather_platforms = ["openweather"] if ow_key else []
+        calendar_platforms = ["mock"]
+        if gcal_token or gcal_refresh:
+            calendar_platforms.append("google_calendar")
+        gaming_platforms = ["clashroyale"] if cr_key and cr_tag else []
+
         config = UserConfig(
             user_id=user_id,
             finance=["mock"],
-            calendar=["mock"],
+            calendar=calendar_platforms,
             health=["mock"],
             navigation=["mock"],
+            weather=weather_platforms,
+            gaming=gaming_platforms,
+            credentials=credentials,
+            settings=settings,
         )
         _aggregators[user_id] = DashboardAggregator(
             user_config=config,
@@ -351,7 +392,7 @@ async def get_category_context(
 
     Categories: finance, calendar, health, navigation
     """
-    valid_categories = ["finance", "calendar", "health", "navigation"]
+    valid_categories = ["finance", "calendar", "health", "navigation", "weather", "gaming"]
     if category not in valid_categories:
         raise HTTPException(
             status_code=400,

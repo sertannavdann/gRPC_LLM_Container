@@ -1,8 +1,9 @@
 # gRPC LLM Agent Framework - Branch Summary
 
 > **Summary Document for Major Branch Change**  
-> Generated: January 2025  
+> Generated: January 2025 | Updated: February 8, 2026
 > Core Value: Multi-model provider management + local inference in Docker containers for agentic workflows
+> Next Phase: Self-Evolving Modular Architecture (see [Planned: Self-Evolving Modules](#planned-self-evolving-modules))
 
 ---
 
@@ -284,4 +285,85 @@ The architecture is **significantly stronger than OpenClaw** in observability, c
 
 ---
 
-*Document auto-generated from diff analysis. See `log.diff` for complete changeset.*
+## Recent Commits (Feb 3-8, 2026)
+
+```
+28bcf69 docs: add comprehensive user testing guide
+3b5ed39 docs(hld): add Prompt Flow integration section
+56fa758 build(makefile): add Prompt Flow targets
+3a7ee86 feat(promptflow): add Microsoft Prompt Flow integration
+a9bedac chore: update llm_service and gitignore settings
+5c02893 docs(runbook): add network documentation and make targets
+de1f727 feat(orchestrator): add multi-tool intent analysis and guardrails
+b0128ed chore(docker): add grpc_health_probe to all gRPC services
+4762021 docs: add branch summary and parallel execution plan
+2357c42 chore(scripts): add execution track status scripts
+554ec98 Merge remote Cohesion branch - resolve requirements.txt conflict
+8303946 chore(deps): Tier 5 - Standardize OpenTelemetry versions
+48681d9 chore(cleanup): Remove registry/worker client dependencies
+1ef3617 chore(cleanup): Remove unused registry and worker services
+cf25897 chore: Update gitignore and local settings
+```
+
+### Diff Summary (last 5 commits)
+
+| Files Changed | Insertions | Deletions |
+|---------------|------------|-----------|
+| 27 files | +2,416 | -37 |
+
+Key changes:
+- **Prompt Flow Integration**: Full Microsoft Prompt Flow workspace with agent workflow DAG, evaluator flow, connection configs, and prompt templates (17 new files)
+- **User Testing Guide**: 888-line comprehensive testing document with architecture diagrams, port maps, and feature test procedures
+- **High-Level Design**: Added Prompt Flow section, renumbered roadmap phases
+- **Makefile**: Added Prompt Flow targets (`make pf-run`, `make pf-eval`, `make pf-serve`, `make pf-trace`)
+
+---
+
+## Planned: Self-Evolving Modules
+
+> Full plan: `.claude/plans/cheerful-wibbling-eagle.md`
+
+### Vision
+Transform the framework into a **self-evolving system** where the LLM orchestrator can BUILD new modules at user request. The system generates adapter code, tests it in sandbox, gets user approval, and hot-deploys it.
+
+### Architecture Readiness (~80%)
+
+| Component | Status | Gap |
+|-----------|--------|-----|
+| `@register_adapter` decorator | Existing | None |
+| `BaseAdapter[T]` protocol | Existing | None |
+| `LocalToolRegistry` with auto-schema | Existing | None |
+| LangGraph state machine | Existing | None |
+| Sandbox service (isolated execution) | Existing | None |
+| Dynamic module loading | Missing | `shared/modules/loader.py` |
+| Code generation pipeline | Missing | Templates + builder tool |
+| Module persistence | Missing | SQLite registry |
+| Credential management | Missing | Encrypted store |
+
+### Implementation Tiers
+
+| Tier | Focus | New Files | Effort |
+|------|-------|-----------|--------|
+| 1 | Module Infrastructure (manifest, loader, dynamic categories) | 3 | 3-4 days |
+| 2 | Code Generation Pipeline (templates, builder, validator) | 4 | 3-4 days |
+| 3 | Lifecycle Management (persistence, credentials, health) | 3 | 2-3 days |
+| 4 | Self-Evolution Loop (intent patterns, approval, install) | 1 | 3-4 days |
+| 5 | Advanced (marketplace, auto-updates) | Future | 5+ days |
+
+### End-to-End Flow
+```
+User: "Build me a Clash Royale stats tracker"
+  -> Orchestrator detects build_module intent
+  -> LLM calls build_module(name="clashroyale", category="gaming", ...)
+  -> LLM generates adapter code with API-specific fetch/transform logic
+  -> LLM calls validate_module("clashroyale") -> sandbox runs tests
+  -> If fail: LLM debugs and retries (up to 3x)
+  -> If pass: LLM asks user "ClashRoyale adapter ready. Install it?"
+  -> User: "Yes"
+  -> LLM calls install_module("clashroyale")
+  -> Module loaded, immediately available for queries
+```
+
+---
+
+*Document auto-generated from diff analysis. Updated: February 8, 2026.*

@@ -1,7 +1,8 @@
 # Parallel Execution Plan - High Priority Actions
 
-> **Created**: February 3, 2026  
+> **Created**: February 3, 2026 | **Updated**: February 8, 2026
 > **Purpose**: Actionable parallel execution plan mapping P0/P1 tasks to skill personas
+> **Next Phase**: Track F - Self-Evolving Module System (see bottom)
 
 ---
 
@@ -333,9 +334,10 @@ from tools.base import idempotent, get_idempotency_cache
 ```
 
 **Parallelization Strategy**:
-- **Phase 1 (Immediate)**: Track A, Track B, Track D can start in parallel
-- **Phase 2 (After A1 done)**: Track C, Track E can start
-- **Phase 3 (Integration)**: Cross-track integration testing
+- **Phase 1 (Immediate)**: Track A, Track B, Track D can start in parallel ✅
+- **Phase 2 (After A1 done)**: Track C, Track E can start ✅
+- **Phase 3 (Integration)**: Cross-track integration testing ✅
+- **Phase 4 (Next)**: Track F - Self-Evolving Module System (depends on A-E foundation)
 
 ---
 
@@ -391,6 +393,10 @@ curl http://localhost:8100/metrics
 | D | D3. Idempotency Keys | State Agent | ✅ | Done |
 | E | E1. gRPC Health | Network Agent | ✅ | Done |
 | E | E2. Documentation | Network Agent | ✅ | Done |
+| F | F1. Module Infrastructure | All | ⬜ | 3-4d |
+| F | F2. Code Generation | All | ⬜ | 3-4d |
+| F | F3. Module Lifecycle | All | ⬜ | 2-3d |
+| F | F4. Self-Evolution Loop | All | ⬜ | 3-4d |
 
 ---
 
@@ -412,13 +418,108 @@ curl http://localhost:8100/metrics
 
 ---
 
+## Track F: Self-Evolving Module System (NEW)
+**Skill Files**: All skills (cross-cutting)
+**Priority**: P0 (Next Major Phase)
+**Dependencies**: Tracks A-E (foundational infrastructure)
+**Full Plan**: `.claude/plans/cheerful-wibbling-eagle.md`
+
+### Overview
+
+Enable the LLM orchestrator to BUILD new adapter modules at user request, test them in sandbox, and hot-deploy with user approval.
+
+### Tasks
+
+#### F1. Module Infrastructure (Tier 1) - Foundation
+**Status**: Not Started
+**Files**: `shared/modules/manifest.py`, `shared/modules/loader.py`, `modules/` (NEW)
+
+**Actions**:
+1. Create `ModuleManifest` dataclass (name, version, category, platform, entry_point, etc.)
+2. Create `ModuleLoader` using `importlib.util.spec_from_file_location()` for dynamic loading
+3. Modify `shared/adapters/base.py` to accept `str | AdapterCategory` for dynamic categories
+4. Integrate `ModuleLoader.load_all_modules()` into orchestrator and dashboard startup
+
+**Acceptance Criteria**:
+- [ ] Manually placed adapter in `modules/gaming/test/` loads at startup
+- [ ] Appears in `AdapterRegistry.list_all()` and can be queried
+- [ ] All existing built-in adapters/tools continue working unchanged
+
+---
+
+#### F2. Code Generation Pipeline (Tier 2) - Builder + Validator
+**Status**: Not Started
+**Files**: `shared/modules/templates/`, `tools/builtin/module_builder.py`, `tools/builtin/module_validator.py` (NEW)
+
+**Actions**:
+1. Create adapter code template following `shared/adapters/finance/cibc.py` pattern
+2. Create `build_module()` tool registered with `LocalToolRegistry`
+3. Create `validate_module()` tool that uses sandbox service for testing
+4. Extend `SAFE_IMPORTS` in sandbox for adapter testing
+
+**Acceptance Criteria**:
+- [ ] LLM calls `build_module("weather", ...)` and generates valid adapter code
+- [ ] `validate_module("weather")` runs tests in sandbox and returns results
+- [ ] Failed validation gives actionable errors for LLM self-debugging
+
+---
+
+#### F3. Module Lifecycle (Tier 3) - Persistence + Credentials
+**Status**: Not Started
+**Files**: `shared/modules/registry.py`, `shared/modules/credentials.py`, `tools/builtin/module_manager.py` (NEW)
+
+**Actions**:
+1. Create `ModuleRegistry` with SQLite persistence (following `core/checkpointing.py` pattern)
+2. Create `CredentialStore` with Fernet encryption at rest
+3. Create management tools: `list_modules()`, `enable_module()`, `disable_module()`
+
+**Acceptance Criteria**:
+- [ ] Modules persist across `docker compose restart`
+- [ ] API keys stored encrypted, injected at load time
+- [ ] Repeated failures auto-disable a module
+
+---
+
+#### F4. Self-Evolution Loop (Tier 4) - End-to-End
+**Status**: Not Started
+**Files**: `orchestrator/intent_patterns.py`, `tools/builtin/module_installer.py` (MODIFIED/NEW)
+
+**Actions**:
+1. Add `build_module` intent pattern to orchestrator
+2. Implement human-in-the-loop approval before deployment
+3. Create `install_module()` tool for hot-loading with credential flow
+4. Add rollback capability (`unload_module()`, `disable()`)
+
+**Acceptance Criteria**:
+- [ ] Complete flow from "build me X" to working module
+- [ ] User approval required before installation
+- [ ] Module immediately available for queries after install
+
+---
+
+### Recent Commits (Feb 3-8, 2026)
+
+```
+28bcf69 docs: add comprehensive user testing guide
+3b5ed39 docs(hld): add Prompt Flow integration section
+56fa758 build(makefile): add Prompt Flow targets
+3a7ee86 feat(promptflow): add Microsoft Prompt Flow integration
+a9bedac chore: update llm_service and gitignore settings
+5c02893 docs(runbook): add network documentation and make targets
+de1f727 feat(orchestrator): add multi-tool intent analysis and guardrails
+b0128ed chore(docker): add grpc_health_probe to all gRPC services
+```
+
+---
+
 ## Quick Reference: Which Skill for Which Task?
 
 | Task Category | Skill File | Example Tasks |
 |---------------|------------|---------------|
-| Docker, health checks, PostgreSQL | `systems_engineer_sre.md` | A1, A2, A3 |
-| Tool calling, JSON parsing, evals | `llm_ai_engineer.md` | B1, B2, B3, B4 |
-| OAuth, adapters, MCP protocol | `integration_expert.md` | C1, C2, C3 |
-| State machines, checkpointing | `orchestrator_state_engineer.md` | D1, D2, D3 |
+| Docker, health checks, PostgreSQL | `systems_engineer_sre.md` | A1, A2, A3, F1 |
+| Tool calling, JSON parsing, evals | `llm_ai_engineer.md` | B1, B2, B3, B4, F2 |
+| OAuth, adapters, MCP protocol | `integration_expert.md` | C1, C2, C3, F2 |
+| State machines, checkpointing | `orchestrator_state_engineer.md` | D1, D2, D3, F4 |
 | gRPC, DNS, ports | `network_engineer.md` | E1, E2 |
-| Prioritization, metrics, UX | `product_manager.md` | Planning, success criteria |
+| Prioritization, metrics, UX | `product_manager.md` | Planning, F3 |
+| Module system, dynamic loading | All skills (cross-cutting) | F1, F2, F3, F4 |

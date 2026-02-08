@@ -421,6 +421,205 @@ class NavigationRoute:
 
 
 # ============================================================================
+# WEATHER CATEGORY
+# ============================================================================
+
+class WeatherCondition(Enum):
+    """Unified weather condition types."""
+    CLEAR = "clear"
+    CLOUDS = "clouds"
+    RAIN = "rain"
+    DRIZZLE = "drizzle"
+    THUNDERSTORM = "thunderstorm"
+    SNOW = "snow"
+    MIST = "mist"
+    FOG = "fog"
+    HAZE = "haze"
+    EXTREME = "extreme"
+
+
+@dataclass
+class WeatherData:
+    """
+    Platform-agnostic current weather data.
+    Works for OpenWeather, WeatherAPI, AccuWeather, etc.
+    """
+    id: str
+    timestamp: datetime
+    location: GeoPoint
+    temperature_celsius: float
+    feels_like_celsius: float
+    humidity: int  # percentage 0-100
+    pressure_hpa: float
+    wind_speed_ms: float
+    wind_direction_deg: int
+    condition: WeatherCondition
+    description: str
+    icon_code: str
+    visibility_meters: int
+    clouds_percent: int
+    uv_index: Optional[float] = None
+    precipitation_mm: Optional[float] = None
+    platform: str = "unknown"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def temperature_fahrenheit(self) -> float:
+        return (self.temperature_celsius * 9 / 5) + 32
+
+    @property
+    def wind_speed_kmh(self) -> float:
+        return self.wind_speed_ms * 3.6
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat(),
+            "location": self.location.to_dict(),
+            "temperature_celsius": self.temperature_celsius,
+            "temperature_fahrenheit": round(self.temperature_fahrenheit, 1),
+            "feels_like_celsius": self.feels_like_celsius,
+            "humidity": self.humidity,
+            "pressure_hpa": self.pressure_hpa,
+            "wind_speed_ms": self.wind_speed_ms,
+            "wind_speed_kmh": round(self.wind_speed_kmh, 1),
+            "wind_direction_deg": self.wind_direction_deg,
+            "condition": self.condition.value,
+            "description": self.description,
+            "icon_code": self.icon_code,
+            "visibility_meters": self.visibility_meters,
+            "clouds_percent": self.clouds_percent,
+            "uv_index": self.uv_index,
+            "precipitation_mm": self.precipitation_mm,
+            "platform": self.platform,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class WeatherForecast:
+    """
+    Platform-agnostic weather forecast data point.
+    Represents a single forecast interval (e.g., 3-hour block).
+    """
+    id: str
+    location: GeoPoint
+    forecast_time: datetime
+    temperature_celsius: float
+    feels_like_celsius: float
+    condition: WeatherCondition
+    description: str
+    precipitation_probability: float  # 0.0 to 1.0
+    precipitation_mm: float
+    humidity: int
+    wind_speed_ms: float
+    platform: str = "unknown"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def temperature_fahrenheit(self) -> float:
+        return (self.temperature_celsius * 9 / 5) + 32
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "location": self.location.to_dict(),
+            "forecast_time": self.forecast_time.isoformat(),
+            "temperature_celsius": self.temperature_celsius,
+            "temperature_fahrenheit": round(self.temperature_fahrenheit, 1),
+            "feels_like_celsius": self.feels_like_celsius,
+            "condition": self.condition.value,
+            "description": self.description,
+            "precipitation_probability": self.precipitation_probability,
+            "precipitation_mm": self.precipitation_mm,
+            "humidity": self.humidity,
+            "wind_speed_ms": self.wind_speed_ms,
+            "platform": self.platform,
+            "metadata": self.metadata,
+        }
+
+
+# ============================================================================
+# GAMING CATEGORY
+# ============================================================================
+
+@dataclass
+class GamingProfile:
+    """
+    Platform-agnostic gaming profile/stats.
+    Works for Clash Royale, Clash of Clans, Brawl Stars, etc.
+    """
+    id: str
+    username: str
+    platform_tag: str  # e.g., "#ABCDEF"
+    level: int
+    trophies: int
+    wins: int
+    losses: int
+    games_played: int
+    clan_name: Optional[str] = None
+    clan_tag: Optional[str] = None
+    arena: Optional[str] = None
+    platform: str = "unknown"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def win_rate(self) -> float:
+        if self.games_played == 0:
+            return 0.0
+        return self.wins / self.games_played
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "username": self.username,
+            "platform_tag": self.platform_tag,
+            "level": self.level,
+            "trophies": self.trophies,
+            "wins": self.wins,
+            "losses": self.losses,
+            "games_played": self.games_played,
+            "win_rate": round(self.win_rate, 3),
+            "clan_name": self.clan_name,
+            "clan_tag": self.clan_tag,
+            "arena": self.arena,
+            "platform": self.platform,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class GamingMatch:
+    """
+    Platform-agnostic gaming match/battle record.
+    """
+    id: str
+    timestamp: datetime
+    game_type: str  # "ladder", "challenge", "tournament", "friendly"
+    result: str  # "win", "loss", "draw"
+    trophies_change: int
+    opponent_tag: Optional[str] = None
+    opponent_name: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    platform: str = "unknown"
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat(),
+            "game_type": self.game_type,
+            "result": self.result,
+            "trophies_change": self.trophies_change,
+            "opponent_tag": self.opponent_tag,
+            "opponent_name": self.opponent_name,
+            "duration_seconds": self.duration_seconds,
+            "platform": self.platform,
+            "metadata": self.metadata,
+        }
+
+
+# ============================================================================
 # UNIFIED CONTEXT (Dashboard Container)
 # ============================================================================
 
@@ -435,9 +634,11 @@ class UnifiedContext:
     calendar: Dict[str, Any] = field(default_factory=dict)
     health: Dict[str, Any] = field(default_factory=dict)
     navigation: Dict[str, Any] = field(default_factory=dict)
+    weather: Dict[str, Any] = field(default_factory=dict)
+    gaming: Dict[str, Any] = field(default_factory=dict)
     relevance: Dict[str, List[Any]] = field(default_factory=lambda: {"high": [], "medium": [], "low": []})
     last_updated: Dict[str, datetime] = field(default_factory=dict)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "user_id": self.user_id,
@@ -445,7 +646,9 @@ class UnifiedContext:
                 "finance": self.finance,
                 "calendar": self.calendar,
                 "health": self.health,
-                "navigation": self.navigation
+                "navigation": self.navigation,
+                "weather": self.weather,
+                "gaming": self.gaming,
             },
             "relevance": self.relevance,
             "last_updated": {k: v.isoformat() for k, v in self.last_updated.items()}

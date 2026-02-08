@@ -9,6 +9,11 @@ from .calendar.mock import MockCalendarAdapter
 from .health.mock import MockHealthAdapter
 from .navigation.mock import MockNavigationAdapter
 
+# Import real adapters to trigger @register_adapter decorator
+from .weather.openweather import OpenWeatherAdapter
+from .calendar.google_calendar import GoogleCalendarAdapter
+from .gaming.clashroyale import ClashRoyaleAdapter
+
 __all__ = [
     "BaseAdapter",
     "AdapterConfig",
@@ -20,4 +25,8 @@ __all__ = [
     "MockCalendarAdapter",
     "MockHealthAdapter",
     "MockNavigationAdapter",
+    # Real adapters
+    "OpenWeatherAdapter",
+    "GoogleCalendarAdapter",
+    "ClashRoyaleAdapter",
 ]

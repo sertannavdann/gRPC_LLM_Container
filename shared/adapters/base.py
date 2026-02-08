@@ -30,6 +30,8 @@ class AdapterCategory(Enum):
     CALENDAR = "calendar"
     HEALTH = "health"
     NAVIGATION = "navigation"
+    WEATHER = "weather"
+    GAMING = "gaming"
 
 
 @dataclass

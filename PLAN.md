@@ -21,7 +21,31 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 
 <a id="recent-changes"></a>
 
-## ✅ RECENT CHANGES & NOTES (Updated: January 31, 2026)
+## ✅ RECENT CHANGES & NOTES (Updated: February 8, 2026)
+
+### What Changed (Feb 3-8, 2026)
+- **Prompt Flow**: Full Microsoft Prompt Flow integration with agent workflow DAG, evaluator flow, 4 connection configs, and prompt templates
+- **gRPC Health Probes**: Installed `grpc_health_probe` in all gRPC service Dockerfiles
+- **Multi-Tool Intent Analysis**: Added `MULTI_TOOL_INTENTS`, `analyze_intent()`, and `DESTINATION_ALIASES` to orchestrator
+- **User Testing Guide**: Comprehensive 888-line testing document with architecture diagrams and feature test procedures
+- **Bank Data Integration**: CIBC CSV adapter with 100+ categorization patterns, 6,845 deduplicated transactions, Chart.js dashboard
+- **Self-Evolving Architecture Plan**: Designed 5-tier plan for LLM-driven module generation (see `.claude/plans/cheerful-wibbling-eagle.md`)
+
+### Recent Commits
+```
+28bcf69 docs: add comprehensive user testing guide
+3b5ed39 docs(hld): add Prompt Flow integration section
+56fa758 build(makefile): add Prompt Flow targets
+3a7ee86 feat(promptflow): add Microsoft Prompt Flow integration
+a9bedac chore: update llm_service and gitignore settings
+5c02893 docs(runbook): add network documentation and make targets
+de1f727 feat(orchestrator): add multi-tool intent analysis and guardrails
+b0128ed chore(docker): add grpc_health_probe to all gRPC services
+```
+
+---
+
+## Previous Changes (January 31, 2026)
 
 ### What Changed (last working session)
 - Provider runtime: switched default LLM provider usage to Perplexity Sonar (OpenAI-compatible API) to improve tool selection reliability vs. tiny local models.
@@ -45,7 +69,7 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 
 <a id="implementation-progress"></a>
 
-## 🎯 IMPLEMENTATION PROGRESS (Updated: January 31, 2026)
+## 🎯 IMPLEMENTATION PROGRESS (Updated: February 8, 2026)
 
 ### ✅ COMPLETED
 
@@ -111,31 +135,52 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
   - Panel toggle buttons (show/hide categories)
   - Side panel and fullscreen modes in ChatContainer
 
+#### Phase 5: Prompt Flow Integration
+- [x] Microsoft Prompt Flow workspace with agent workflow DAG
+- [x] Evaluator flow with tool precision/recall metrics
+- [x] Connection configs (Anthropic, OpenAI, Perplexity, local)
+- [x] Makefile targets: `pf-run`, `pf-eval`, `pf-serve`, `pf-trace`
+
+#### Phase 6: Bank Data Integration
+- [x] CIBC CSV finance adapter (`shared/adapters/finance/cibc.py`)
+- [x] Transaction categorizer with 100+ regex patterns (`shared/adapters/finance/categorizer.py`)
+- [x] Bank service layer with caching (`dashboard_service/bank_service.py`)
+- [x] REST API endpoints: `/bank/transactions`, `/bank/summary`, `/bank/categories`, `/bank/search`
+- [x] Chart.js dashboard with dark theme (`dashboard_service/static/index.html`)
+- [x] MD5-based deduplication across overlapping CSV files (~6,845 unique transactions)
+
 ### 🔄 IN PROGRESS
 
-#### Phase 5: Real Adapter Integrations
+#### Phase 7: Real Adapter Integrations
 - [ ] Google Calendar OAuth adapter
 - [ ] Plaid/Wealthsimple finance adapter
 - [ ] Apple Health / Oura / Whoop adapter
 - [ ] Google Maps / Waze adapter
 
-#### Phase 6: Multi-User & Persistence
+### 📋 PLANNED
+
+#### Phase 8: Self-Evolving Module System
+> Full plan: `.claude/plans/cheerful-wibbling-eagle.md`
+- [ ] Module manifest + dynamic loader (`shared/modules/`)
+- [ ] Code generation pipeline (templates + builder/validator tools)
+- [ ] Module lifecycle management (persistence, credentials, health)
+- [ ] Self-evolution loop (intent detection -> build -> test -> approve -> deploy)
+
+#### Phase 9: Multi-User & Persistence
 - [ ] PostgreSQL migration with RLS
 - [ ] User authentication (NextAuth.js)
 - [ ] Per-user settings storage
 
-### 📋 PLANNED
-
-#### Phase 7: MCP Integration
+#### Phase 10: MCP Integration
 - [ ] @mcp_tool decorator implementation
 - [ ] Perplexity MCP server bridge
 - [ ] Auto-discovery of MCP tools
 
-#### Phase 8: Clawdbot Entry Point
+#### Phase 11: Clawdbot Entry Point
 - [ ] IInputAdapter interface
 - [ ] Telegram/Discord bot adapter
 - [ ] Message bus (Redis Streams)
-- [ ] See detailed workstream: “NEW WORKSTREAM: CLAWDBOT AS A DOCKERIZED MICROSERVICE”
+- [ ] See detailed workstream: "NEW WORKSTREAM: CLAWDBOT AS A DOCKERIZED MICROSERVICE"
 
 ---
 
@@ -143,7 +188,7 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 
 ## 🏗️ ARCHITECTURE EVALUATION & CRITICAL ACTIONS
 
-*Living roadmap for infrastructure and reliability improvements. Updated: February 1, 2026*
+*Living roadmap for infrastructure and reliability improvements. Updated: February 8, 2026*
 
 ### Current State Summary
 
@@ -171,20 +216,24 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 ### Critical Actions (Priority 1)
 
 - [x] **Observability Stack** - Prometheus + Grafana + structured logging *(Feb 1, 2026)*
+- [x] **Rate Limiting** - Token bucket per provider *(Feb 3, 2026)*
+- [x] **Health Checks Fix** - gRPC health probes in all services *(Feb 3, 2026)*
 - [ ] **PostgreSQL Migration** - Replace SQLite for shared state
-- [ ] **Rate Limiting** - Token bucket per provider
 
 ### High Priority (Agent0/ToolOrchestra)
 
 - [x] **Metrics Collection** - Endpoint stats, tool frequency, cost tracking *(Feb 1, 2026)*
-- [x] **Dynamic Provider Router** - Fallback chains (local → perplexity → claude) *(Feb 1, 2026)*
+- [x] **Dynamic Provider Router** - Fallback chains (local -> perplexity -> claude) *(Feb 1, 2026)*
+- [x] **Multi-Tool Intent Guardrails** - analyze_intent() with destination resolution *(Feb 3, 2026)*
+- [x] **Prompt Flow Integration** - Visual workflow editing + batch evaluation *(Feb 5, 2026)*
 - [ ] **Self-Consistency Integration** - Enable and use uncertainty signal
 
 ### Medium Priority
 
 - [x] **Dashboard Service Containerization** - Real adapters in Docker *(Feb 1, 2026)*
+- [x] **Bank Data Integration** - CIBC CSV adapter + Chart.js dashboard *(Feb 7, 2026)*
+- [ ] **Self-Evolving Module System** - LLM-driven module generation (planned)
 - [ ] **Message Queue (Redis)** - Async job processing
-- [ ] **Health Checks Fix** - Reliable health endpoints
 
 ### Implementation Roadmap (Living Checklist)
 
@@ -202,7 +251,15 @@ Create a modular settings UI for your gRPC LLM framework that enables runtime co
 ├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
 │ 5    │ RL Foundation        │ Reward function, offline training pipeline    │ Claude │ ✅      │
 ├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
-│ 6    │ Clawdbot Integration │ Bidirectional gRPC, Telegram gateway          │ Claude │ 🔄 In Progress|
+│ 6    │ Health Probes        │ grpc_health_probe in all services             │ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 7    │ Prompt Flow          │ Agent workflow DAG, evaluator, connections    │ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 8    │ Bank Data            │ CIBC adapter, categorizer, Chart.js dashboard│ Claude │ ✅      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 9    │ Self-Evolving Modules│ Dynamic loader, code gen, lifecycle mgmt     │ Claude │ 📋      │
+├──────┼──────────────────────┼───────────────────────────────────────────────┼────────┼─────────┤
+│ 10   │ Clawdbot Integration │ Bidirectional gRPC, Telegram gateway        │ Claude │ 🔄      │
 └──────┴──────────────────────┴───────────────────────────────────────────────┴────────┴─────────┘
 ```
 

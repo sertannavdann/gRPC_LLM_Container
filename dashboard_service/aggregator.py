@@ -37,6 +37,8 @@ class UserConfig:
     calendar: List[str] = field(default_factory=lambda: ["mock"])
     health: List[str] = field(default_factory=lambda: ["mock"])
     navigation: List[str] = field(default_factory=lambda: ["mock"])
+    weather: List[str] = field(default_factory=list)
+    gaming: List[str] = field(default_factory=list)
     
     # Platform credentials (keyed by platform name)
     credentials: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -104,7 +106,7 @@ class DashboardAggregator:
             return self._cache[cache_key]
         
         # Determine which categories to fetch
-        all_categories = categories or ["finance", "calendar", "health", "navigation"]
+        all_categories = categories or ["finance", "calendar", "health", "navigation", "weather", "gaming"]
         
         # Build fetch tasks for all enabled adapters
         tasks = []
@@ -161,6 +163,8 @@ class DashboardAggregator:
             "calendar": {"events": [], "platforms": []},
             "health": {"metrics": [], "today": {}, "platforms": []},
             "navigation": {"routes": [], "commute": {}, "platforms": []},
+            "weather": {"data": [], "platforms": []},
+            "gaming": {"profiles": [], "platforms": []},
         }
         
         for i, result in enumerate(results):
@@ -207,12 +211,24 @@ class DashboardAggregator:
                 category_data["navigation"]["routes"].extend([
                     d.to_dict() for d in result.data
                 ])
+
+            elif category == "weather":
+                category_data["weather"]["data"].extend([
+                    d.to_dict() for d in result.data
+                ])
+
+            elif category == "gaming":
+                category_data["gaming"]["profiles"].extend([
+                    d.to_dict() for d in result.data
+                ])
         
         # Build final context structure
         context.finance = self._build_finance_summary(category_data["finance"])
         context.calendar = self._build_calendar_summary(category_data["calendar"])
         context.health = self._build_health_summary(category_data["health"])
         context.navigation = self._build_navigation_summary(category_data["navigation"])
+        context.weather = self._build_weather_summary(category_data["weather"])
+        context.gaming = self._build_gaming_summary(category_data["gaming"])
         
         return context
     
@@ -313,6 +329,32 @@ class DashboardAggregator:
             "platforms": data["platforms"],
         }
     
+    def _build_weather_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Build weather summary from aggregated data."""
+        weather_data = data["data"]
+        if not weather_data:
+            return {"current": None, "forecasts": [], "platforms": data["platforms"]}
+
+        current = weather_data[0] if weather_data else None
+        forecasts = current.get("metadata", {}).get("forecasts", []) if current else []
+
+        return {
+            "current": current,
+            "forecasts": forecasts[:8],
+            "platforms": data["platforms"],
+        }
+
+    def _build_gaming_summary(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Build gaming summary from aggregated data."""
+        profiles = data["profiles"]
+        if not profiles:
+            return {"profiles": [], "platforms": data["platforms"]}
+
+        return {
+            "profiles": profiles,
+            "platforms": data["platforms"],
+        }
+
     def _is_cached(self, key: str) -> bool:
         """Check if cache entry is valid."""
         if key not in self._cache:

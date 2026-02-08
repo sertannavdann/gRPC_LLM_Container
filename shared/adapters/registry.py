@@ -77,6 +77,8 @@ class AdapterRegistry:
             "calendar": {},
             "health": {},
             "navigation": {},
+            "weather": {},
+            "gaming": {},
         }
         self._initialized = True
         self._register_default_adapters()
