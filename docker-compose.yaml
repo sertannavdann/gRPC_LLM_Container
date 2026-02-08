@@ -191,6 +191,7 @@ services:
       - AGENT_SERVICE_ADDRESS=orchestrator:50054
       - ENV_FILE_PATH=/app/config/.env
       - CONVERSATIONS_DIR=/app/data/conversations
+      - DASHBOARD_SERVICE_URL=http://dashboard_service:8001
     volumes:
       - ./.env:/app/config/.env:rw
       - ./data/conversations:/app/data/conversations:rw
@@ -262,6 +263,9 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3001
       - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
       - grafana-data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro

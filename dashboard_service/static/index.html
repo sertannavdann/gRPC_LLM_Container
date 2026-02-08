@@ -259,6 +259,21 @@ const CATEGORY_COLORS = [
   '#4493f8','#db61a2','#2ea043'
 ];
 
+function getFilterParams() {
+  const params = new URLSearchParams();
+  const dateFrom = document.getElementById('f-date-from').value;
+  const dateTo = document.getElementById('f-date-to').value;
+  const cat = document.getElementById('f-category').value;
+  const acct = document.getElementById('f-account').value;
+  const search = document.getElementById('f-search').value;
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
+  if (cat) params.set('category', cat);
+  if (acct) params.set('account', acct);
+  if (search) params.set('search', search);
+  return params;
+}
+
 async function fetchJSON(url) {
   const res = await fetch(API + url);
   if (!res.ok) throw new Error(`${res.status}`);
@@ -267,12 +282,7 @@ async function fetchJSON(url) {
 
 async function init() {
   try {
-    const [cats, summary] = await Promise.all([
-      fetchJSON('/bank/categories'),
-      fetchJSON('/bank/summary?group_by=category'),
-    ]);
-
-    // Populate category dropdown
+    const cats = await fetchJSON('/bank/categories');
     const sel = document.getElementById('f-category');
     cats.categories.forEach(c => {
       const opt = document.createElement('option');
@@ -280,36 +290,49 @@ async function init() {
       sel.appendChild(opt);
     });
 
-    // Summary cards
-    const debitCats = summary.groups.filter(g => g.debits > 0);
-    const totalSpent = debitCats.reduce((s,g) => s + g.debits, 0);
-    const totalCredits = summary.groups.reduce((s,g) => s + g.credits, 0);
-    document.getElementById('s-spent').textContent = fmt(totalSpent);
-    document.getElementById('s-income').textContent = fmt(totalCredits);
-    document.getElementById('s-count').textContent = summary.total_transactions.toLocaleString();
-    if (debitCats.length > 0) {
-      // Skip "Other" and "Transfer" for top category if possible
-      const meaningful = debitCats.filter(c => c.name !== 'Other' && c.name !== 'Transfer' && c.name !== 'Banking');
-      const top = meaningful.length > 0 ? meaningful[0] : debitCats[0];
-      document.getElementById('s-top-cat').textContent = top.name;
-      document.getElementById('s-top-cat-amt').textContent = fmt(top.debits);
-    }
-
-    document.getElementById('meta').textContent = `${summary.total_transactions.toLocaleString()} transactions loaded`;
-
-    await Promise.all([
-      renderCategoryChart(summary),
-      renderMonthlyChart(),
-      renderCompanyChart(),
-      renderAccountChart(),
-      loadTransactions(),
-    ]);
+    await loadAll();
   } catch(e) {
     document.getElementById('meta').textContent = 'Error loading data: ' + e.message;
   }
 }
 
-async function renderCategoryChart(summary) {
+async function loadAll() {
+  const fp = getFilterParams();
+  const fpStr = fp.toString();
+  const qs = fpStr ? `&${fpStr}` : '';
+
+  await Promise.all([
+    loadSummaryCards(qs),
+    renderCategoryChart(qs),
+    renderMonthlyChart(qs),
+    renderCompanyChart(qs),
+    renderAccountChart(fp),
+    loadTransactions(),
+  ]);
+}
+
+async function loadSummaryCards(qs) {
+  const summary = await fetchJSON(`/bank/summary?group_by=category${qs}`);
+  const debitCats = summary.groups.filter(g => g.debits > 0);
+  const totalSpent = debitCats.reduce((s,g) => s + g.debits, 0);
+  const totalCredits = summary.groups.reduce((s,g) => s + g.credits, 0);
+  document.getElementById('s-spent').textContent = fmt(totalSpent);
+  document.getElementById('s-income').textContent = fmt(totalCredits);
+  document.getElementById('s-count').textContent = summary.total_transactions.toLocaleString();
+  const meaningful = debitCats.filter(c => c.name !== 'Other' && c.name !== 'Transfer' && c.name !== 'Banking');
+  const top = meaningful.length > 0 ? meaningful[0] : debitCats[0];
+  if (top) {
+    document.getElementById('s-top-cat').textContent = top.name;
+    document.getElementById('s-top-cat-amt').textContent = fmt(top.debits);
+  } else {
+    document.getElementById('s-top-cat').textContent = '--';
+    document.getElementById('s-top-cat-amt').textContent = '';
+  }
+  document.getElementById('meta').textContent = `${summary.total_transactions.toLocaleString()} transactions loaded`;
+}
+
+async function renderCategoryChart(qs) {
+  const summary = await fetchJSON(`/bank/summary?group_by=category${qs}`);
   const filtered = summary.groups.filter(g => g.debits > 0 && g.name !== 'Other' && g.name !== 'Transfer').slice(0, 12);
   const ctx = document.getElementById('chart-category').getContext('2d');
   if (charts.category) charts.category.destroy();
@@ -335,8 +358,8 @@ async function renderCategoryChart(summary) {
   });
 }
 
-async function renderMonthlyChart() {
-  const data = await fetchJSON('/bank/summary?group_by=month');
+async function renderMonthlyChart(qs) {
+  const data = await fetchJSON(`/bank/summary?group_by=month${qs}`);
   const months = data.groups.sort((a,b) => a.name.localeCompare(b.name)).slice(-18);
   const ctx = document.getElementById('chart-monthly').getContext('2d');
   if (charts.monthly) charts.monthly.destroy();
@@ -374,8 +397,8 @@ async function renderMonthlyChart() {
   });
 }
 
-async function renderCompanyChart() {
-  const data = await fetchJSON('/bank/summary?group_by=company');
+async function renderCompanyChart(qs) {
+  const data = await fetchJSON(`/bank/summary?group_by=company${qs}`);
   const top = data.groups.filter(g => g.debits > 0 && g.name !== 'Other').slice(0, 15);
   const ctx = document.getElementById('chart-companies').getContext('2d');
   if (charts.companies) charts.companies.destroy();
@@ -404,10 +427,16 @@ async function renderCompanyChart() {
   });
 }
 
-async function renderAccountChart() {
+async function renderAccountChart(fp) {
+  const creditP = new URLSearchParams(fp);
+  creditP.set('account', 'credit');
+  creditP.set('per_page', '1');
+  const cheqP = new URLSearchParams(fp);
+  cheqP.set('account', 'chequing');
+  cheqP.set('per_page', '1');
   const [credit, chequing] = await Promise.all([
-    fetchJSON('/bank/transactions?account=credit&per_page=1'),
-    fetchJSON('/bank/transactions?account=chequing&per_page=1'),
+    fetchJSON(`/bank/transactions?${creditP}`),
+    fetchJSON(`/bank/transactions?${cheqP}`),
   ]);
   const ctx = document.getElementById('chart-accounts').getContext('2d');
   if (charts.accounts) charts.accounts.destroy();
@@ -433,21 +462,10 @@ async function renderAccountChart() {
 }
 
 async function loadTransactions() {
-  const params = new URLSearchParams();
+  const params = getFilterParams();
   params.set('page', currentPage);
   params.set('per_page', perPage);
-
-  const dateFrom = document.getElementById('f-date-from').value;
-  const dateTo = document.getElementById('f-date-to').value;
-  const cat = document.getElementById('f-category').value;
-  const acct = document.getElementById('f-account').value;
-  const search = document.getElementById('f-search').value;
-
-  if (dateFrom) params.set('date_from', dateFrom);
-  if (dateTo) params.set('date_to', dateTo);
-  if (cat) params.set('category', cat);
-  if (acct) params.set('account', acct);
-  if (search) params.set('search', search);
+  if (sortField) { params.set('sort', sortField); params.set('sort_dir', sortDir); }
 
   const data = await fetchJSON(`/bank/transactions?${params}`);
   renderTable(data);
@@ -496,7 +514,10 @@ function renderPagination(data) {
 
 function goPage(p) { currentPage = p; loadTransactions(); }
 
-function applyFilters() { currentPage = 1; loadTransactions(); }
+function applyFilters() {
+  currentPage = 1;
+  loadAll();
+}
 
 function resetFilters() {
   document.getElementById('f-date-from').value = '';
@@ -505,7 +526,7 @@ function resetFilters() {
   document.getElementById('f-account').value = '';
   document.getElementById('f-search').value = '';
   currentPage = 1;
-  loadTransactions();
+  loadAll();
 }
 
 function sortTable(field) {

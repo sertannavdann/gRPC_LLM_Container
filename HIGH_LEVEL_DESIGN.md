@@ -1,7 +1,7 @@
 # High-Level Design (HLD) - gRPC LLM Agent Framework
 
 > **Last Updated**: February 2026  
-> **Version**: 2.1 (OpenClaw MCP Integration)  
+> **Version**: 2.2 (UI Navigation + Finance Analytics + Observability)  
 > **Branch**: `Agent0`
 
 ## 1. Executive Summary
@@ -35,6 +35,8 @@ The system implements a **Supervisor-Worker Mesh** pattern where a central Orche
 graph TD
     User[👤 User / Browser] <-->|HTTP/gRPC-Web| UI[🖥️ UI Service<br/>Next.js :5001]
     UI <-->|gRPC| Orch[🧠 Orchestrator<br/>Supervisor :50054]
+    UI -->|HTTP fetch| Dash[📊 Dashboard Service<br/>FastAPI :8001]
+    UI -->|iframe embed| Graf[📈 Grafana :3001]
     
     subgraph "Core Infrastructure"
         Orch <-->|gRPC| LLM[🤖 LLM Service<br/>Llama.cpp :50051]
@@ -50,8 +52,17 @@ graph TD
         Orch -.->|Delegation| W2
     end
     
-    subgraph "Persistence"
+    subgraph "Data Layer"
+        Dash -->|CSV Import| Bank[(🏦 Bank Data<br/>CIBC Transactions)]
         Orch -->|SQLite + WAL| State[(💾 State Store<br/>& Checkpoints)]
+    end
+    
+    subgraph "Observability Stack"
+        Orch & LLM & Dash -->|OTLP| OTel[📡 OTel Collector<br/>:4317]
+        OTel --> Prom[📉 Prometheus :9090]
+        OTel --> Tempo[🔍 Tempo :3200]
+        Prom --> Graf
+        Tempo --> Graf
     end
 ```
 
@@ -59,15 +70,20 @@ graph TD
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| UI Service | 5001 | HTTP/gRPC-Web | User interface |
+| UI Service | 5001 | HTTP/gRPC-Web | Multi-page interface (Chat, Dashboard, Finance, Monitoring) |
 | LLM Service | 50051 | gRPC | Text generation |
 | Chroma Service | 50052 | gRPC | Vector embeddings |
 | Orchestrator | 50054 | gRPC | Main coordination |
 | Registry Service | 50055 | gRPC | Worker discovery |
 | Worker: Coding | 50056 | gRPC | Code specialist |
 | Sandbox Service | 50057 | gRPC | Secure code execution |
-| Dashboard Service | 8001 | HTTP | Context aggregation |
+| Dashboard Service | 8001 | HTTP | Finance analytics + Context aggregation |
+| Dashboard Metrics | 8002 | HTTP | Prometheus metrics |
 | **Bridge Service** | **8100** | **HTTP/MCP** | **OpenClaw bridge** |
+| Grafana | 3001 | HTTP | Observability dashboards |
+| Prometheus | 9090 | HTTP | Metrics storage |
+| OTel Collector | 4317/4318 | gRPC/HTTP | Telemetry ingestion |
+| Tempo | 3200 | HTTP | Distributed tracing |
 
 ---
 
@@ -119,12 +135,33 @@ graph TD
 *   **Function**: Stores and retrieves vector embeddings for RAG (Retrieval Augmented Generation).
 
 ### 4.7 UI Service (The Interface)
-*   **Role**: User interaction layer.
-*   **Tech Stack**: Next.js 14, Tailwind CSS, gRPC-web.
-*   **Features**:
-    *   Real-time chat interface.
-    *   Markdown rendering.
-    *   Visualizes the "Thought Process" (intermediate tool calls).
+*   **Role**: User interaction layer with multi-page navigation.
+*   **Tech Stack**: Next.js 14 (App Router), Tailwind CSS, gRPC-web.
+*   **Pages**:
+    *   `/` — Landing page with page cards for Chat, Dashboard, Finance, Monitoring.
+    *   `/chat` — Chat interface with conversation history, settings, and side-panel dashboard.
+    *   `/dashboard` — Fullscreen unified dashboard (Calendar, Finance, Health, Navigation widgets).
+    *   `/finance` — Embedded Chart.js finance dashboard from dashboard\_service.
+    *   `/monitoring` — Embedded Grafana dashboards with tab switching.
+*   **Navigation**: Persistent top navbar with active-state highlighting.
+*   **Responsive Design**: Dashboard grid adapts from 1→2→3→4 columns across breakpoints.
+
+### 4.8 Dashboard Service (Data Aggregation)
+*   **Role**: Serves finance analytics and aggregated context data.
+*   **Tech Stack**: FastAPI, Chart.js 4.4, caching layer.
+*   **Finance Features**:
+    *   CIBC CSV adapter with automatic transaction categorization.
+    *   Interactive filter bar (date range, category, account, search) that updates **all 4 charts + summary cards + transaction table**.
+    *   `/bank/summary` endpoint supports `group_by` (category, month, company) and filter params.
+    *   `/bank/transactions` endpoint with pagination, sorting, and filtering.
+*   **Data Flow**: UI Service `/api/dashboard` route calls dashboard\_service `/bank/*` endpoints at runtime for real bank data, falling back to mock data if service is unavailable.
+
+### 4.9 Observability Stack
+*   **OpenTelemetry Collector** (`otel-collector:4317/4318`): Central telemetry hub receiving OTLP gRPC + HTTP.
+*   **Prometheus** (`prometheus:9090`): Scrapes 5 targets; stores metrics with `grpc_llm_` namespace.
+*   **Grafana** (`grafana:3001`): Auto-provisioned with 4 JSON dashboards in `gRPC LLM` folder; embedding enabled for iframe use in the UI Monitoring page. Anonymous viewer access enabled.
+*   **Tempo** (`tempo:3200`): Distributed tracing backend.
+*   **CLI**: `make status` shows beautified box-drawn service health; `make logs` streams to a 128 KB rolling slog128 window.
 
 ---
 
@@ -552,10 +589,12 @@ make pf-trace
 | Phase 3 | Sandbox Service | ✅ Complete |
 | Phase 4 | OpenClaw MCP Bridge | ✅ Complete |
 | Phase 5 | Prompt Flow Integration | ✅ Complete |
-| Phase 6 | Enhanced RAG Pipeline | 🔄 Planned |
-| Phase 7 | Multi-modal Support (Image/Audio) | 🔄 Planned |
-| Phase 8 | Kubernetes Helm Charts | 🔄 Planned |
-| Phase 9 | ADPO Training Loop | 🔄 Planned |
+| Phase 6 | Bank Data Integration (CIBC CSV) | ✅ Complete |
+| Phase 7 | Self-Evolving Module System | 📋 Planned |
+| Phase 8 | Enhanced RAG Pipeline | 🔄 Planned |
+| Phase 9 | Multi-modal Support (Image/Audio) | 🔄 Planned |
+| Phase 10 | Kubernetes Helm Charts | 🔄 Planned |
+| Phase 11 | ADPO Training Loop | 🔄 Planned |
 
 ---
 

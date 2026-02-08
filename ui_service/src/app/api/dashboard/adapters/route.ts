@@ -8,9 +8,8 @@ import { NextRequest, NextResponse } from 'next/server';
 // Available adapters registry
 const AVAILABLE_ADAPTERS = {
   finance: [
-    { platform: 'mock', name: 'Mock Finance', icon: '🏦', connected: true, status: 'active' },
+    { platform: 'cibc', name: 'CIBC', icon: '🏛️', connected: true, status: 'active' },
     { platform: 'wealthsimple', name: 'Wealthsimple', icon: '💹', connected: false, status: 'available' },
-    { platform: 'cibc', name: 'CIBC', icon: '🏛️', connected: false, status: 'available' },
     { platform: 'affirm', name: 'Affirm', icon: '💳', connected: false, status: 'available' },
     { platform: 'plaid', name: 'Plaid', icon: '🔗', connected: false, status: 'available' },
   ],

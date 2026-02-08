@@ -133,10 +133,10 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
       case 'rows':
         return 'flex flex-col gap-4';
       case 'columns':
-        return 'flex flex-row gap-4';
+        return 'flex flex-row flex-wrap gap-4';
       case 'grid':
       default:
-        return 'grid grid-cols-1 md:grid-cols-2 gap-4';
+        return 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 auto-rows-min';
     }
   };
   
@@ -302,7 +302,7 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
           /* Grid/Row/Column View */
           <div className={getLayoutClass()}>
             {!hiddenPanels.has('calendar') && (
-              <div className={viewMode === 'columns' ? 'flex-1 min-w-0' : ''}>
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
                 <CalendarWidget 
                   data={calendar} 
                   onFocus={() => handleFocus('calendar')} 
@@ -310,7 +310,7 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
               </div>
             )}
             {!hiddenPanels.has('finance') && (
-              <div className={viewMode === 'columns' ? 'flex-1 min-w-0' : ''}>
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
                 <FinanceWidget 
                   data={finance} 
                   onFocus={() => handleFocus('finance')} 
@@ -318,7 +318,7 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
               </div>
             )}
             {!hiddenPanels.has('health') && (
-              <div className={viewMode === 'columns' ? 'flex-1 min-w-0' : ''}>
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
                 <HealthWidget 
                   data={health} 
                   onFocus={() => handleFocus('health')} 
@@ -326,7 +326,7 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
               </div>
             )}
             {!hiddenPanels.has('navigation') && (
-              <div className={viewMode === 'columns' ? 'flex-1 min-w-0' : ''}>
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
                 <NavigationWidget 
                   data={navigation} 
                   onFocus={() => handleFocus('navigation')} 

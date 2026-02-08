@@ -148,9 +148,13 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 
 | Resource | URL | Credentials |
 |----------|-----|-------------|
-| Chat Interface | http://localhost:5001 | — |
+| **Landing Page** | http://localhost:5001 | — |
+| Chat Interface | http://localhost:5001/chat | — |
+| Dashboard (Next.js) | http://localhost:5001/dashboard | — |
+| Finance (embedded) | http://localhost:5001/finance | — |
+| Monitoring (Grafana embed) | http://localhost:5001/monitoring | — |
 | Dashboard API | http://localhost:8001/docs | — |
-| Finance Dashboard | http://localhost:8001/static/index.html | — |
+| Finance Dashboard (standalone) | http://localhost:8001 | — |
 | MCP Bridge | http://localhost:8100/tools | — |
 | Grafana | http://localhost:3001 | admin / admin |
 | Prometheus | http://localhost:9090 | — |
@@ -201,8 +205,17 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 make start              # Build and start all services
 make dev                # Start backend + UI in dev mode
 make stop               # Stop all services
-make status             # Show service status and health
+make status             # Beautified service status (containers, gRPC health, LLM provider)
 ```
+
+### 📊 Status Commands (No Overlap)
+
+| Command | Purpose |
+|---------|---------|
+| `make status` | Box-drawn overview: container health ● / ○, gRPC probes, LLM provider |
+| `make status-verbose` | Everything in `status` **plus** port map table, resource usage, Docker images |
+| `make status-guide` | Per-component testing guide — how to curl / test each service individually |
+| `make status-<service> log` | Tail the last 100 lines of a single service, e.g. `make status-orchestrator log` |
 
 ### 🔧 Service Management
 
@@ -213,24 +226,17 @@ make restart            # Restart all services
 make restart-<svc>      # Restart specific service (e.g., make restart-orchestrator)
 ```
 
-### 📊 Logging & Monitoring (Verbose)
+### 📊 Logging (slog128 Rolling Window)
 
 ```bash
-# Full service logs
-make logs               # Follow ALL service logs
+make logs               # Stream all logs to logs/services.log with 128 KB rolling window
+make logs-dump          # Print the current slog128 buffer to stdout
+make logs-clear         # Clear the rolling log file
 make logs-<svc>         # Follow specific service (e.g., make logs-orchestrator)
-make logs-tail          # Tail all logs with limited history (50 lines)
-
-# Specific log targets
-make logs-orch          # Orchestrator logs (100 lines tail)
-make logs-bridge        # MCP Bridge service logs
-make logs-grafana       # Grafana logs
-make logs-prometheus    # Prometheus logs
-make logs-otel          # OpenTelemetry Collector logs
-
-# Filtered logging
-make watch-orchestrator # Watch orchestrator with grep filter (Tool|ERROR|WARNING)
 ```
+
+> **slog128**: The `make logs` command writes timestamped logs to `logs/services.log`,
+> automatically truncating to the most recent 128 KB so disk usage stays bounded.
 
 ### 🏗️ Build Commands
 
@@ -276,17 +282,6 @@ make bridge-briefing    # Get daily briefing via bridge
 make openclaw-setup     # Full bidirectional setup
 ```
 
-### 📊 Health & Status
-
-```bash
-make health             # Check all service health (gRPC)
-make health-all         # Enhanced health view (Docker status)
-make health-watch       # Auto-refresh health every 5s
-make ps                 # Show running containers
-make stats              # Show container resource usage
-make verify-code        # Verify code is current in container
-```
-
 ### 📊 Observability Stack
 
 ```bash
@@ -305,31 +300,6 @@ make test-unit          # Run unit tests only
 make test-integration   # Run integration tests
 make test-e2e           # Run end-to-end tests
 make test-tools         # Run tool tests
-```
-
-### 📦 Proto Generation
-
-```bash
-make proto-gen          # Generate all protobuf stubs
-make proto-gen-shared   # Generate shared stubs only
-```
-
-### 🗄️ Database Management
-
-```bash
-make db-reset           # Reset all databases
-make db-backup          # Backup databases
-make db-restore BACKUP=<dir> # Restore from backup
-```
-
-### 🧹 Cleanup
-
-```bash
-make clean              # Remove generated files
-make clean-docker       # Clean Docker resources (volumes, orphans)
-make clean-ui           # Clean UI build artifacts
-make clean-all          # Full cleanup (volumes, images)
-make clean-logs         # Clear log files
 ```
 
 ### ⚡ Short Aliases
@@ -354,7 +324,21 @@ make c                  # chat
 
 ### 6.1 Chat Interface (UI Service)
 
-**URL**: http://localhost:5001
+**URL**: http://localhost:5001/chat
+
+> The UI now has a **landing page** at `/` with navigation to Chat, Dashboard, Finance, and Monitoring pages.
+
+#### Test 1.0: Landing Page & Navigation (NEW)
+| Field | Value |
+|-------|-------|
+| **Landing page at `/` loads?** | Yes / No |
+| **4 page cards visible (Chat, Dashboard, Finance, Monitoring)?** | Yes / No |
+| **Navbar visible at top?** | Yes / No |
+| **Click "AI Chat" → goes to `/chat`?** | Yes / No |
+| **Click "Dashboard" → goes to `/dashboard`?** | Yes / No |
+| **Click "Finance" → goes to `/finance`?** | Yes / No |
+| **Click "Monitoring" → goes to `/monitoring`?** | Yes / No |
+| **Active page is highlighted in navbar?** | Yes / No |
 
 #### Test 1.1: Basic Greeting
 | Field | Value |
@@ -558,16 +542,17 @@ make c                  # chat
 
 ### 6.7 Finance Dashboard
 
-**URL**: http://localhost:8001/static/index.html
+**URL**: http://localhost:8001 (also embedded at http://localhost:5001/finance)
 
-> Note: Requires bank CSV data in `dashboard_service/Bank/` folder
+> Bank CSV data should be in `dashboard_service/Bank/` folder.
+> Filters now update **all 4 charts + summary cards + transaction table** simultaneously.
 
 #### Test 7.1: Dashboard Load
 | Field | Value |
 |-------|-------|
 | **Page loads?** | Yes / No |
 | **Charts display?** | Yes / No |
-| **Data visible?** | Yes / No |
+| **Summary cards show real totals?** | Yes / No |
 | **Load time** | _____ seconds |
 
 #### Test 7.2: Category Chart
@@ -577,20 +562,20 @@ make c                  # chat
 | **Categories correct?** | Yes / No |
 | **Hover info works?** | Yes / No |
 
-#### Test 7.3: Filtering
+#### Test 7.3: Chart Filtering (NEW)
 | Field | Value |
 |-------|-------|
-| **Date filter works?** | Yes / No |
-| **Category filter works?** | Yes / No |
-| **Account filter works?** | Yes / No |
-| **Search works?** | Yes / No |
+| **Select a category → charts update?** | Yes / No |
+| **Select a date range → monthly chart updates?** | Yes / No |
+| **Type a search term → top companies chart updates?** | Yes / No |
+| **Reset → all charts return to full data?** | Yes / No |
 
 #### Test 7.4: Transaction Table
 | Field | Value |
 |-------|-------|
 | **Table displays data?** | Yes / No |
 | **Pagination works?** | Yes / No |
-| **Sorting works?** | Yes / No |
+| **Sorting works (click column headers)?** | Yes / No |
 
 #### Finance Dashboard Overall Rating
 | Criteria | Rating (1-5) | Notes |
@@ -641,34 +626,104 @@ curl -X POST http://localhost:8100/invoke \
 
 ## 7. Observability & Monitoring
 
-### 7.1 Grafana Dashboards
+### 7.1 Grafana Setup & Dashboards
 
-**URL**: http://localhost:3001 (default: admin/admin)
+**URL**: http://localhost:3001 (default: `admin` / `admin`)
 
-| Dashboard | Available? | Data Showing? | Notes |
-|-----------|------------|---------------|-------|
-| gRPC LLM Overview | Yes / No | Yes / No | |
-| Provider Comparison | Yes / No | Yes / No | |
-| Service Health | Yes / No | Yes / No | |
+#### How it works
+Grafana is **auto-provisioned** — when the container starts, four JSON dashboards are loaded from
+`config/grafana/provisioning/dashboards/json/` into the **gRPC LLM** folder. No manual import needed.
+
+| Dashboard | UID | What it shows |
+|-----------|-----|---------------|
+| **gRPC LLM Overview** | `grpc-llm-overview` | Request rate, latency, error rate across all services |
+| **Service Health** | `service-health` | Per-container CPU / memory, up/down status |
+| **Provider Comparison** | `provider-comparison` | Latency & token usage per LLM provider |
+| **Tool Execution** | `tool-execution` | Tool call counts, durations, circuit breaker state |
+
+#### Verify dashboards are loaded
+1. Open http://localhost:3001
+2. Click the hamburger menu → **Dashboards**
+3. Open folder **gRPC LLM** — 4 dashboards should appear
+4. If empty, restart Grafana: `docker restart grafana`
+
+#### Datasources (auto-provisioned)
+| Name | Type | Internal URL | Notes |
+|------|------|-------------|-------|
+| **Prometheus** | `prometheus` | `http://prometheus:9090` | Default datasource, POST method |
+| **Tempo** | `tempo` | `http://tempo:3200` | Distributed tracing |
+
+#### Grafana embedding
+Grafana is configured with `GF_SECURITY_ALLOW_EMBEDDING=true` and anonymous access
+so the **Monitoring** page at http://localhost:5001/monitoring can embed dashboards via iframe.
+
+#### Create a custom dashboard
+1. Click **+** → **New dashboard** → **Add visualization**
+2. Select **Prometheus** datasource
+3. Enter a PromQL query, e.g.: `rate(grpc_llm_request_duration_seconds_count[5m])`
+4. Save to the **gRPC LLM** folder
 
 ### 7.2 Prometheus Metrics
 
 **URL**: http://localhost:9090
 
-#### Test Metric Queries
-| Query | Expected | Result |
-|-------|----------|--------|
-| `up` | Shows all targets | |
-| `grpc_server_handled_total` | gRPC request counts | |
-| `orchestrator_request_duration_seconds` | Latency histograms | |
+#### Scrape targets
+Prometheus is configured in `config/prometheus.yaml` with these jobs:
 
-### 7.3 Service Logs
+| Job | Target | Metrics exposed |
+|-----|--------|-----------------|
+| `otel-collector` | `otel-collector:8889` | Collected OTLP metrics (namespace `grpc_llm_`) |
+| `orchestrator` | `orchestrator:8888` | Request latency, tool calls, guard trips |
+| `llm_service` | `llm_service:8888` | Token usage, provider latency |
+| `dashboard_service` | `dashboard_service:8001` | Bank API hits, cache stats |
+| `prometheus` | `localhost:9090` | Self-monitoring |
+
+#### Useful PromQL queries
+
+```promql
+# Service up/down (check targets page → Status → Targets)
+up
+
+# Request rate by service (last 5 min)
+rate(grpc_llm_request_duration_seconds_count[5m])
+
+# 95th percentile latency
+histogram_quantile(0.95, rate(grpc_llm_request_duration_seconds_bucket[5m]))
+
+# Tool call total by tool name
+grpc_llm_tool_calls_total
+
+# LLM token usage
+grpc_llm_tokens_total
+```
+
+#### Verify targets
+1. Open http://localhost:9090/targets
+2. All targets should show **UP** with a green badge
+3. If a target is down, check the service container is running: `make status`
+
+### 7.3 OpenTelemetry Collector
+
+The OTel Collector receives OTLP gRPC (`:4317`) and HTTP (`:4318`) from all services,
+then exports metrics to Prometheus and traces to Tempo.
+
+Config file: `config/otel-collector-config.yaml`
+
+#### Verify collector health
 ```bash
-# View orchestrator logs
-make logs-orchestrator
+curl http://localhost:13133  # Health check endpoint
+```
 
-# View all logs
-make logs
+### 7.4 Monitoring via UI
+
+The Next.js UI at http://localhost:5001/monitoring embeds Grafana in kiosk mode.
+Use the tab bar to switch between Overview, Service Health, Provider Comparison, and Tool Execution dashboards.
+
+### 7.5 Service Logs
+```bash
+make logs                   # Stream with 128 KB rolling window
+make logs-dump              # Print current log buffer
+make status-orchestrator log  # Tail specific service
 ```
 | Log Quality | Rating (1-5) | Notes |
 |-------------|--------------|-------|
@@ -859,13 +914,23 @@ What features would you expect but are missing?
 # Start all services
 make up
 
-# Check status
+# Check status (beautified box-drawing output)
 make status
 
-# View logs
-make logs                    # All services
-make logs-orchestrator      # Orchestrator only
-docker logs llm_service     # Specific service
+# Verbose status (ports, resources, images)
+make status-verbose
+
+# Per-component testing guide
+make status-guide
+
+# View specific service logs
+make status-orchestrator log
+
+# Stream logs with 128 KB rolling window
+make logs
+
+# Print buffered log contents
+make logs-dump
 
 # Restart a service
 make restart-orchestrator

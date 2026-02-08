@@ -46,16 +46,16 @@ BOLD := \033[1m
 # -----------------------------------------------------------------------------
 # PHONY Declarations
 # -----------------------------------------------------------------------------
-.PHONY: help all build up down restart logs clean status health \
+.PHONY: help all build up down restart logs clean status status-verbose status-guide health \
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
-        build-% restart-% logs-% shell-% \
+        build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
         test test-unit test-integration test-e2e \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
         rebuild-orchestrator rebuild-all restart-orchestrator restart-all \
-        verify-code logs-orch logs-tail health-all
+        verify-code logs-orch logs-tail logs-dump logs-clear
 
 # ============================================================================
 # HELP
@@ -69,17 +69,19 @@ help:
 	@printf '$(BOLD)$(GREEN)🚀 Quick Start:$(RESET)\n'
 	@printf '  $(CYAN)make start$(RESET)              - Build and start all services\n'
 	@printf '  $(CYAN)make dev$(RESET)                - Start backend + UI in dev mode\n'
-	@printf '  $(CYAN)make dev-ui-local$(RESET)       - Start UI npm dev server (port 3000)\n'
 	@printf '  $(CYAN)make stop$(RESET)               - Stop all services\n'
-	@printf '  $(CYAN)make status$(RESET)             - Show service status and health\n'
+	@printf '  $(CYAN)make status$(RESET)             - Containers + health + provider\n'
+	@printf '  $(CYAN)make status verbose$(RESET)     - + port map, resources, images\n'
+	@printf '  $(CYAN)make status guide$(RESET)       - How to test every component\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)🔧 Service Management:$(RESET)\n'
 	@printf '  $(CYAN)make up$(RESET)                 - Start all services (detached)\n'
 	@printf '  $(CYAN)make down$(RESET)               - Stop and remove containers\n'
 	@printf '  $(CYAN)make restart$(RESET)            - Restart all services\n'
 	@printf '  $(CYAN)make restart-<svc>$(RESET)      - Restart specific service\n'
-	@printf '  $(CYAN)make logs$(RESET)               - Follow all service logs\n'
+	@printf '  $(CYAN)make logs$(RESET)               - Formatted rolling log (slog128)\n'
 	@printf '  $(CYAN)make logs-<svc>$(RESET)         - Follow specific service logs\n'
+	@printf '  $(CYAN)make logs-dump$(RESET)          - Print current slog128 buffer\n'
 	@printf '  $(CYAN)make shell-<svc>$(RESET)        - Open shell in service container\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)🏗️  Build Commands:$(RESET)\n'
@@ -196,12 +198,45 @@ restart-%:
 	@$(COMPOSE_CMD) restart $*
 	@printf '$(GREEN)✓ $* restarted$(RESET)\n'
 
-# Pattern rule for service logs
+# Pattern rule for service logs (live follow)
 logs-%:
-	@$(COMPOSE_CMD) logs -f $*
+	@$(COMPOSE_CMD) logs -f --tail=80 $*
+
+# Formatted rolling log — slog128 (128KB window, written to logs/)
+LOG_DIR := $(PROJECT_ROOT)/logs
+LOG_MAX_KB := 128
 
 logs:
-	@$(COMPOSE_CMD) logs -f
+	@mkdir -p $(LOG_DIR)
+	@printf '$(CYAN)Streaming logs → $(LOG_DIR)/services.log ($(LOG_MAX_KB)KB rolling window)$(RESET)\n'
+	@printf '$(CYAN)Press Ctrl+C to stop$(RESET)\n'
+	@$(COMPOSE_CMD) logs -f --tail=200 2>&1 | while IFS= read -r line; do \
+		TS=$$(date '+%Y-%m-%d %H:%M:%S'); \
+		SVC=$$(echo "$$line" | sed -n 's/^\([a-z_-]*\)[[:space:]]*|.*/\1/p'); \
+		MSG=$$(echo "$$line" | sed 's/^[a-z_-]*[[:space:]]*|[[:space:]]*//' ); \
+		FORMATTED="[$$TS] $$SVC | $$MSG"; \
+		echo "$$FORMATTED"; \
+		echo "$$FORMATTED" >> $(LOG_DIR)/services.log; \
+		FSIZE=$$(stat -f%z $(LOG_DIR)/services.log 2>/dev/null || stat -c%s $(LOG_DIR)/services.log 2>/dev/null || echo 0); \
+		MAX_BYTES=$$(($(LOG_MAX_KB) * 1024)); \
+		if [ "$$FSIZE" -gt "$$MAX_BYTES" ] 2>/dev/null; then \
+			tail -c $$MAX_BYTES $(LOG_DIR)/services.log > $(LOG_DIR)/services.log.tmp && \
+			mv $(LOG_DIR)/services.log.tmp $(LOG_DIR)/services.log; \
+		fi; \
+	done
+
+# Dump last 128KB of logs without following
+logs-dump:
+	@if [ -f $(LOG_DIR)/services.log ]; then \
+		cat $(LOG_DIR)/services.log; \
+	else \
+		printf '$(YELLOW)No log file yet. Run make logs first.$(RESET)\n'; \
+	fi
+
+# Clear rolling log file
+logs-clear:
+	@rm -f $(LOG_DIR)/services.log
+	@printf '$(GREEN)✓ Log file cleared$(RESET)\n'
 
 # Pattern rule for shell access
 shell-%:
@@ -217,13 +252,175 @@ stats:
 
 status:
 	@echo ""
-	@printf '$(BOLD)$(CYAN)Service Status:$(RESET)\n'
-	@echo "─────────────────────────────────────────"
-	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+	@printf '$(BOLD)$(CYAN)╔══════════════════════════════════════════════════════════════════╗$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)║               gRPC LLM Agent — System Status                    ║$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)╚══════════════════════════════════════════════════════════════════╝$(RESET)\n'
 	@echo ""
-	@$(MAKE) --no-print-directory health
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 🐳 Containers                                                  │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null | while IFS= read -r line; do \
+		if echo "$$line" | grep -qi "NAME"; then \
+			printf '  $(BOLD)%-24s %-36s$(RESET)\n' "SERVICE" "STATUS"; \
+			printf '  %-24s %-36s\n' "────────────────────────" "────────────────────────────────────"; \
+		elif echo "$$line" | grep -qi "(healthy)"; then \
+			SVC=$$(echo "$$line" | awk '{print $$1}'); \
+			STATE=$$(echo "$$line" | cut -d' ' -f2-); \
+			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)%s$(RESET)\n' "$$SVC" "$$STATE"; \
+		elif echo "$$line" | grep -qi "(unhealthy)"; then \
+			SVC=$$(echo "$$line" | awk '{print $$1}'); \
+			STATE=$$(echo "$$line" | cut -d' ' -f2-); \
+			printf '  $(RED)●$(RESET) %-22s $(RED)%s$(RESET)\n' "$$SVC" "$$STATE"; \
+		elif echo "$$line" | grep -qi "^[a-z]"; then \
+			SVC=$$(echo "$$line" | awk '{print $$1}'); \
+			STATE=$$(echo "$$line" | cut -d' ' -f2-); \
+			printf '  $(YELLOW)◐$(RESET) %-22s $(YELLOW)%s$(RESET)\n' "$$SVC" "$$STATE"; \
+		fi; \
+	done
 	@echo ""
-	@$(MAKE) --no-print-directory provider-status
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 🔌 gRPC Health Probes                                          │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@for pair in "llm_service:$(PORT_LLM)" "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
+		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
+		if grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s 2>/dev/null; then \
+			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		else \
+			printf '  $(RED)○$(RESET) %-22s $(RED)unreachable$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		fi; \
+	done
+	@for pair in "ui_service:5001" "dashboard_service:8001" "bridge_service:8100"; do \
+		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
+		if curl -sf http://localhost:$$PORT/health > /dev/null 2>&1 || curl -sf http://localhost:$$PORT > /dev/null 2>&1; then \
+			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		else \
+			printf '  $(RED)○$(RESET) %-22s $(RED)unreachable$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		fi; \
+	done
+	@for pair in "prometheus:9090" "grafana:3001" "otel-collector:13133"; do \
+		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
+		if curl -sf http://localhost:$$PORT > /dev/null 2>&1 || curl -sf http://localhost:$$PORT/-/healthy > /dev/null 2>&1; then \
+			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		else \
+			printf '  $(RED)○$(RESET) %-22s $(RED)unreachable$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		fi; \
+	done
+	@echo ""
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 🤖 LLM Provider                                                │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@if [ -f $(ENV_FILE) ]; then \
+		PROVIDER=$$(grep -E "^LLM_PROVIDER=" $(ENV_FILE) | cut -d= -f2); \
+		MODEL=$$(grep -E "^LLM_PROVIDER_MODEL=" $(ENV_FILE) | cut -d= -f2); \
+		printf '  Provider: $(BOLD)$(CYAN)%s$(RESET)\n' "$$PROVIDER"; \
+		printf '  Model:    $(BOLD)%s$(RESET)\n' "$$MODEL"; \
+		if [ "$$PROVIDER" = "openclaw" ]; then \
+			URL=$$(grep -E "^OPENCLAW_URL=" $(ENV_FILE) | cut -d= -f2); \
+			printf '  Gateway:  $(GREEN)%s$(RESET)\n' "$${URL:-http://host.docker.internal:18789/v1}"; \
+		fi; \
+	fi
+	@echo ""
+
+# Verbose status — full port map, resource usage, uptime
+status-verbose: status
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 🗺️  Port Map                                                    │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@printf '  $(BOLD)%-22s %-8s %-10s %-30s$(RESET)\n' "SERVICE" "PORT" "PROTOCOL" "URL"
+	@printf '  %-22s %-8s %-10s %-30s\n' "──────────────────────" "────────" "──────────" "──────────────────────────────"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "orchestrator"       "50054" "gRPC"     "grpcurl -plaintext localhost:50054"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "llm_service"        "50051" "gRPC"     "grpcurl -plaintext localhost:50051"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "chroma_service"     "50052" "gRPC"     "grpcurl -plaintext localhost:50052"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "sandbox_service"    "50057" "gRPC"     "grpcurl -plaintext localhost:50057"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "ui_service"         "5001"  "HTTP"     "http://localhost:5001"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "dashboard_service"  "8001"  "HTTP"     "http://localhost:8001"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "bridge_service"     "8100"  "HTTP/MCP" "http://localhost:8100"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "grafana"            "3001"  "HTTP"     "http://localhost:3001"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "prometheus"         "9090"  "HTTP"     "http://localhost:9090"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "otel-collector"     "4317"  "OTLP"     "localhost:4317 (gRPC)"
+	@printf '  %-22s %-8s %-10s $(CYAN)%-30s$(RESET)\n' "tempo"              "3200"  "HTTP"     "http://localhost:3200"
+	@echo ""
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 📊 Resource Usage                                               │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@$(DOCKER_CMD) stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" $$($(COMPOSE_CMD) ps -q 2>/dev/null) 2>/dev/null | \
+		while IFS= read -r line; do printf '  %s\n' "$$line"; done
+	@echo ""
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 🏷️  Docker Images                                               │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@$(DOCKER_CMD) images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep -E "grpc_llm|grafana|prom|tempo|otel" | \
+		while IFS= read -r line; do printf '  %s\n' "$$line"; done
+	@echo ""
+
+# Quick usage guide for every component
+status-guide:
+	@echo ""
+	@printf '$(BOLD)$(CYAN)╔══════════════════════════════════════════════════════════════════╗$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)║             Component Testing & Usage Guide                     ║$(RESET)\n'
+	@printf '$(BOLD)$(CYAN)╚══════════════════════════════════════════════════════════════════╝$(RESET)\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🧠 Orchestrator$(RESET) (gRPC :50054)\n'
+	@printf '  List services:   grpcurl -plaintext localhost:50054 list\n'
+	@printf '  Send query:      make query Q="What is 2+2?"\n'
+	@printf '  Interactive:     make chat\n'
+	@printf '  Logs:            make status orchestrator log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🤖 LLM Service$(RESET) (gRPC :50051)\n'
+	@printf '  Health:          grpc_health_probe -addr=localhost:50051\n'
+	@printf '  Switch provider: make provider-openai | make provider-anthropic\n'
+	@printf '  Logs:            make status llm_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 📚 Chroma Service$(RESET) (gRPC :50052)\n'
+	@printf '  Health:          grpc_health_probe -addr=localhost:50052\n'
+	@printf '  Logs:            make status chroma_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🔒 Sandbox Service$(RESET) (gRPC :50057)\n'
+	@printf '  Health:          grpc_health_probe -addr=localhost:50057\n'
+	@printf '  Logs:            make status sandbox_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🖥️  UI Service$(RESET) (HTTP :5001)\n'
+	@printf '  Open:            open http://localhost:5001\n'
+	@printf '  Dev mode:        make dev-ui-local\n'
+	@printf '  Logs:            make status ui_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 📊 Dashboard$(RESET) (HTTP :8001)\n'
+	@printf '  Finance:         open http://localhost:8001\n'
+	@printf '  API docs:        open http://localhost:8001/docs\n'
+	@printf '  Health:          curl -s http://localhost:8001/health | python3 -m json.tool\n'
+	@printf '  Logs:            make status dashboard_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🌉 MCP Bridge$(RESET) (HTTP :8100)\n'
+	@printf '  Tools:           make bridge-tools\n'
+	@printf '  Query:           make bridge-query Q="Hello"\n'
+	@printf '  Logs:            make status bridge_service log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 📈 Grafana$(RESET) (HTTP :3001)\n'
+	@printf '  Open:            open http://localhost:3001  (admin/admin)\n'
+	@printf '  Dashboards:      gRPC LLM folder → Overview, Health, Providers, Tools\n'
+	@printf '  Logs:            make status grafana log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 📡 Prometheus$(RESET) (HTTP :9090)\n'
+	@printf '  Open:            open http://localhost:9090\n'
+	@printf '  Targets:         open http://localhost:9090/targets\n'
+	@printf '  Logs:            make status prometheus log\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN) 🧪 Testing$(RESET)\n'
+	@printf '  All tests:       make test\n'
+	@printf '  Unit:            make test-unit\n'
+	@printf '  Integration:     make test-integration\n'
+	@printf '  Evals:           make eval\n'
+	@echo ""
+
+# Per-service log viewer — make status <service> log
+status-%:
+	@SVC="$*"; \
+	if echo "$$SVC" | grep -q " log$$"; then \
+		SVC=$$(echo "$$SVC" | sed 's/ log$$//'); \
+		$(COMPOSE_CMD) logs --tail=80 -f "$$SVC"; \
+	else \
+		printf '$(YELLOW)Unknown sub-command. Use: make status $$SVC log$(RESET)\n'; \
+	fi
 
 # ============================================================================
 # BUILD COMMANDS
@@ -255,28 +452,10 @@ quick-%: build-% restart-%
 # LLM PROVIDER MANAGEMENT
 # ============================================================================
 provider-status:
-	@printf '$(BOLD)$(CYAN)LLM Provider Configuration:$(RESET)\n'
-	@echo "─────────────────────────────────────────"
 	@if [ -f $(ENV_FILE) ]; then \
 		PROVIDER=$$(grep -E "^LLM_PROVIDER=" $(ENV_FILE) | cut -d= -f2); \
 		MODEL=$$(grep -E "^LLM_PROVIDER_MODEL=" $(ENV_FILE) | cut -d= -f2); \
-		echo "  Provider: $(BOLD)$$PROVIDER$(RESET)"; \
-		echo "  Model:    $(BOLD)$$MODEL$(RESET)"; \
-		if [ "$$PROVIDER" = "perplexity" ]; then \
-			KEY=$$(grep -E "^PERPLEXITY_API_KEY=" $(ENV_FILE) | cut -d= -f2); \
-			if [ -n "$$KEY" ]; then echo "  API Key:  $(GREEN)configured$(RESET)"; else echo "  API Key:  $(RED)missing$(RESET)"; fi; \
-		elif [ "$$PROVIDER" = "openai" ]; then \
-			KEY=$$(grep -E "^OPENAI_API_KEY=" $(ENV_FILE) | cut -d= -f2); \
-			if [ -n "$$KEY" ]; then echo "  API Key:  $(GREEN)configured$(RESET)"; else echo "  API Key:  $(RED)missing$(RESET)"; fi; \
-		elif [ "$$PROVIDER" = "anthropic" ]; then \
-			KEY=$$(grep -E "^ANTHROPIC_API_KEY=" $(ENV_FILE) | cut -d= -f2); \
-			if [ -n "$$KEY" ]; then echo "  API Key:  $(GREEN)configured$(RESET)"; else echo "  API Key:  $(RED)missing$(RESET)"; fi; \
-		elif [ "$$PROVIDER" = "openclaw" ]; then \
-			URL=$$(grep -E "^OPENCLAW_URL=" $(ENV_FILE) | cut -d= -f2); \
-			if [ -n "$$URL" ]; then echo "  Gateway:  $(GREEN)$$URL$(RESET)"; else echo "  Gateway:  $(GREEN)host.docker.internal:18789$(RESET) (default)"; fi; \
-		fi; \
-	else \
-		echo "  $(RED)No .env file found$(RESET)"; \
+		printf '  Provider: $(BOLD)$(CYAN)%s$(RESET)  Model: $(BOLD)%s$(RESET)\n' "$$PROVIDER" "$$MODEL"; \
 	fi
 
 provider-local:
@@ -488,29 +667,17 @@ test-tools:
 	@cd tests && python -m pytest unit/test_builtin_tools.py -v
 
 # ============================================================================
-# HEALTH CHECKS
+# HEALTH CHECKS (used internally, prefer `make status` for user-facing)
 # ============================================================================
 health:
-	@printf '$(BOLD)$(CYAN)Service Health:$(RESET)\n'
-	@echo "─────────────────────────────────────────"
-	@printf "  %-20s " "llm_service:"; \
-		(grpc_health_probe -addr=localhost:$(PORT_LLM) -connect-timeout=2s 2>/dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
-	@printf "  %-20s " "chroma_service:"; \
-		(grpc_health_probe -addr=localhost:$(PORT_CHROMA) -connect-timeout=2s 2>/dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
-	@printf "  %-20s " "orchestrator:"; \
-		(grpc_health_probe -addr=localhost:$(PORT_ORCHESTRATOR) -connect-timeout=2s 2>/dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
-	@printf "  %-20s " "registry_service:"; \
-		(grpc_health_probe -addr=localhost:$(PORT_REGISTRY) -connect-timeout=2s 2>/dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
-	@printf "  %-20s " "sandbox_service:"; \
-		(grpc_health_probe -addr=localhost:$(PORT_SANDBOX) -connect-timeout=2s 2>/dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
-	@printf "  %-20s " "ui_service:"; \
-		(curl -s http://localhost:$(PORT_UI) > /dev/null && \
-		echo "$(GREEN)● healthy$(RESET)") || echo "$(RED)○ unhealthy$(RESET)"
+	@for pair in "llm_service:$(PORT_LLM)" "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
+		SVC=$${pair%%:*}; PORT=$${pair##*:}; \
+		if grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s 2>/dev/null; then \
+			printf '  $(GREEN)●$(RESET) %-20s $(GREEN)healthy$(RESET)\n' "$$SVC"; \
+		else \
+			printf '  $(RED)○$(RESET) %-20s $(RED)unreachable$(RESET)\n' "$$SVC"; \
+		fi; \
+	done
 
 health-watch:
 	@watch -n 5 '$(MAKE) --no-print-directory health'
@@ -676,11 +843,6 @@ logs-orch:
 # Tail all logs with limited history
 logs-tail:
 	@$(COMPOSE_CMD) logs -f --tail=50
-
-# Health check all services (enhanced view)
-health-all:
-	@printf '$(CYAN)Checking service health...$(RESET)\n'
-	@$(COMPOSE_CMD) ps --format "table {{.Name}}\t{{.Status}}"
 
 # ============================================================================
 # Observability Stack Commands

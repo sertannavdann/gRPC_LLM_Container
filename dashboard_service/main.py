@@ -533,6 +533,9 @@ async def bank_summary(
     group_by: str = Query("category", description="Group by: category, company, month, year"),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    category: Optional[str] = Query(None, description="Spending category filter"),
+    account: Optional[str] = Query(None, description="Account type filter (credit/chequing)"),
+    search: Optional[str] = Query(None, description="Text search on descriptions"),
 ):
     """Get aggregated spending summary."""
     try:
@@ -540,6 +543,9 @@ async def bank_summary(
             group_by=group_by,
             date_from=date_from,
             date_to=date_to,
+            category=category,
+            account=account,
+            search=search,
         )
     except Exception as e:
         logger.error(f"Error fetching bank summary: {e}")

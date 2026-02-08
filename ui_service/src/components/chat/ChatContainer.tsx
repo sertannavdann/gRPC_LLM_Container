@@ -196,7 +196,7 @@ export function ChatContainer() {
   };
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-full">
       {/* Conversation History Sidebar */}
       <ConversationHistory
         currentConversationId={conversationId}
@@ -281,7 +281,7 @@ export function ChatContainer() {
 
       {/* Dashboard Panel - Side Panel */}
       {isDashboardOpen && !isDashboardFullscreen && (
-        <div className="w-[450px] border-l border-gray-800 flex-shrink-0 overflow-hidden">
+        <div className="w-[min(450px,40vw)] min-w-[320px] border-l border-gray-800 flex-shrink-0 overflow-hidden">
           <Dashboard 
             onToggleFullscreen={() => setIsDashboardFullscreen(true)}
             onClose={() => setIsDashboardOpen(false)}

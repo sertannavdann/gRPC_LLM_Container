@@ -3,10 +3,58 @@
  * 
  * Fetches aggregated user data from the dashboard service.
  * Returns unified context with finance, calendar, health, and navigation data.
+ * Finance data is fetched live from the dashboard_service bank endpoints.
  */
 import { NextRequest, NextResponse } from 'next/server';
 
-// Mock data for development - matches canonical schema format
+const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard_service:8001';
+
+// ---------- Real finance data fetcher ----------
+async function fetchRealFinance(): Promise<any> {
+  try {
+    const [summaryRes, txnRes] = await Promise.all([
+      fetch(`${DASHBOARD_SERVICE}/bank/summary?group_by=category`, { next: { revalidate: 60 } }),
+      fetch(`${DASHBOARD_SERVICE}/bank/transactions?per_page=20&sort=timestamp&sort_dir=desc`, { next: { revalidate: 60 } }),
+    ]);
+
+    if (!summaryRes.ok || !txnRes.ok) throw new Error('Bank API unavailable');
+
+    const summary = await summaryRes.json();
+    const txnData = await txnRes.json();
+
+    const totalExpenses = summary.groups
+      .filter((g: any) => g.debits > 0)
+      .reduce((s: number, g: any) => s + g.debits, 0);
+    const totalIncome = summary.groups.reduce((s: number, g: any) => s + g.credits, 0);
+
+    // Map transactions to canonical FinancialTransaction schema
+    const transactions = txnData.transactions.map((t: any) => ({
+      id: t.id || `bank:${t.timestamp}:${t.merchant}`,
+      timestamp: t.timestamp,
+      amount: t.metadata?.is_debit === false ? t.amount : -t.amount,
+      currency: 'CAD',
+      category: t.metadata?.spending_category || t.category || 'Other',
+      merchant: t.merchant || 'Unknown',
+      account_id: t.metadata?.account_type || 'unknown',
+      pending: false,
+      platform: 'cibc',
+    }));
+
+    return {
+      transactions,
+      recent_count: txnData.total || transactions.length,
+      total_expenses_period: totalExpenses,
+      total_income_period: totalIncome,
+      net_cashflow: totalIncome - totalExpenses,
+      platforms: ['cibc'],
+    };
+  } catch (err) {
+    console.warn('[Dashboard API] Bank fetch failed, using fallback:', (err as Error).message);
+    return null;
+  }
+}
+
+// ---------- Mock fallback data ----------
 const mockFinanceData = {
   transactions: Array.from({ length: 20 }, (_, i) => ({
     id: `mock:txn_${i}`,
@@ -138,10 +186,9 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get('category');
-    const refresh = searchParams.get('refresh') === 'true';
     
-    // In production, this would call the Python dashboard_service
-    // For now, return mock data
+    // Fetch real finance data, fall back to mock if service is unavailable
+    const financeData = await fetchRealFinance() || mockFinanceData;
     
     // Set next_3 from events
     mockCalendarData.next_3 = mockCalendarData.events.slice(0, 3);
@@ -200,7 +247,7 @@ export async function GET(request: NextRequest) {
     // If specific category requested
     if (category) {
       const categoryData: Record<string, any> = {
-        finance: mockFinanceData,
+        finance: financeData,
         calendar: mockCalendarData,
         health: mockHealthData,
         navigation: mockNavigationData,
@@ -216,7 +263,7 @@ export async function GET(request: NextRequest) {
     const context = {
       user_id: 'demo_user',
       context: {
-        finance: mockFinanceData,
+        finance: financeData,
         calendar: mockCalendarData,
         health: mockHealthData,
         navigation: mockNavigationData,

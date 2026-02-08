@@ -133,17 +133,39 @@ class BankService:
         group_by: str = "category",
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        category: Optional[str] = None,
+        account: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Aggregate transactions by category, company, month, or year."""
         await self._ensure_loaded()
 
         filtered = self._transactions
 
+        if category:
+            filtered = [t for t in filtered if t.get("spending_category", "").lower() == category.lower()]
+
+        if account:
+            filtered = [
+                t for t in filtered
+                if account.lower() in t.get("account_type", "").lower()
+                or account.lower() in t.get("account_id", "").lower()
+            ]
+
         if date_from:
             filtered = [t for t in filtered if t["timestamp"] >= date_from]
         if date_to:
             date_to_end = date_to + "T23:59:59" if "T" not in date_to else date_to
             filtered = [t for t in filtered if t["timestamp"] <= date_to_end]
+
+        if search:
+            search_lower = search.lower()
+            filtered = [
+                t for t in filtered
+                if search_lower in t.get("merchant", "").lower()
+                or search_lower in t.get("description", "").lower()
+                or search_lower in t.get("spending_category", "").lower()
+            ]
 
         groups: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {"total": 0.0, "count": 0, "debits": 0.0, "credits": 0.0}
