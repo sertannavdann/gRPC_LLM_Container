@@ -46,7 +46,7 @@ BOLD := \033[1m
 # -----------------------------------------------------------------------------
 # PHONY Declarations
 # -----------------------------------------------------------------------------
-.PHONY: help all build up down restart logs clean status status-verbose status-guide health \
+.PHONY: help all build up down restart logs clean status status-verbose status-very-verbose status-guide health \
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
@@ -72,6 +72,7 @@ help:
 	@printf '  $(CYAN)make stop$(RESET)               - Stop all services\n'
 	@printf '  $(CYAN)make status$(RESET)             - Containers + health + provider\n'
 	@printf '  $(CYAN)make status verbose$(RESET)     - + port map, resources, images\n'
+	@printf '  $(CYAN)make status very-verbose$(RESET) - + recursive file listing per container\n'
 	@printf '  $(CYAN)make status guide$(RESET)       - How to test every component\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)🔧 Service Management:$(RESET)\n'
@@ -351,6 +352,91 @@ status-verbose: status
 	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
 	@$(DOCKER_CMD) images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep -E "grpc_llm|grafana|prom|tempo|otel" | \
 		while IFS= read -r line; do printf '  %s\n' "$$line"; done
+	@echo ""
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 💾 Image Size Breakdown (largest first)                        │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@printf '  $(BOLD)%-35s %10s$(RESET)\n' "IMAGE" "SIZE"
+	@printf '  %-35s %10s\n' "───────────────────────────────────" "──────────"
+	@$(DOCKER_CMD) images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}' | \
+		grep -E 'grpc_llm|grafana|prom|tempo|otel' | \
+		awk -F'\t' '{ \
+			raw = $$2; gsub(/[[:space:]]/, "", raw); \
+			val = raw + 0; \
+			if (raw ~ /GB/) val = val * 1024; \
+			printf "%012.2f\t%s\t%s\n", val, $$1, raw; \
+		}' | sort -rn | \
+		while IFS=$$'\t' read -r sortkey name size; do \
+			short=$$(echo "$$name" | sed 's/grpc_llm-//; s/:latest//'); \
+			if echo "$$size" | grep -q 'GB'; then \
+				printf '  $(RED)%-35s %10s$(RESET)\n' "$$short" "$$size"; \
+			else \
+				printf '  $(GREEN)%-35s %10s$(RESET)\n' "$$short" "$$size"; \
+			 fi; \
+		done
+	@echo ""
+	@# Flag stale images not in current compose
+	@STALE=$$($(DOCKER_CMD) images --format '{{.Repository}}' | grep 'grpc_llm' | sort | \
+		comm -23 - <($(COMPOSE_CMD) config --services 2>/dev/null | sed 's/^/grpc_llm-/' | sort) 2>/dev/null); \
+	if [ -n "$$STALE" ]; then \
+		printf '  $(YELLOW)⚠  Stale images (not in docker-compose):$(RESET)\n'; \
+		for img in $$STALE; do \
+			SZ=$$($(DOCKER_CMD) images --format '{{.Size}}' "$$img" 2>/dev/null | head -1); \
+			printf '     $(YELLOW)%-35s %s$(RESET)\n' "$$img" "$$SZ"; \
+		done; \
+		printf '     $(YELLOW)Clean with: docker rmi %s$(RESET)\n' "$$STALE"; \
+		echo ""; \
+	fi
+
+# Very-verbose status — per-container recursive file listing + largest files
+status-very-verbose: status-verbose
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 📂 Per-Container File System (top 15 largest files each)       │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@for svc in $$($(COMPOSE_CMD) config --services 2>/dev/null); do \
+		CID=$$($(COMPOSE_CMD) ps -q $$svc 2>/dev/null); \
+		if [ -z "$$CID" ]; then \
+			printf '\n  $(YELLOW)◌ %-20s (not running — skipped)$(RESET)\n' "$$svc"; \
+			continue; \
+		fi; \
+		TOTAL=$$($(DOCKER_CMD) exec $$CID du -sh / 2>/dev/null | awk '{print $$1}'); \
+		if [ -z "$$TOTAL" ] || echo "$$TOTAL" | grep -qiE 'OCI|error|exec'; then \
+			printf '\n  $(YELLOW)▸ %-20s  (minimal image — no shell)$(RESET)\n' "$$svc"; \
+			continue; \
+		fi; \
+		printf '\n  $(BOLD)$(CYAN)▸ %-20s  total: %s$(RESET)\n' "$$svc" "$$TOTAL"; \
+		printf '  %-50s %10s\n' "──────────────────────────────────────────────────" "──────────"; \
+		$(DOCKER_CMD) exec $$CID sh -c 'find / -type f -exec du -k {} + 2>/dev/null | sort -rn | head -15' 2>/dev/null | \
+			while read -r kb path; do \
+				if [ "$$kb" -ge 1048576 ]; then \
+					human=$$(awk "BEGIN{printf \"%.1fG\", $$kb/1048576}"); \
+					printf '  $(RED)  %-48s %10s$(RESET)\n' "$$path" "$$human"; \
+				elif [ "$$kb" -ge 1024 ]; then \
+					human=$$(awk "BEGIN{printf \"%.1fM\", $$kb/1024}"); \
+					if [ "$$kb" -ge 102400 ]; then \
+						printf '  $(YELLOW)  %-48s %10s$(RESET)\n' "$$path" "$$human"; \
+					else \
+						printf '    %-48s %10s\n' "$$path" "$$human"; \
+					fi; \
+				else \
+					printf '    %-48s %10sK\n' "$$path" "$$kb"; \
+				fi; \
+			done; \
+	done
+	@echo ""
+	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
+	@printf '$(BOLD) │ 📁 Directory Tree (depth 3, /app only)                         │$(RESET)\n'
+	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
+	@for svc in $$($(COMPOSE_CMD) config --services 2>/dev/null); do \
+		CID=$$($(COMPOSE_CMD) ps -q $$svc 2>/dev/null); \
+		if [ -z "$$CID" ]; then continue; fi; \
+		printf '\n  $(BOLD)$(CYAN)▸ %s$(RESET)\n' "$$svc"; \
+		if ! $(DOCKER_CMD) exec $$CID sh -c 'true' >/dev/null 2>&1; then \
+			printf '    $(YELLOW)(minimal image — no shell)$(RESET)\n'; \
+			continue; \
+		fi; \
+		$(DOCKER_CMD) exec $$CID sh -c 'if [ -d /app ]; then find /app -maxdepth 3 -type d | sort | head -40 | sed "s|^|    |"; else echo "    (no /app directory)"; fi' 2>/dev/null; \
+	done
 	@echo ""
 
 # Quick usage guide for every component
