@@ -456,7 +456,94 @@ graph TD
 
 ---
 
-## 12. Future Roadmap
+## 12. Prompt Flow Integration
+
+### 12.1 Overview
+
+Microsoft Prompt Flow provides visual workflow editing, batch evaluation, and prompt versioning capabilities.
+
+```mermaid
+graph TD
+    subgraph "Prompt Flow Workspace"
+        PF[📐 Flow Editor<br/>VS Code] -->|Edit| Flow[flow.dag.yaml]
+        Flow -->|Nodes| N1[intent_analyzer.py]
+        Flow -->|Nodes| N2[context_retriever.py]
+        Flow -->|Nodes| N3[tool_selector.jinja2]
+        Flow -->|Nodes| N4[tool_executor.py]
+        Flow -->|Nodes| N5[synthesize_response.jinja2]
+    end
+    
+    subgraph "Execution"
+        Flow -->|pf flow test| Test[Test Run]
+        Flow -->|pf flow serve| API[HTTP API :8080]
+        Flow -->|pf run| Batch[Batch Evaluation]
+    end
+    
+    subgraph "Backend Services"
+        N2 -->|gRPC| Chroma[📚 ChromaDB :50052]
+        N4 -->|gRPC| Sandbox[🔒 Sandbox :50057]
+        N4 -->|gRPC| LLM[🤖 LLM :50051]
+    end
+```
+
+### 12.2 Directory Structure
+
+```
+promptflow/
+├── connections/          # LLM provider configs
+├── flows/
+│   ├── agent_workflow/  # Main agent DAG
+│   └── evaluator/       # Evaluation flow
+├── data/                # Test datasets
+└── prompts/             # Versioned prompt templates
+```
+
+### 12.3 Agent Workflow DAG
+
+| Node | Type | Purpose |
+|------|------|---------|
+| `intent_analyzer` | Python | Pattern matching for tools |
+| `context_retriever` | Python | ChromaDB semantic search |
+| `tool_selector` | LLM (Jinja2) | AI-powered tool selection |
+| `tool_executor` | Python | gRPC tool execution |
+| `synthesize_response` | LLM (Jinja2) | Final response generation |
+
+### 12.4 Evaluation Framework
+
+| Metric | Description |
+|--------|-------------|
+| Tool Precision | % of selected tools that were correct |
+| Tool Recall | % of expected tools that were selected |
+| Tool F1 | Harmonic mean of precision/recall |
+| Answer Match | Whether expected keywords appear |
+
+### 12.5 Prompt Variants (A/B Testing)
+
+| Variant | Use Case |
+|---------|----------|
+| `concise` | Brief, focused responses |
+| `detailed` | Comprehensive explanations |
+| `professional` | Formal business tone |
+
+### 12.6 Commands
+
+```bash
+# Run agent workflow
+make pf-run Q="What is 25 * 17?"
+
+# Run batch evaluation
+make pf-eval
+
+# Serve as API
+make pf-serve
+
+# Start trace UI
+make pf-trace
+```
+
+---
+
+## 13. Future Roadmap
 
 | Phase | Feature | Status |
 |-------|---------|--------|
@@ -464,14 +551,15 @@ graph TD
 | Phase 2 | Self-Consistency Scoring | ✅ Complete |
 | Phase 3 | Sandbox Service | ✅ Complete |
 | Phase 4 | OpenClaw MCP Bridge | ✅ Complete |
-| Phase 5 | Enhanced RAG Pipeline | 🔄 Planned |
-| Phase 6 | Multi-modal Support (Image/Audio) | 🔄 Planned |
-| Phase 7 | Kubernetes Helm Charts | 🔄 Planned |
-| Phase 8 | ADPO Training Loop | 🔄 Planned |
+| Phase 5 | Prompt Flow Integration | ✅ Complete |
+| Phase 6 | Enhanced RAG Pipeline | 🔄 Planned |
+| Phase 7 | Multi-modal Support (Image/Audio) | 🔄 Planned |
+| Phase 8 | Kubernetes Helm Charts | 🔄 Planned |
+| Phase 9 | ADPO Training Loop | 🔄 Planned |
 
 ---
 
-## 13. Quick Reference Commands
+## 14. Quick Reference Commands
 
 ```bash
 # Build and start all services
