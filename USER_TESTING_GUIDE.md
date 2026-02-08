@@ -10,6 +10,7 @@
 ## Table of Contents
 
 1. [Getting Started](#1-getting-started)
+   - [Docker Rebuild Guidance](#-docker-rebuild-guidance)
 2. [Architecture Overview](#2-architecture-overview)
 3. [Service Port Map](#3-service-port-map)
 4. [Functionality Set](#4-functionality-set)
@@ -23,6 +24,9 @@
    - [6.6 Dashboard & Context](#66-dashboard--context)
    - [6.7 Finance Dashboard](#67-finance-dashboard)
    - [6.8 MCP Bridge Tools](#68-mcp-bridge-tools)
+   - [6.9 Weather Integration](#69-weather-integration)
+   - [6.10 Gaming Integration](#610-gaming-integration)
+   - [6.11 Integrations Configuration Page](#611-integrations-configuration-page)
 7. [Observability & Monitoring](#7-observability--monitoring)
 8. [Error Handling Tests](#8-error-handling-tests)
 9. [Refactoring Changelog](#9-refactoring-changelog)
@@ -52,6 +56,87 @@ make status
 ```bash
 make down
 ```
+
+### 🐳 Docker Rebuild Guidance
+
+> **Key rule**: Docker images are snapshots. If you change code on disk the running containers still have the _old_ code until you rebuild.
+
+#### When do I need to rebuild?
+
+| What changed? | Rebuild needed? | Command |
+|---------------|-----------------|--------|
+| Python source in a service folder (e.g. `orchestrator/*.py`) | **Yes** — image must be rebuilt | `make quick-orchestrator` |
+| `requirements.txt` / new pip dependency | **Yes** — layer with `pip install` is cached | `make rebuild-orchestrator` (no-cache) |
+| `Dockerfile` itself | **Yes** | `make rebuild-orchestrator` |
+| `docker-compose.yaml` env vars or ports only | **No** — recreate is enough | `make restart-orchestrator` |
+| Config files mounted as volumes (`.env`, `otel-collector-config.yaml`, Grafana provisioning) | **No** — changes are live | Restart the service: `make restart-grafana` |
+| Next.js / UI code (`ui_service/src/**`) | **Yes** — built inside container | `make quick-ui_service` |
+| Proto files (`shared/proto/`) | **Yes** — regenerate + rebuild consumers | `make proto-gen && make rebuild-all` |
+| Multiple services touched | **Yes** | `make rebuild-all` |
+
+#### Rebuild cheat-sheet
+
+```bash
+# ── Single service (fast — uses Docker cache) ──────────────
+make quick-orchestrator          # build + restart orchestrator
+make quick-dashboard             # build + restart dashboard_service
+make quick-ui_service             # build + restart UI
+
+# ── Single service (no cache — use when deps changed) ──────
+make rebuild-orchestrator         # rmi old image → build --no-cache → recreate
+
+# ── Everything ─────────────────────────────────────────────
+make build                        # parallel build all (uses cache)
+make rebuild-all                  # no-cache build all → force-recreate
+make rebuild                      # alias: build-clean + restart
+
+# ── Nuclear option (remove images + volumes) ───────────────
+make clean-docker                 # prune containers, images, volumes
+make start                        # build + up + status (fresh start)
+```
+
+#### After pulling new code / switching branches
+
+```bash
+git pull                          # or: git checkout <branch>
+make rebuild-all                  # full no-cache rebuild
+make status                       # verify all services are healthy
+```
+
+#### Verify your code is inside the container
+
+```bash
+make verify-code                  # prints orchestrator code version
+make shell-orchestrator           # open a shell, inspect files manually
+```
+
+#### Troubleshooting containers
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| Service shows **Exited (1)** | Crash on startup — check logs | `make logs-<svc>` then fix + `make quick-<svc>` |
+| Code changes not reflected | Docker cache served old layer | `make rebuild-<svc>` (no-cache) |
+| "Module not found" error | Stale image missing new pip dep | `make rebuild-all` |
+| Port already in use | Old container lingering | `make down && make up` |
+| Grafana dashboards empty | Provisioning not mounted | `make restart-grafana` |
+| UI stuck on old version | Next.js built into image | `make quick-ui_service` |
+| `.env` changes not picked up | Env file is volume-mounted | `make restart` (no rebuild needed) |
+| All services unhealthy | Docker Desktop restarted | `make down && make start` |
+
+#### Service dependency order
+
+Docker Compose handles `depends_on` automatically, but if you're restarting manually:
+
+```
+1. otel-collector, prometheus, tempo, grafana   (observability — no deps)
+2. llm_service, chroma_service, sandbox_service (backends — no deps)
+3. orchestrator                                 (depends on backends)
+4. dashboard_service (dashboard)                (depends on orchestrator)
+5. bridge_service                               (depends on orchestrator)
+6. ui_service                                   (depends on orchestrator + dashboard)
+```
+
+> **Tip**: `make start` does `build → up → status` in the right order. Use it when in doubt.
 
 ---
 
@@ -152,6 +237,7 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 | Chat Interface | http://localhost:5001/chat | — |
 | Dashboard (Next.js) | http://localhost:5001/dashboard | — |
 | Finance (embedded) | http://localhost:5001/finance | — |
+| Integrations | http://localhost:5001/integrations | — |
 | Monitoring (Grafana embed) | http://localhost:5001/monitoring | — |
 | Dashboard API | http://localhost:8001/docs | — |
 | Finance Dashboard (standalone) | http://localhost:8001 | — |
@@ -624,6 +710,158 @@ curl -X POST http://localhost:8100/invoke \
 
 ---
 
+### 6.9 Weather Integration
+
+**Requires**: `OPENWEATHER_API_KEY` in `.env`
+
+> Real weather data is fetched from OpenWeather API and displayed in the dashboard weather widget.
+> The agent can also answer weather queries via `get_user_context(categories=["weather"])`.
+
+#### Test 9.1: Weather Widget (Dashboard)
+| Field | Value |
+|-------|-------|
+| **URL** | http://localhost:5001/dashboard |
+| **Weather widget visible?** | Yes / No |
+| **Shows current temperature?** | Yes / No |
+| **Shows condition (clear/clouds/rain)?** | Yes / No |
+| **Shows humidity, wind, visibility stats?** | Yes / No |
+| **Forecast section displays?** | Yes / No |
+| **Issues/Notes** | |
+
+#### Test 9.2: Weather Context via API
+```bash
+curl http://localhost:8001/context/weather | jq
+```
+| Field | Value |
+|-------|-------|
+| **Returns weather data?** | Yes / No |
+| **Current conditions populated?** | Yes / No |
+| **Forecasts array has entries?** | Yes / No |
+| **Platform shows "openweather"?** | Yes / No |
+
+#### Test 9.3: Weather via Agent Chat
+| Field | Value |
+|-------|-------|
+| **Query** | "What's the weather like right now?" |
+| **Agent calls get_user_context?** | Yes / No |
+| **Response includes temperature?** | Yes / No |
+| **Response includes conditions?** | Yes / No |
+| **Response includes forecast?** | Yes / No |
+
+#### Test 9.4: Weather Alerts
+| Field | Value |
+|-------|-------|
+| **Extreme temp triggers alert?** | Yes / No (test with mock < -20°C or > 35°C) |
+| **Precipitation alert works?** | Yes / No |
+| **Alert shows in dashboard high-priority?** | Yes / No |
+
+---
+
+### 6.10 Gaming Integration
+
+**Requires**: `CLASH_ROYALE_API_KEY` and `CLASH_ROYALE_PLAYER_TAG` in `.env`
+
+> Clash Royale player stats and battle history displayed in the gaming widget.
+
+#### Test 10.1: Gaming Widget (Dashboard)
+| Field | Value |
+|-------|-------|
+| **URL** | http://localhost:5001/dashboard |
+| **Gaming widget visible?** | Yes / No |
+| **Shows player name and trophies?** | Yes / No |
+| **Shows win/loss/win rate stats?** | Yes / No |
+| **Shows clan name?** | Yes / No |
+| **Recent battles listed?** | Yes / No |
+| **Trophy changes color-coded (+green/-red)?** | Yes / No |
+
+#### Test 10.2: Gaming Context via API
+```bash
+curl http://localhost:8001/context/gaming | jq
+```
+| Field | Value |
+|-------|-------|
+| **Returns gaming profile?** | Yes / No |
+| **Trophies, wins, losses populated?** | Yes / No |
+| **Recent battles in metadata?** | Yes / No |
+| **Platform shows "clashroyale"?** | Yes / No |
+
+#### Test 10.3: Gaming via Agent Chat
+| Field | Value |
+|-------|-------|
+| **Query** | "How are my Clash Royale stats looking?" |
+| **Agent retrieves gaming context?** | Yes / No |
+| **Response mentions trophies?** | Yes / No |
+| **Response mentions win rate?** | Yes / No |
+
+---
+
+### 6.11 Integrations Configuration Page
+
+**URL**: http://localhost:5001/integrations
+
+> Allows connecting/disconnecting external services via API key configuration.
+> Credentials are stored in `.env` file and read at runtime.
+
+#### Test 11.1: Page Load
+| Field | Value |
+|-------|-------|
+| **Page loads?** | Yes / No |
+| **Shows "External Services" section?** | Yes / No |
+| **Shows "Built-in Sources" section?** | Yes / No |
+| **Active count badge correct?** | Yes / No |
+| **Navigation bar has "Integrations" link?** | Yes / No |
+
+#### Test 11.2: OpenWeather Connection
+| Field | Value |
+|-------|-------|
+| **Expand OpenWeather card** | Click to expand |
+| **Shows API Key and City fields?** | Yes / No |
+| **Enter API key → click "Connect"** | |
+| **Success message appears?** | Yes / No |
+| **Card shows "Connected" status?** | Yes / No |
+| **Dashboard weather widget populates?** | Yes / No (after refresh) |
+
+#### Test 11.3: Clash Royale Connection
+| Field | Value |
+|-------|-------|
+| **Expand Clash Royale card** | Click to expand |
+| **Shows API Key and Player Tag fields?** | Yes / No |
+| **Enter credentials → click "Connect"** | |
+| **Success message appears?** | Yes / No |
+| **Dashboard gaming widget populates?** | Yes / No (after refresh) |
+
+#### Test 11.4: Google Calendar Connection
+| Field | Value |
+|-------|-------|
+| **Expand Google Calendar card** | Click to expand |
+| **Shows Client ID, Secret, Access Token, Refresh Token fields?** | Yes / No |
+| **Security notice about local storage visible?** | Yes / No |
+| **Password fields toggle visibility (eye icon)?** | Yes / No |
+
+#### Test 11.5: Disconnect Adapter
+| Field | Value |
+|-------|-------|
+| **Click "Disconnect" on connected adapter** | |
+| **Adapter status changes to "Not connected"?** | Yes / No |
+| **Credentials removed from .env?** | Yes / No |
+
+#### Test 11.6: Built-in Sources Display
+| Field | Value |
+|-------|-------|
+| **CIBC shows as always active?** | Yes / No |
+| **Mock adapters show as active?** | Yes / No |
+| **No connect/disconnect buttons for built-in?** | Yes / No |
+
+#### Integrations Page Overall Rating
+| Criteria | Rating (1-5) | Notes |
+|----------|--------------|-------|
+| Ease of setup | | |
+| UI clarity | | |
+| Error handling | | |
+| Security (credential display) | | |
+
+---
+
 ## 7. Observability & Monitoring
 
 ### 7.1 Grafana Setup & Dashboards
@@ -778,6 +1016,12 @@ The following commits document the evolution of the framework:
 
 | Commit | Type | Description |
 |--------|------|-------------|
+| `1cfb228` | **feat** | Phase 7: Real adapter integrations — OpenWeather, Google Calendar, Clash Royale |
+| `ae852ce` | **feat** | UI navigation, finance chart filters, real bank data, responsive layout, observability |
+| `28bcf69` | docs | Add comprehensive user testing guide |
+| `3b5ed39` | docs | Add Prompt Flow integration section to HLD |
+| `56fa758` | build | Add Prompt Flow Makefile targets |
+| `3a7ee86` | **feat** | Add Microsoft Prompt Flow integration |
 | `a9bedac` | chore | Update llm_service and gitignore settings |
 | `5c02893` | docs | Add network documentation and make targets |
 | `de1f727` | **feat** | Add multi-tool intent analysis and guardrails |
@@ -792,7 +1036,7 @@ The following commits document the evolution of the framework:
 | `f9e9531` | test | Enforce strict assertions to expose formatting bugs |
 | `60cba85` | fix | Replace multiprocessing.Queue with subprocess for Docker reliability |
 | `eaa8a9c` | fix | Rewrite crash resume tests for realistic service restart behavior |
-| `554ec98` | merge | Merge remote Cohesion branch - resolve requirements.txt conflict |
+| `554ec98` | merge | Merge remote Cohesion branch — resolve requirements.txt conflict |
 
 ### Feature Highlights
 
@@ -817,6 +1061,28 @@ The following commits document the evolution of the framework:
 - Deduplication of repeated requests
 - Crash recovery without duplicate side effects
 
+#### UI Navigation & Landing Page (`ae852ce`)
+- Persistent top navbar with active-state highlighting
+- Landing page with card-based navigation to Chat, Dashboard, Finance, Monitoring
+- Route pages: `/chat`, `/dashboard`, `/finance`, `/monitoring`
+- Finance chart filters now update all 4 charts + summary cards + transactions
+- Dashboard wired to real bank data with graceful mock fallback
+- Responsive grid layout with CSS clamp for side panels
+- Grafana embedded in Monitoring page with kiosk mode + dashboard tabs
+
+#### Phase 7: Real Adapter Integrations (`1cfb228`)
+- **OpenWeather** adapter — live weather data, forecasts, extreme-temp alerts
+- **Clash Royale** adapter — player stats, battle history, trophy tracking
+- **Google Calendar** adapter — event listing, upcoming schedule
+- Canonical schemas: `WeatherData`, `GamingProfile` in `shared/schemas/canonical.py`
+- Dashboard aggregator extended with weather/gaming category support
+- Integrations configuration page for secure API key management
+
+#### Prompt Flow Integration (`3a7ee86`)
+- Microsoft Prompt Flow pipeline support
+- Makefile targets for flow execution
+- HLD documentation updated
+
 #### Tool Selection Evals (`9df08ec`)
 - Framework for measuring tool routing accuracy
 - Benchmark suite for evaluating improvements
@@ -840,6 +1106,9 @@ Rate each feature's importance (1=Low, 5=Critical):
 | Dashboard | Yes / No | | Yes / No |
 | Finance dashboard | Yes / No | | Yes / No |
 | MCP Bridge | Yes / No | | Yes / No |
+| Weather integration | Yes / No | | Yes / No |
+| Gaming integration | Yes / No | | Yes / No |
+| Integrations page | Yes / No | | Yes / No |
 | Monitoring | Yes / No | | Yes / No |
 
 ### 10.2 Critical Issues Found
