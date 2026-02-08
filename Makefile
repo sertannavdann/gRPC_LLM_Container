@@ -147,6 +147,15 @@ help:
 	@printf '  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge\n'
 	@printf '  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup\n'
 	@echo ""
+	@printf '$(BOLD)$(GREEN)📐 Prompt Flow (Visual Workflow & Evaluation):$(RESET)\n'
+	@printf '  $(CYAN)make pf-run Q=\"...\"$(RESET)     - Run agent workflow with query\n'
+	@printf '  $(CYAN)make pf-run-debug Q=\"...\"$(RESET) - Run with debug output\n'
+	@printf '  $(CYAN)make pf-eval$(RESET)            - Run batch evaluation\n'
+	@printf '  $(CYAN)make pf-serve$(RESET)           - Serve flow as API (port 8080)\n'
+	@printf '  $(CYAN)make pf-trace$(RESET)           - Start trace UI (port 23333)\n'
+	@printf '  $(CYAN)make pf-connections$(RESET)     - List registered connections\n'
+	@printf '  $(CYAN)make pf-build$(RESET)           - Build Docker package\n'
+	@echo ""
 	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service, bridge_service\n'
 	@echo ""
 
@@ -804,6 +813,55 @@ openclaw-setup: bridge-up skill-build
 	@echo "  OpenClaw Gateway:   http://localhost:18789"
 	@echo ""
 	@echo "  To test: make bridge-query Q=\"What services are available?\""
+
+# ============================================================================
+# PROMPT FLOW
+# ============================================================================
+
+# Run Prompt Flow agent workflow
+pf-run:
+	@printf '$(CYAN)Running Prompt Flow agent workflow...$(RESET)\n'
+	@cd promptflow/flows/agent_workflow && pf flow test --flow . --inputs user_query="$(Q)" debug_mode=false
+
+# Run Prompt Flow with debug mode
+pf-run-debug:
+	@printf '$(CYAN)Running Prompt Flow agent workflow (debug)...$(RESET)\n'
+	@cd promptflow/flows/agent_workflow && pf flow test --flow . --inputs user_query="$(Q)" debug_mode=true
+
+# Run batch evaluation
+pf-eval:
+	@printf '$(CYAN)Running Prompt Flow evaluation...$(RESET)\n'
+	@cd promptflow/flows/evaluator && pf flow test --flow . --data ../../data/eval_cases.csv
+
+# Serve Prompt Flow as API
+pf-serve:
+	@printf '$(CYAN)Starting Prompt Flow server on port 8080...$(RESET)\n'
+	@cd promptflow/flows/agent_workflow && pf flow serve --source . --port 8080
+
+# Show Prompt Flow trace UI
+pf-trace:
+	@printf '$(CYAN)Starting Prompt Flow trace UI...$(RESET)\n'
+	@pf service start --port 23333
+
+# Create OpenAI connection
+pf-connection-openai:
+	@printf '$(CYAN)Creating OpenAI connection...$(RESET)\n'
+	@pf connection create --file promptflow/connections/openai.yaml --set api_key=$(OPENAI_API_KEY)
+
+# Create Anthropic connection
+pf-connection-anthropic:
+	@printf '$(CYAN)Creating Anthropic connection...$(RESET)\n'
+	@pf connection create --file promptflow/connections/anthropic.yaml --set api_key=$(ANTHROPIC_API_KEY)
+
+# List connections
+pf-connections:
+	@printf '$(CYAN)Listing Prompt Flow connections...$(RESET)\n'
+	@pf connection list
+
+# Build Prompt Flow package
+pf-build:
+	@printf '$(CYAN)Building Prompt Flow package...$(RESET)\n'
+	@cd promptflow/flows/agent_workflow && pf flow build --source . --output dist --format docker
 
 # ============================================================================
 # Docker Troubleshooting Guide
