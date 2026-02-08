@@ -1,0 +1,8 @@
+# OpenAI Connection
+# Set OPENAI_API_KEY in your environment or .env file
+$schema: https://azuremlschemas.azureedge.net/promptflow/latest/OpenAIConnection.schema.json
+name: openai_connection
+type: open_ai
+api_key: ${env:OPENAI_API_KEY}
+organization: ""  # Optional: your org ID
+base_url: "https://api.openai.com/v1"

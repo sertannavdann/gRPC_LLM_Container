@@ -1,0 +1,5 @@
+promptflow>=1.18.0
+promptflow-tools>=1.6.0
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
+pyyaml>=6.0

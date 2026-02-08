@@ -1,0 +1,12 @@
+# Anthropic Connection
+# Set ANTHROPIC_API_KEY in your environment or .env file
+$schema: https://azuremlschemas.azureedge.net/promptflow/latest/CustomConnection.schema.json
+name: anthropic_connection
+type: custom
+configs:
+  endpoint: "https://api.anthropic.com/v1"
+  model: "claude-3-5-sonnet-20241022"
+  provider: "anthropic"
+  timeout: "60"
+secrets:
+  api_key: ${env:ANTHROPIC_API_KEY}

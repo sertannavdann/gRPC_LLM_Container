@@ -1,0 +1,12 @@
+# Perplexity Connection
+# Set PERPLEXITY_API_KEY in your environment or .env file
+$schema: https://azuremlschemas.azureedge.net/promptflow/latest/CustomConnection.schema.json
+name: perplexity_connection
+type: custom
+configs:
+  endpoint: "https://api.perplexity.ai"
+  model: "llama-3.1-sonar-large-128k-online"
+  provider: "perplexity"
+  timeout: "60"
+secrets:
+  api_key: ${env:PERPLEXITY_API_KEY}

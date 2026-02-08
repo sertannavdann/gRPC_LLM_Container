@@ -1,0 +1,107 @@
+{
+    "package": {},
+    "code": {
+        "intent_analyzer.py": {
+            "type": "python",
+            "inputs": {
+                "query": {
+                    "type": [
+                        "string"
+                    ]
+                }
+            },
+            "description": "Analyze query to determine intent and required tools.\n\nArgs:\n    query: User input query\n    \nReturns:\n    Dictionary with intent analysis results",
+            "source": "intent_analyzer.py",
+            "function": "intent_analyzer"
+        },
+        "context_retriever.py": {
+            "type": "python",
+            "inputs": {
+                "query": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "intent": {
+                    "type": [
+                        "object"
+                    ]
+                }
+            },
+            "description": "Retrieve relevant context from the knowledge base.\n\nArgs:\n    query: User query\n    intent: Intent analysis from previous step\n    \nReturns:\n    Dictionary with retrieved context",
+            "source": "context_retriever.py",
+            "function": "context_retriever"
+        },
+        "tool_selector.jinja2": {
+            "type": "llm",
+            "inputs": {
+                "query": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "available_tools": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "intent": {
+                    "type": [
+                        "string"
+                    ]
+                }
+            },
+            "source": "tool_selector.jinja2"
+        },
+        "tool_executor.py": {
+            "type": "python",
+            "inputs": {
+                "tool_selection": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "query": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "max_iterations": {
+                    "type": [
+                        "int"
+                    ],
+                    "default": "5"
+                }
+            },
+            "description": "Execute selected tools and collect results.\n\nArgs:\n    tool_selection: JSON string from tool_selector LLM\n    query: Original user query\n    max_iterations: Maximum tool execution iterations\n    \nReturns:\n    Dictionary with tool execution results",
+            "source": "tool_executor.py",
+            "function": "tool_executor"
+        },
+        "synthesize_response.jinja2": {
+            "type": "llm",
+            "inputs": {
+                "query": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "context": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "debug_mode": {
+                    "type": [
+                        "string"
+                    ]
+                },
+                "tool_results": {
+                    "type": [
+                        "string"
+                    ]
+                }
+            },
+            "source": "synthesize_response.jinja2"
+        }
+    }
+}

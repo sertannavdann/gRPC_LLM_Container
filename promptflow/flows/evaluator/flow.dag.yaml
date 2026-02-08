@@ -1,0 +1,58 @@
+# Tool Selection Evaluation Flow
+# Evaluates tool selection accuracy against expected results
+$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json
+environment:
+  python_requirements_txt: requirements.txt
+
+inputs:
+  query:
+    type: string
+    description: Test query
+  expected_tools:
+    type: string
+    description: Expected tool names (comma-separated)
+  expected_answer_contains:
+    type: string
+    description: Expected substring in answer
+    default: ""
+
+outputs:
+  tool_accuracy:
+    type: string
+    reference: ${evaluate_tools.accuracy}
+  answer_accuracy:
+    type: string
+    reference: ${evaluate_answer.accuracy}
+  details:
+    type: string
+    reference: ${evaluate_tools.details}
+
+nodes:
+  # Run the agent workflow
+  - name: run_agent
+    type: python
+    source:
+      type: code
+      path: run_agent.py
+    inputs:
+      query: ${inputs.query}
+
+  # Evaluate tool selection
+  - name: evaluate_tools
+    type: python
+    source:
+      type: code
+      path: evaluate_tools.py
+    inputs:
+      actual_tools: ${run_agent.tools_used}
+      expected_tools: ${inputs.expected_tools}
+
+  # Evaluate answer quality
+  - name: evaluate_answer
+    type: python
+    source:
+      type: code
+      path: evaluate_answer.py
+    inputs:
+      actual_answer: ${run_agent.answer}
+      expected_contains: ${inputs.expected_answer_contains}
