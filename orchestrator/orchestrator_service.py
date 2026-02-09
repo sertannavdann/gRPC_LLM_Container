@@ -68,6 +68,7 @@ from tools.builtin.math_solver import math_solver
 from tools.builtin.web_loader import load_web_page
 from tools.builtin.code_executor import execute_code, set_sandbox_client
 from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
+from tools.builtin.knowledge_search import search_knowledge, store_knowledge
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -810,7 +811,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.tool_registry.register(get_user_context)
         self.tool_registry.register(get_daily_briefing)
         self.tool_registry.register(get_commute_time)
-        
+
+        # Register knowledge base (RAG) tools
+        self.tool_registry.register(search_knowledge)
+        self.tool_registry.register(store_knowledge)
+
         # Register code executor if sandbox is available
         if self.sandbox_client:
             self.tool_registry.register(execute_code)
