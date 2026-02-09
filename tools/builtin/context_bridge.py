@@ -1,41 +1,20 @@
 """
-Bridge between tool layer and dashboard aggregator.
-Provides synchronous access to async dashboard data.
+Bridge between tool layer and dashboard service.
+Fetches real context data via HTTP from the dashboard REST API.
 
-This module enables the user_context tool to fetch real data from the
-DashboardAggregator while maintaining backward compatibility with mock data.
+The orchestrator runs in a separate container from the dashboard service,
+so we use HTTP calls instead of direct Python imports.
 """
-import asyncio
 import os
 from typing import Dict, Any, Optional, List
 import logging
 
+import requests
+
 logger = logging.getLogger(__name__)
 
-# Lazy imports to avoid circular dependencies
-_aggregator: Optional[Any] = None
-_loop: Optional[asyncio.AbstractEventLoop] = None
-
-
-def _get_aggregator(user_id: str = "default"):
-    """Get or create dashboard aggregator instance."""
-    global _aggregator, _loop
-
-    if _aggregator is None:
-        try:
-            from dashboard_service.aggregator import DashboardAggregator, UserConfig
-            config = UserConfig(user_id=user_id)
-            _aggregator = DashboardAggregator(config)
-            _loop = asyncio.new_event_loop()
-            logger.info(f"Initialized DashboardAggregator for user: {user_id}")
-        except ImportError as e:
-            logger.warning(f"Could not import DashboardAggregator: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to initialize DashboardAggregator: {e}")
-            return None
-
-    return _aggregator
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
+_REQUEST_TIMEOUT = 10  # seconds
 
 
 def fetch_context_sync(
@@ -43,9 +22,7 @@ def fetch_context_sync(
     user_id: str = "default",
 ) -> Dict[str, Any]:
     """
-    Synchronous wrapper for dashboard aggregator.
-
-    Converts async UnifiedContext to dict format expected by tools.
+    Fetch unified context from the dashboard service via HTTP.
 
     Args:
         categories: Optional list of categories to fetch (e.g., ["calendar", "navigation"])
@@ -54,83 +31,81 @@ def fetch_context_sync(
     Returns:
         Dict with context data or empty dict on failure
     """
-    global _loop
-
     # Check for mock mode
     if os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true":
         logger.debug("Using mock context (USE_MOCK_CONTEXT=true)")
-        return {}  # Return empty to signal caller to use mock
-
-    aggregator = _get_aggregator(user_id)
-    if aggregator is None:
-        logger.warning("Aggregator not available, returning empty context")
         return {}
 
+    # If specific categories requested, fetch each one
+    if categories:
+        result = {}
+        for category in categories:
+            try:
+                resp = requests.get(
+                    f"{DASHBOARD_URL}/context/{category}",
+                    params={"user_id": user_id},
+                    timeout=_REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # /context/{category} returns {"category": ..., "data": {...}}
+                    result[category] = data.get("data", {})
+                else:
+                    logger.warning(f"Dashboard returned {resp.status_code} for {category}")
+            except requests.RequestException as e:
+                logger.warning(f"Failed to fetch {category} context: {e}")
+        return _normalize_context_for_tools(result)
+
+    # Fetch full unified context
     try:
-        # Run async in dedicated loop
-        if _loop is None or _loop.is_closed():
-            _loop = asyncio.new_event_loop()
-
-        context = _loop.run_until_complete(
-            aggregator.get_unified_context(categories=categories)
+        resp = requests.get(
+            f"{DASHBOARD_URL}/context",
+            params={"user_id": user_id},
+            timeout=_REQUEST_TIMEOUT,
         )
-
-        # Convert UnifiedContext to dict format expected by user_context.py
-        if hasattr(context, 'to_dict'):
-            raw_dict = context.to_dict()
-            # The to_dict() returns {"user_id": ..., "context": {...}, ...}
-            # We need to extract the context portion and flatten it
-            result = raw_dict.get("context", {})
-
-            # Ensure each category has the expected structure for compatibility
-            # with _build_*_summary functions in user_context.py
-            return _normalize_context_for_tools(result, context)
-        elif hasattr(context, '__dict__'):
-            return context.__dict__
+        if resp.status_code == 200:
+            raw_dict = resp.json()
+            # /context returns {"user_id": ..., "context": {...}, ...}
+            context_data = raw_dict.get("context", raw_dict)
+            return _normalize_context_for_tools(context_data)
         else:
-            return dict(context) if context else {}
-
-    except Exception as e:
-        logger.error(f"Error fetching context: {e}")
+            logger.warning(f"Dashboard returned {resp.status_code} for unified context")
+            return {}
+    except requests.RequestException as e:
+        logger.warning(f"Dashboard unreachable at {DASHBOARD_URL}: {e}")
         return {}
 
 
-def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) -> Dict[str, Any]:
+def _normalize_context_for_tools(context_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normalize the UnifiedContext output to match the format expected by
+    Normalize dashboard API response to match the format expected by
     user_context.py's _build_*_summary functions.
-
-    The tool layer expects a slightly different structure than what
-    DashboardAggregator produces, so we transform it here.
     """
     result = {}
 
-    # Calendar: ensure 'events' list and 'today_count'
+    # Calendar
     calendar_data = context_dict.get("calendar", {})
     if calendar_data:
         events = calendar_data.get("events", [])
-        # Add urgency field if not present (needed by _build_calendar_summary)
         for event in events:
             if "urgency" not in event:
-                # Use CalendarEvent's urgency logic if available
-                event["urgency"] = event.get("urgency", "MEDIUM")
+                event["urgency"] = "MEDIUM"
         result["calendar"] = {
             "events": events,
             "today_count": calendar_data.get("today_count", len(events)),
         }
 
-    # Finance: ensure proper structure
+    # Finance
     finance_data = context_dict.get("finance", {})
     if finance_data:
-        transactions = finance_data.get("transactions", [])
         result["finance"] = {
-            "transactions": transactions,
+            "transactions": finance_data.get("transactions", []),
             "total_expenses_period": finance_data.get("total_expenses_period", 0),
             "total_income_period": finance_data.get("total_income_period", 0),
             "net_cashflow": finance_data.get("net_cashflow", 0),
         }
 
-    # Health: ensure proper structure
+    # Health
     health_data = context_dict.get("health", {})
     if health_data:
         result["health"] = {
@@ -146,15 +121,12 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) 
             "active_minutes": health_data.get("active_minutes"),
         }
 
-    # Navigation: ensure proper structure
+    # Navigation
     nav_data = context_dict.get("navigation", {})
     if nav_data:
         primary_route = nav_data.get("primary_route", {})
-
-        # Build saved_destinations from routes if available
         saved_destinations = {}
-        routes = nav_data.get("routes", [])
-        for route in routes:
+        for route in nav_data.get("routes", []):
             if isinstance(route, dict):
                 dest = route.get("destination", {})
                 if dest:
@@ -166,7 +138,6 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) 
                         "eta_minutes": route.get("duration_minutes", 0),
                     }
 
-        # Transform primary_route to expected format
         formatted_route = {}
         if primary_route:
             origin = primary_route.get("origin", {})
@@ -185,23 +156,20 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) 
             "saved_destinations": saved_destinations,
         }
 
-    # Weather: pass through structured data
+    # Weather
     weather_data = context_dict.get("weather", {})
     if weather_data:
-        current = weather_data.get("current")
-        forecasts = weather_data.get("forecasts", [])
         result["weather"] = {
-            "current": current,
-            "forecasts": forecasts[:8],
+            "current": weather_data.get("current"),
+            "forecasts": weather_data.get("forecasts", [])[:8],
             "platforms": weather_data.get("platforms", []),
         }
 
-    # Gaming: pass through structured data
+    # Gaming
     gaming_data = context_dict.get("gaming", {})
     if gaming_data:
-        profiles = gaming_data.get("profiles", [])
         result["gaming"] = {
-            "profiles": profiles,
+            "profiles": gaming_data.get("profiles", []),
             "platforms": gaming_data.get("platforms", []),
         }
 
@@ -211,12 +179,3 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled."""
     return os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true"
-
-
-def reset_aggregator():
-    """Reset aggregator instance (useful for testing)."""
-    global _aggregator, _loop
-    if _loop and not _loop.is_closed():
-        _loop.close()
-    _aggregator = None
-    _loop = None
