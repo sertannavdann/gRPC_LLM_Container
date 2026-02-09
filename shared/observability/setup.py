@@ -84,6 +84,10 @@ def setup_observability(
     from .logging_config import configure_logging
     configure_logging(service_name)
 
+    # Suppress noisy OTel SDK internal errors (KeyError in BatchSpanProcessor)
+    otel_internal_logger = logging.getLogger("opentelemetry.sdk._shared_internal")
+    otel_internal_logger.setLevel(logging.CRITICAL)
+
     _initialized = True
     logger.info(
         f"Observability initialized for {service_name}",

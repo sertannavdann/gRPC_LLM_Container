@@ -20,6 +20,8 @@ except ImportError:
     # Fallback for older grpc versions
     ClientInterceptor = object  # type: ignore
 
+from opentelemetry.trace import SpanKind
+
 from .metrics import (
     create_request_metrics,
     increment_active_requests,
@@ -128,7 +130,7 @@ class ObservabilityServerInterceptor(ServerInterceptor):
             # Create span for this request
             with create_span(
                 name=method,
-                kind=2,  # SpanKind.SERVER
+                kind=SpanKind.SERVER,
                 attributes={
                     "rpc.method": method,
                     "rpc.system": "grpc",

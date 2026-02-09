@@ -10,12 +10,13 @@ aiohttp==3.10.10
 python-multipart==0.0.12
 
 # OpenTelemetry - Observability (versions compatible with protobuf 5.x)
-opentelemetry-api>=1.27.0
-opentelemetry-sdk>=1.27.0
-opentelemetry-exporter-otlp-proto-grpc>=1.27.0
-opentelemetry-instrumentation-fastapi>=0.48b0
-opentelemetry-exporter-prometheus>=0.48b0
+# NOTE: 1.29.0+ fixes KeyError: 2 bug in gRPC status code mapping
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-grpc>=1.29.0
+opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-exporter-prometheus>=0.50b0
 
 # Prometheus metrics endpoint
-prometheus-fastapi-instrumentator==6.1.0
-prometheus-client==0.19.0
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.0
