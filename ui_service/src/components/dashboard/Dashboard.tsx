@@ -13,15 +13,19 @@ import { CalendarWidget } from './widgets/CalendarWidget';
 import { FinanceWidget } from './widgets/FinanceWidget';
 import { HealthWidget } from './widgets/HealthWidget';
 import { NavigationWidget } from './widgets/NavigationWidget';
+import { WeatherWidget } from './widgets/WeatherWidget';
+import { GamingWidget } from './widgets/GamingWidget';
 import { HighPriorityAlerts } from './widgets/HighPriorityAlerts';
 import { AdaptersPanel } from './AdaptersPanel';
-import { 
-  RefreshCw, 
-  Settings, 
-  Calendar, 
-  DollarSign, 
-  Heart, 
+import {
+  RefreshCw,
+  Settings,
+  Calendar,
+  DollarSign,
+  Heart,
   Navigation,
+  Cloud,
+  Gamepad2,
   AlertCircle,
   Loader2,
   Clock,
@@ -36,7 +40,7 @@ import {
 } from 'lucide-react';
 
 type ViewMode = 'grid' | 'focus' | 'rows' | 'columns';
-type FocusCategory = 'calendar' | 'finance' | 'health' | 'navigation' | null;
+type FocusCategory = 'calendar' | 'finance' | 'health' | 'navigation' | 'weather' | 'gaming' | null;
 
 interface DashboardProps {
   isFullscreen?: boolean;
@@ -45,17 +49,19 @@ interface DashboardProps {
 }
 
 export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }: DashboardProps) {
-  const { 
-    context, 
-    adapters, 
-    finance, 
-    calendar, 
-    health, 
+  const {
+    context,
+    adapters,
+    finance,
+    calendar,
+    health,
     navigation,
-    isLoading, 
-    error, 
-    lastUpdated, 
-    refresh 
+    weather,
+    gaming,
+    isLoading,
+    error,
+    lastUpdated,
+    refresh
   } = useDashboard({ refreshInterval: 60000 });
   
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -140,7 +146,7 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
     }
   };
   
-  const visiblePanels = ['calendar', 'finance', 'health', 'navigation'].filter(p => !hiddenPanels.has(p));
+  const visiblePanels = ['calendar', 'finance', 'health', 'navigation', 'weather', 'gaming'].filter(p => !hiddenPanels.has(p));
   
   return (
     <div className={`flex flex-col bg-gray-900 text-white ${isFullscreen ? 'fixed inset-0 z-50' : 'h-full'}`}>
@@ -244,6 +250,24 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
             >
               <Navigation className="w-4 h-4" />
             </button>
+            <button
+              onClick={() => togglePanel('weather')}
+              className={`p-1.5 rounded-md transition-colors ${
+                !hiddenPanels.has('weather') ? 'bg-sky-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+              title="Toggle Weather"
+            >
+              <Cloud className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => togglePanel('gaming')}
+              className={`p-1.5 rounded-md transition-colors ${
+                !hiddenPanels.has('gaming') ? 'bg-violet-600 text-white' : 'text-gray-400 hover:text-white'
+              }`}
+              title="Toggle Gaming"
+            >
+              <Gamepad2 className="w-4 h-4" />
+            </button>
           </div>
           
           <button
@@ -297,6 +321,12 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
             {focusCategory === 'navigation' && (
               <NavigationWidget data={navigation} expanded onCollapse={() => handleFocus(null)} />
             )}
+            {focusCategory === 'weather' && (
+              <WeatherWidget data={weather} expanded onCollapse={() => handleFocus(null)} />
+            )}
+            {focusCategory === 'gaming' && (
+              <GamingWidget data={gaming} expanded onCollapse={() => handleFocus(null)} />
+            )}
           </div>
         ) : (
           /* Grid/Row/Column View */
@@ -327,9 +357,25 @@ export function Dashboard({ isFullscreen = false, onToggleFullscreen, onClose }:
             )}
             {!hiddenPanels.has('navigation') && (
               <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
-                <NavigationWidget 
-                  data={navigation} 
-                  onFocus={() => handleFocus('navigation')} 
+                <NavigationWidget
+                  data={navigation}
+                  onFocus={() => handleFocus('navigation')}
+                />
+              </div>
+            )}
+            {!hiddenPanels.has('weather') && (
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
+                <WeatherWidget
+                  data={weather}
+                  onFocus={() => handleFocus('weather')}
+                />
+              </div>
+            )}
+            {!hiddenPanels.has('gaming') && (
+              <div className={viewMode === 'columns' ? 'flex-1 min-w-[280px]' : ''}>
+                <GamingWidget
+                  data={gaming}
+                  onFocus={() => handleFocus('gaming')}
                 />
               </div>
             )}

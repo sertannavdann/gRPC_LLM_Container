@@ -12,4 +12,6 @@ export { CalendarWidget } from './widgets/CalendarWidget';
 export { FinanceWidget } from './widgets/FinanceWidget';
 export { HealthWidget } from './widgets/HealthWidget';
 export { NavigationWidget } from './widgets/NavigationWidget';
+export { WeatherWidget } from './widgets/WeatherWidget';
+export { GamingWidget } from './widgets/GamingWidget';
 export { HighPriorityAlerts } from './widgets/HighPriorityAlerts';

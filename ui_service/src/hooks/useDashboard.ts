@@ -6,13 +6,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  DashboardContext, 
-  AdaptersResponse, 
-  FinanceContext, 
-  CalendarContext, 
-  HealthContext, 
-  NavigationContext 
+import {
+  DashboardContext,
+  AdaptersResponse,
+  FinanceContext,
+  CalendarContext,
+  HealthContext,
+  NavigationContext,
+  WeatherContext,
+  GamingContext,
 } from '@/types/dashboard';
 
 interface UseDashboardOptions {
@@ -30,6 +32,8 @@ interface UseDashboardReturn {
   calendar: CalendarContext | null;
   health: HealthContext | null;
   navigation: NavigationContext | null;
+  weather: WeatherContext | null;
+  gaming: GamingContext | null;
   
   // State
   isLoading: boolean;
@@ -180,6 +184,8 @@ export function useDashboard(options: UseDashboardOptions = {}): UseDashboardRet
     calendar: context?.context.calendar ?? null,
     health: context?.context.health ?? null,
     navigation: context?.context.navigation ?? null,
+    weather: context?.context.weather ?? null,
+    gaming: context?.context.gaming ?? null,
     isLoading,
     error,
     lastUpdated,

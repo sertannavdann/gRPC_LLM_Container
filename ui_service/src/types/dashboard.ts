@@ -95,6 +95,84 @@ export interface NavigationContext {
   platforms: string[];
 }
 
+// Weather types
+export interface WeatherData {
+  id: string;
+  timestamp: string;
+  temperature_celsius: number;
+  feels_like_celsius: number;
+  temperature_fahrenheit: number;
+  humidity: number;
+  pressure_hpa: number;
+  wind_speed_ms: number;
+  wind_speed_kmh: number;
+  wind_direction_deg: number;
+  condition: string;
+  description: string;
+  icon_code: string;
+  visibility_meters: number;
+  clouds_percent: number;
+  uv_index: number | null;
+  precipitation_mm: number | null;
+  platform: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WeatherForecast {
+  id: string;
+  forecast_time: string;
+  temperature_celsius: number;
+  feels_like_celsius: number;
+  condition: string;
+  description: string;
+  precipitation_probability: number;
+  precipitation_mm: number;
+  humidity: number;
+  wind_speed_ms: number;
+  platform: string;
+}
+
+export interface WeatherContext {
+  current: WeatherData | null;
+  forecasts: WeatherForecast[];
+  platforms: string[];
+}
+
+// Gaming types
+export interface GamingProfile {
+  id: string;
+  username: string;
+  platform_tag: string;
+  level: number;
+  trophies: number;
+  wins: number;
+  losses: number;
+  games_played: number;
+  win_rate: number;
+  clan_name: string | null;
+  clan_tag: string | null;
+  arena: string | null;
+  platform: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface GamingMatch {
+  id: string;
+  timestamp: string;
+  game_type: string;
+  result: string;
+  trophies_change: number;
+  opponent_tag: string | null;
+  opponent_name: string | null;
+  duration_seconds: number | null;
+  platform: string;
+}
+
+export interface GamingContext {
+  profiles: GamingProfile[];
+  platforms: string[];
+}
+
 export interface RelevanceItem {
   type: string;
   subtype: string;
@@ -117,6 +195,8 @@ export interface DashboardContext {
     calendar: CalendarContext;
     health: HealthContext;
     navigation: NavigationContext;
+    weather: WeatherContext;
+    gaming: GamingContext;
   };
   relevance: RelevanceClassification;
   last_updated: {
@@ -124,16 +204,28 @@ export interface DashboardContext {
     calendar: string;
     health: string;
     navigation: string;
+    weather?: string;
+    gaming?: string;
   };
 }
 
 // Adapter types
+export interface AdapterAuthField {
+  key: string;
+  label: string;
+  placeholder: string;
+  type: 'api_key' | 'oauth_token' | 'text';
+  envVar: string;
+}
+
 export interface Adapter {
   platform: string;
   name: string;
   icon: string;
   connected: boolean;
   status: 'active' | 'available' | 'error';
+  auth_type?: 'api_key' | 'oauth2' | 'none';
+  auth_fields?: AdapterAuthField[];
 }
 
 export interface AdapterCategory {

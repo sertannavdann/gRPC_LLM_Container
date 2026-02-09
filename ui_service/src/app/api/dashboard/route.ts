@@ -7,7 +7,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
-const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard_service:8001';
+const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:8001';
 
 // ---------- Real finance data fetcher ----------
 async function fetchRealFinance(): Promise<any> {
@@ -181,27 +181,60 @@ const mockNavigationData: {
   platforms: ['mock'],
 };
 
+// ---------- Real weather data fetcher ----------
+async function fetchRealWeather(): Promise<any> {
+  try {
+    const res = await fetch(`${DASHBOARD_SERVICE}/context/weather?user_id=demo_user`, { next: { revalidate: 300 } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.weather || data;
+  } catch (err) {
+    console.warn('[Dashboard API] Weather fetch failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// ---------- Real gaming data fetcher ----------
+async function fetchRealGaming(): Promise<any> {
+  try {
+    const res = await fetch(`${DASHBOARD_SERVICE}/context/gaming?user_id=demo_user`, { next: { revalidate: 300 } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.gaming || data;
+  } catch (err) {
+    console.warn('[Dashboard API] Gaming fetch failed:', (err as Error).message);
+    return null;
+  }
+}
+
+const emptyWeatherData = { current: null, forecasts: [], platforms: [] };
+const emptyGamingData = { profiles: [], platforms: [] };
+
 // GET - Fetch unified context
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get('category');
-    
-    // Fetch real finance data, fall back to mock if service is unavailable
-    const financeData = await fetchRealFinance() || mockFinanceData;
-    
+
+    // Fetch real data in parallel, fall back to mocks/empty where unavailable
+    const [financeData, weatherData, gamingData] = await Promise.all([
+      fetchRealFinance().then(d => d || mockFinanceData),
+      fetchRealWeather().then(d => d || emptyWeatherData),
+      fetchRealGaming().then(d => d || emptyGamingData),
+    ]);
+
     // Set next_3 from events
     mockCalendarData.next_3 = mockCalendarData.events.slice(0, 3);
     mockCalendarData.imminent = mockCalendarData.events.filter(e => e.urgency === 'HIGH');
     mockNavigationData.primary_route = mockNavigationData.routes[0];
-    
+
     // Build relevance classification
     const relevance = {
       high: [] as any[],
       medium: [] as any[],
       low: [] as any[],
     };
-    
+
     // Calendar high priority (imminent events)
     mockCalendarData.imminent.forEach(event => {
       relevance.high.push({
@@ -213,7 +246,7 @@ export async function GET(request: NextRequest) {
         data: event,
       });
     });
-    
+
     // Health alerts
     if (mockHealthData.hrv && mockHealthData.hrv < 40) {
       relevance.high.push({
@@ -224,7 +257,7 @@ export async function GET(request: NextRequest) {
         priority: 75,
       });
     }
-    
+
     // Traffic alerts
     if (mockNavigationData.primary_route?.traffic_level === 'heavy') {
       relevance.high.push({
@@ -235,7 +268,21 @@ export async function GET(request: NextRequest) {
         priority: 65,
       });
     }
-    
+
+    // Weather alerts
+    if (weatherData.current) {
+      const temp = weatherData.current.temperature_celsius;
+      if (temp < -15 || temp > 35) {
+        relevance.high.push({
+          type: 'weather',
+          subtype: 'extreme_temp',
+          title: `Extreme Temperature: ${Math.round(temp)}°C`,
+          alert: temp < -15 ? 'Extreme cold warning' : 'Extreme heat warning',
+          priority: 70,
+        });
+      }
+    }
+
     // Medium priority items
     relevance.medium.push({
       type: 'health',
@@ -243,7 +290,7 @@ export async function GET(request: NextRequest) {
       title: `Steps: ${Math.round(mockHealthData.steps_progress * 100)}% of goal`,
       priority: 35,
     });
-    
+
     // If specific category requested
     if (category) {
       const categoryData: Record<string, any> = {
@@ -251,14 +298,16 @@ export async function GET(request: NextRequest) {
         calendar: mockCalendarData,
         health: mockHealthData,
         navigation: mockNavigationData,
+        weather: weatherData,
+        gaming: gamingData,
       };
-      
+
       return NextResponse.json({
         [category]: categoryData[category] || {},
         last_updated: new Date().toISOString(),
       });
     }
-    
+
     // Return full unified context
     const context = {
       user_id: 'demo_user',
@@ -267,6 +316,8 @@ export async function GET(request: NextRequest) {
         calendar: mockCalendarData,
         health: mockHealthData,
         navigation: mockNavigationData,
+        weather: weatherData,
+        gaming: gamingData,
       },
       relevance,
       last_updated: {
@@ -274,11 +325,13 @@ export async function GET(request: NextRequest) {
         calendar: new Date().toISOString(),
         health: new Date().toISOString(),
         navigation: new Date().toISOString(),
+        weather: new Date().toISOString(),
+        gaming: new Date().toISOString(),
       },
     };
-    
+
     return NextResponse.json(context);
-    
+
   } catch (error: any) {
     console.error('[Dashboard API] Error:', error);
     return NextResponse.json(
