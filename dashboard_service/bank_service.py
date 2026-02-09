@@ -74,10 +74,12 @@ class BankService:
         amount_min: Optional[float] = None,
         amount_max: Optional[float] = None,
         search: Optional[str] = None,
+        sort: Optional[str] = None,
+        sort_dir: str = "desc",
         page: int = 1,
         per_page: int = 50,
     ) -> Dict[str, Any]:
-        """Query transactions with filters and pagination."""
+        """Query transactions with filters, sorting, and pagination."""
         await self._ensure_loaded()
 
         filtered = self._transactions
@@ -114,6 +116,18 @@ class BankService:
                 or search_lower in t.get("description", "").lower()
                 or search_lower in t.get("spending_category", "").lower()
             ]
+
+        # Sort
+        if sort:
+            sort_key_map = {
+                "timestamp": lambda t: t.get("timestamp", ""),
+                "merchant": lambda t: t.get("merchant", "").lower(),
+                "description": lambda t: t.get("description", "").lower(),
+                "amount": lambda t: t.get("amount", 0),
+                "category": lambda t: t.get("spending_category", "").lower(),
+            }
+            key_fn = sort_key_map.get(sort, sort_key_map["timestamp"])
+            filtered = sorted(filtered, key=key_fn, reverse=(sort_dir == "desc"))
 
         total = len(filtered)
         start = (page - 1) * per_page

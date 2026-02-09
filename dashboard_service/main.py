@@ -548,6 +548,8 @@ async def bank_transactions(
     amount_min: Optional[float] = Query(None, description="Minimum amount"),
     amount_max: Optional[float] = Query(None, description="Maximum amount"),
     search: Optional[str] = Query(None, description="Text search on descriptions"),
+    sort: Optional[str] = Query(None, description="Sort field (timestamp, merchant, amount, category)"),
+    sort_dir: str = Query("desc", description="Sort direction (asc/desc)"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
 ):
@@ -561,6 +563,8 @@ async def bank_transactions(
             amount_min=amount_min,
             amount_max=amount_max,
             search=search,
+            sort=sort,
+            sort_dir=sort_dir,
             page=page,
             per_page=per_page,
         )

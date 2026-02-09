@@ -144,6 +144,31 @@
   .pagination button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .pagination span { font-size: 0.8rem; color: var(--text-secondary); }
 
+  /* Active filter chips */
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 999px; font-size: 0.75rem;
+    background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(249,115,22,0.3);
+  }
+  .filter-chip button {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 0.9rem; line-height: 1; padding: 0; margin-left: 2px;
+  }
+  .filter-chip button:hover { color: var(--red); }
+
+  /* Sort indicators */
+  thead th .sort-arrow { font-size: 0.65rem; margin-left: 4px; color: var(--accent); }
+
+  /* Quick date buttons */
+  .quick-dates { display: flex; gap: 6px; align-items: flex-end; }
+  .quick-btn {
+    padding: 6px 12px; border-radius: var(--radius-sm); font-size: 0.75rem;
+    border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--text-secondary); cursor: pointer; white-space: nowrap;
+  }
+  .quick-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+  .quick-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
   .loading { text-align: center; padding: 60px; color: var(--text-muted); }
   .loading::after { content: ''; display: inline-block; width: 20px; height: 20px; border: 2px solid var(--accent); border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; margin-left: 10px; vertical-align: middle; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -168,6 +193,17 @@
     <div class="card"><div class="card-label">Top Category</div><div class="card-value neutral" id="s-top-cat">--</div><div class="card-sub" id="s-top-cat-amt"></div></div>
   </div>
 
+  <div class="filter-bar" style="margin-bottom:8px;padding:10px 16px;gap:8px">
+    <span style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);align-self:center">Quick:</span>
+    <button class="quick-btn" onclick="setQuickDate('7d')">7 Days</button>
+    <button class="quick-btn" onclick="setQuickDate('30d')">30 Days</button>
+    <button class="quick-btn" onclick="setQuickDate('90d')">90 Days</button>
+    <button class="quick-btn" onclick="setQuickDate('6m')">6 Months</button>
+    <button class="quick-btn" onclick="setQuickDate('ytd')">YTD</button>
+    <button class="quick-btn" onclick="setQuickDate('1y')">1 Year</button>
+    <button class="quick-btn" onclick="setQuickDate('all')">All Time</button>
+  </div>
+
   <div class="filter-bar">
     <div class="filter-group">
       <label>Date From</label>
@@ -190,12 +226,31 @@
       </select>
     </div>
     <div class="filter-group">
+      <label>Type</label>
+      <select id="f-type">
+        <option value="">All</option>
+        <option value="debit">Debits Only</option>
+        <option value="credit">Credits Only</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Min $</label>
+      <input type="number" id="f-amount-min" placeholder="0" min="0" step="0.01" style="width:90px">
+    </div>
+    <div class="filter-group">
+      <label>Max $</label>
+      <input type="number" id="f-amount-max" placeholder="∞" min="0" step="0.01" style="width:90px">
+    </div>
+    <div class="filter-group" style="flex:1;min-width:160px">
       <label>Search</label>
-      <input type="text" id="f-search" placeholder="merchant, description...">
+      <input type="text" id="f-search" placeholder="merchant, category, description...">
     </div>
     <button class="btn" onclick="applyFilters()">Apply</button>
     <button class="btn btn-secondary" onclick="resetFilters()">Reset</button>
   </div>
+
+  <!-- Active filter chips -->
+  <div id="active-filters" style="display:none;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:8px"></div>
 
   <div class="charts-grid">
     <div class="chart-card">
@@ -225,11 +280,11 @@
       <table>
         <thead>
           <tr>
-            <th onclick="sortTable('timestamp')">Date</th>
-            <th onclick="sortTable('merchant')">Merchant</th>
-            <th onclick="sortTable('description')">Description</th>
-            <th onclick="sortTable('amount')">Amount</th>
-            <th>Category</th>
+            <th onclick="sortTable('timestamp')" id="th-timestamp">Date</th>
+            <th onclick="sortTable('merchant')" id="th-merchant">Merchant</th>
+            <th onclick="sortTable('description')" id="th-description">Description</th>
+            <th onclick="sortTable('amount')" id="th-amount">Amount</th>
+            <th onclick="sortTable('category')" id="th-category">Category</th>
             <th>Account</th>
           </tr>
         </thead>
@@ -259,6 +314,8 @@ const CATEGORY_COLORS = [
   '#4493f8','#db61a2','#2ea043'
 ];
 
+let activeQuickDate = '';
+
 function getFilterParams() {
   const params = new URLSearchParams();
   const dateFrom = document.getElementById('f-date-from').value;
@@ -266,12 +323,96 @@ function getFilterParams() {
   const cat = document.getElementById('f-category').value;
   const acct = document.getElementById('f-account').value;
   const search = document.getElementById('f-search').value;
+  const amtMin = document.getElementById('f-amount-min').value;
+  const amtMax = document.getElementById('f-amount-max').value;
+  const txnType = document.getElementById('f-type').value;
   if (dateFrom) params.set('date_from', dateFrom);
   if (dateTo) params.set('date_to', dateTo);
   if (cat) params.set('category', cat);
   if (acct) params.set('account', acct);
   if (search) params.set('search', search);
+  if (amtMin) params.set('amount_min', amtMin);
+  if (amtMax) params.set('amount_max', amtMax);
+  // txnType is handled client-side since API doesn't have this filter
   return params;
+}
+
+function setQuickDate(preset) {
+  activeQuickDate = preset;
+  const now = new Date();
+  let from = new Date();
+  document.getElementById('f-date-to').value = now.toISOString().substring(0,10);
+
+  switch(preset) {
+    case '7d': from.setDate(now.getDate() - 7); break;
+    case '30d': from.setDate(now.getDate() - 30); break;
+    case '90d': from.setDate(now.getDate() - 90); break;
+    case '6m': from.setMonth(now.getMonth() - 6); break;
+    case 'ytd': from = new Date(now.getFullYear(), 0, 1); break;
+    case '1y': from.setFullYear(now.getFullYear() - 1); break;
+    case 'all': document.getElementById('f-date-from').value = ''; document.getElementById('f-date-to').value = ''; applyFilters(); updateQuickBtns(); return;
+  }
+  document.getElementById('f-date-from').value = from.toISOString().substring(0,10);
+  updateQuickBtns();
+  applyFilters();
+}
+
+function updateQuickBtns() {
+  document.querySelectorAll('.quick-btn').forEach(btn => {
+    const preset = btn.getAttribute('onclick')?.match(/'(\w+)'/)?.[1];
+    btn.classList.toggle('active', preset === activeQuickDate);
+  });
+}
+
+function renderActiveFilters() {
+  const container = document.getElementById('active-filters');
+  const chips = [];
+  const dateFrom = document.getElementById('f-date-from').value;
+  const dateTo = document.getElementById('f-date-to').value;
+  const cat = document.getElementById('f-category').value;
+  const acct = document.getElementById('f-account').value;
+  const search = document.getElementById('f-search').value;
+  const amtMin = document.getElementById('f-amount-min').value;
+  const amtMax = document.getElementById('f-amount-max').value;
+  const txnType = document.getElementById('f-type').value;
+
+  if (dateFrom) chips.push({label: `From: ${dateFrom}`, clear: () => { document.getElementById('f-date-from').value=''; activeQuickDate=''; }});
+  if (dateTo) chips.push({label: `To: ${dateTo}`, clear: () => { document.getElementById('f-date-to').value=''; activeQuickDate=''; }});
+  if (cat) chips.push({label: `Category: ${cat}`, clear: () => document.getElementById('f-category').value=''});
+  if (acct) chips.push({label: `Account: ${acct}`, clear: () => document.getElementById('f-account').value=''});
+  if (txnType) chips.push({label: `Type: ${txnType === 'debit' ? 'Debits' : 'Credits'}`, clear: () => document.getElementById('f-type').value=''});
+  if (amtMin) chips.push({label: `Min: $${amtMin}`, clear: () => document.getElementById('f-amount-min').value=''});
+  if (amtMax) chips.push({label: `Max: $${amtMax}`, clear: () => document.getElementById('f-amount-max').value=''});
+  if (search) chips.push({label: `"${search}"`, clear: () => document.getElementById('f-search').value=''});
+
+  if (chips.length === 0) { container.style.display = 'none'; return; }
+  container.style.display = 'flex';
+  container.innerHTML = chips.map((c,i) =>
+    `<span class="filter-chip">${escHtml(c.label)}<button onclick="clearChip(${i})">×</button></span>`
+  ).join('');
+  container._chips = chips;
+}
+
+function clearChip(index) {
+  const container = document.getElementById('active-filters');
+  if (container._chips && container._chips[index]) {
+    container._chips[index].clear();
+    updateQuickBtns();
+    applyFilters();
+  }
+}
+
+function updateSortHeaders() {
+  ['timestamp','merchant','description','amount','category'].forEach(f => {
+    const th = document.getElementById('th-' + f);
+    if (!th) return;
+    const base = th.textContent.replace(/[▲▼]/g, '').trim();
+    if (f === sortField) {
+      th.innerHTML = `${base} <span class="sort-arrow">${sortDir === 'asc' ? '▲' : '▼'}</span>`;
+    } else {
+      th.textContent = base;
+    }
+  });
 }
 
 async function fetchJSON(url) {
@@ -286,10 +427,16 @@ async function init() {
     const sel = document.getElementById('f-category');
     cats.categories.forEach(c => {
       const opt = document.createElement('option');
-      opt.value = c.name; opt.textContent = c.name;
+      opt.value = c.name; opt.textContent = `${c.name} (${c.count})`;
       sel.appendChild(opt);
     });
 
+    // Enter key triggers search
+    document.getElementById('f-search').addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+    document.getElementById('f-amount-min').addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+    document.getElementById('f-amount-max').addEventListener('keydown', e => { if (e.key === 'Enter') applyFilters(); });
+
+    updateSortHeaders();
     await loadAll();
   } catch(e) {
     document.getElementById('meta').textContent = 'Error loading data: ' + e.message;
@@ -468,8 +615,19 @@ async function loadTransactions() {
   if (sortField) { params.set('sort', sortField); params.set('sort_dir', sortDir); }
 
   const data = await fetchJSON(`/bank/transactions?${params}`);
+
+  // Client-side type filter (debit/credit)
+  const txnType = document.getElementById('f-type').value;
+  if (txnType) {
+    data.transactions = data.transactions.filter(t => {
+      const isDebit = t.metadata?.is_debit !== false;
+      return txnType === 'debit' ? isDebit : !isDebit;
+    });
+  }
+
   renderTable(data);
   renderPagination(data);
+  updateSortHeaders();
   document.getElementById('table-info').textContent = `Showing ${data.transactions.length} of ${data.total.toLocaleString()}`;
 }
 
@@ -516,6 +674,7 @@ function goPage(p) { currentPage = p; loadTransactions(); }
 
 function applyFilters() {
   currentPage = 1;
+  renderActiveFilters();
   loadAll();
 }
 
@@ -525,13 +684,20 @@ function resetFilters() {
   document.getElementById('f-category').value = '';
   document.getElementById('f-account').value = '';
   document.getElementById('f-search').value = '';
+  document.getElementById('f-amount-min').value = '';
+  document.getElementById('f-amount-max').value = '';
+  document.getElementById('f-type').value = '';
+  activeQuickDate = '';
+  updateQuickBtns();
   currentPage = 1;
+  renderActiveFilters();
   loadAll();
 }
 
 function sortTable(field) {
   if (sortField === field) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
   else { sortField = field; sortDir = 'desc'; }
+  updateSortHeaders();
   loadTransactions();
 }
 
