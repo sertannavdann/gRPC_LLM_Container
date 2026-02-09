@@ -83,6 +83,43 @@ def _get_mock_context() -> dict:
         }
     }
     
+    # Weather conditions
+    weather = {
+        'current': {
+            'temperature_celsius': -5.2,
+            'feels_like_celsius': -11.0,
+            'humidity': 72,
+            'wind_speed_kmh': 18.5,
+            'condition': 'clouds',
+            'description': 'overcast clouds',
+            'visibility_meters': 10000,
+        },
+        'forecasts': [
+            {'forecast_time': (now + timedelta(hours=3)).isoformat(), 'temperature_celsius': -3.0, 'condition': 'snow', 'precipitation_probability': 0.65},
+            {'forecast_time': (now + timedelta(hours=6)).isoformat(), 'temperature_celsius': -1.0, 'condition': 'clouds', 'precipitation_probability': 0.2},
+        ],
+        'platforms': ['mock'],
+    }
+
+    # Gaming profile
+    gaming = {
+        'profiles': [{
+            'username': 'Player1',
+            'platform_tag': '#MOCK123',
+            'level': 14,
+            'trophies': 6200,
+            'wins': 1234,
+            'losses': 890,
+            'games_played': 2124,
+            'win_rate': 0.581,
+            'clan_name': 'MockClan',
+            'arena': 'Legendary Arena',
+            'platform': 'mock',
+            'metadata': {'recent_battles': []},
+        }],
+        'platforms': ['mock'],
+    }
+
     return {
         'calendar': {'events': events, 'today_count': 4},
         'finance': {
@@ -93,6 +130,8 @@ def _get_mock_context() -> dict:
         },
         'health': health,
         'navigation': navigation,
+        'weather': weather,
+        'gaming': gaming,
     }
 
 
@@ -268,6 +307,94 @@ def _build_navigation_summary(nav_data: dict, destination: Optional[str] = None)
     return "\n".join(summaries)
 
 
+def _build_weather_summary(weather_data: dict) -> str:
+    """Build a natural language summary of weather conditions."""
+    current = weather_data.get('current')
+    if not current:
+        return "No weather data available."
+
+    summaries = []
+    temp = current.get('temperature_celsius', 0)
+    feels = current.get('feels_like_celsius', temp)
+    condition = current.get('description', current.get('condition', 'unknown'))
+    humidity = current.get('humidity', 0)
+    wind = current.get('wind_speed_kmh', 0)
+
+    # Temperature with feels-like
+    temp_str = f"{temp:.0f}°C"
+    if abs(feels - temp) > 3:
+        temp_str += f" (feels like {feels:.0f}°C)"
+
+    # Condition icons
+    condition_icons = {
+        'clear': '☀️', 'clouds': '☁️', 'rain': '🌧️', 'drizzle': '🌦️',
+        'thunderstorm': '⛈️', 'snow': '❄️', 'mist': '🌫️', 'fog': '🌫️',
+    }
+    cond_key = current.get('condition', '').lower()
+    icon = condition_icons.get(cond_key, '🌡️')
+
+    summaries.append(f"{icon} Currently: {temp_str}, {condition}")
+    summaries.append(f"• Humidity: {humidity}% | Wind: {wind:.0f} km/h")
+
+    # Extreme temperature alerts
+    if temp < -20:
+        summaries.append("🥶 EXTREME COLD WARNING - limit outdoor exposure")
+    elif temp < -10:
+        summaries.append("❄️ Very cold - dress warmly")
+    elif temp > 35:
+        summaries.append("🔥 EXTREME HEAT WARNING - stay hydrated")
+
+    # Forecast preview
+    forecasts = weather_data.get('forecasts', [])
+    if forecasts:
+        upcoming = forecasts[:3]
+        forecast_parts = []
+        for f in upcoming:
+            ft = f.get('forecast_time', '')
+            try:
+                hour = datetime.fromisoformat(ft.replace('Z', '+00:00')).strftime('%I%p').lstrip('0')
+            except (ValueError, AttributeError):
+                hour = '?'
+            f_temp = f.get('temperature_celsius', 0)
+            f_cond = f.get('condition', '')
+            precip = f.get('precipitation_probability', 0)
+            precip_str = f" {int(precip*100)}%💧" if precip > 0.2 else ""
+            forecast_parts.append(f"{hour}: {f_temp:.0f}°C {f_cond}{precip_str}")
+        summaries.append(f"• Forecast: {' | '.join(forecast_parts)}")
+
+    return "\n".join(summaries)
+
+
+def _build_gaming_summary(gaming_data: dict) -> str:
+    """Build a natural language summary of gaming profile and recent activity."""
+    profiles = gaming_data.get('profiles', [])
+    if not profiles:
+        return "No gaming data available."
+
+    profile = profiles[0]
+    summaries = []
+
+    username = profile.get('username', 'Unknown')
+    trophies = profile.get('trophies', 0)
+    win_rate = profile.get('win_rate', 0)
+    arena = profile.get('arena', '')
+    clan = profile.get('clan_name', '')
+
+    summaries.append(f"🎮 {username} - {trophies:,} trophies ({arena})")
+    summaries.append(f"• Win rate: {win_rate*100:.1f}% | W: {profile.get('wins', 0):,} / L: {profile.get('losses', 0):,}")
+    if clan:
+        summaries.append(f"• Clan: {clan}")
+
+    # Recent battles
+    battles = profile.get('metadata', {}).get('recent_battles', [])
+    if battles:
+        wins = sum(1 for b in battles[:10] if b.get('result') == 'win')
+        total = min(len(battles), 10)
+        summaries.append(f"• Recent form: {wins}/{total} wins in last {total} battles")
+
+    return "\n".join(summaries)
+
+
 def _extract_high_priority_alerts(context: dict) -> List[str]:
     """Extract high priority items that need immediate attention."""
     alerts = []
@@ -302,7 +429,26 @@ def _extract_high_priority_alerts(context: dict) -> List[str]:
     route = nav.get('primary_route', {})
     if route.get('traffic_level') == 'heavy':
         alerts.append(f"🚗 Heavy traffic - {route.get('duration_minutes', 0)} min commute")
-    
+
+    # Extreme weather
+    weather = context.get('weather', {})
+    current = weather.get('current', {})
+    temp = current.get('temperature_celsius')
+    if temp is not None:
+        if temp < -20:
+            alerts.append(f"🥶 Extreme cold ({temp:.0f}°C) - limit outdoor exposure")
+        elif temp > 35:
+            alerts.append(f"🔥 Extreme heat ({temp:.0f}°C) - stay hydrated")
+
+    # Precipitation alert
+    forecasts = weather.get('forecasts', [])
+    for f in forecasts[:3]:
+        precip = f.get('precipitation_probability', 0)
+        cond = f.get('condition', '')
+        if precip > 0.7 and cond in ('rain', 'thunderstorm', 'snow'):
+            alerts.append(f"🌧️ High chance of {cond} coming ({int(precip*100)}%)")
+            break
+
     return alerts
 
 
@@ -312,21 +458,23 @@ def get_user_context(
     destination: str = None,
 ) -> Dict[str, Any]:
     """
-    Get the user's personal context including calendar, finance, health, and navigation data.
-    
+    Get the user's personal context including calendar, finance, health, navigation, weather, and gaming data.
+
     Use this tool when:
     - User asks about their schedule or upcoming events
     - User asks about their finances, spending, or budget
     - User asks about their health, fitness, or wellness
     - User asks about their commute, traffic, or driving time to a destination
+    - User asks about the weather, temperature, or forecast
+    - User asks about their gaming stats, trophies, or recent battles
     - You need context about the user's day to provide personalized advice
     - User asks "what's going on" or wants a summary
-    
+
     Args:
-        categories: Which categories to retrieve. Options: "calendar", "finance", 
-                   "health", "navigation", "all". Defaults to ["all"].
+        categories: Which categories to retrieve. Options: "calendar", "finance",
+                   "health", "navigation", "weather", "gaming", "all". Defaults to ["all"].
         include_alerts: Whether to include high-priority alerts. Defaults to True.
-        destination: Optional specific destination to query for navigation 
+        destination: Optional specific destination to query for navigation
                     (e.g., "office", "gym", "airport", "grocery").
     
     Returns:
@@ -375,10 +523,16 @@ def get_user_context(
         
         if "all" in categories or "navigation" in categories:
             summaries['navigation'] = _build_navigation_summary(
-                context.get('navigation', {}), 
+                context.get('navigation', {}),
                 destination=destination
             )
-        
+
+        if "all" in categories or "weather" in categories:
+            summaries['weather'] = _build_weather_summary(context.get('weather', {}))
+
+        if "all" in categories or "gaming" in categories:
+            summaries['gaming'] = _build_gaming_summary(context.get('gaming', {}))
+
         # Build high priority alerts
         alerts = []
         if include_alerts:
@@ -411,7 +565,17 @@ def get_user_context(
         if 'navigation' in summaries:
             response_parts.append("🗺️ NAVIGATION:")
             response_parts.append(summaries['navigation'])
-        
+            response_parts.append("")
+
+        if 'weather' in summaries:
+            response_parts.append("🌤️ WEATHER:")
+            response_parts.append(summaries['weather'])
+            response_parts.append("")
+
+        if 'gaming' in summaries:
+            response_parts.append("🎮 GAMING:")
+            response_parts.append(summaries['gaming'])
+
         result_text = "\n".join(response_parts)
         
         return {

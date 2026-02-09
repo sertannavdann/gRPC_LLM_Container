@@ -185,6 +185,26 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any], unified_context) 
             "saved_destinations": saved_destinations,
         }
 
+    # Weather: pass through structured data
+    weather_data = context_dict.get("weather", {})
+    if weather_data:
+        current = weather_data.get("current")
+        forecasts = weather_data.get("forecasts", [])
+        result["weather"] = {
+            "current": current,
+            "forecasts": forecasts[:8],
+            "platforms": weather_data.get("platforms", []),
+        }
+
+    # Gaming: pass through structured data
+    gaming_data = context_dict.get("gaming", {})
+    if gaming_data:
+        profiles = gaming_data.get("profiles", [])
+        result["gaming"] = {
+            "profiles": profiles,
+            "platforms": gaming_data.get("platforms", []),
+        }
+
     return result
 
 

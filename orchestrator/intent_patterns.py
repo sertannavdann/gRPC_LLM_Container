@@ -121,6 +121,26 @@ MULTI_TOOL_INTENTS: Dict[str, IntentPattern] = {
         required_tools=["get_user_context"],
         missing_prompt_template="I need to call {missing} to prepare for your meeting."
     ),
+    "weather_check": IntentPattern(
+        name="weather_check",
+        keywords=["weather", "temperature", "forecast", "rain", "snow", "cold outside", "hot outside", "umbrella"],
+        required_tools=["get_user_context"],
+        missing_prompt_template="I need to call {missing} to get current weather conditions."
+    ),
+    "weather_commute": IntentPattern(
+        name="weather_commute",
+        keywords=["should I drive", "dress for commute", "weather for my drive", "road conditions"],
+        required_tools=["get_user_context", "get_commute_time"],
+        missing_prompt_template="I have {completed} info. Now calling {missing} to combine weather and commute data.",
+        requires_destination=True,
+        clarifying_question="Where are you heading?"
+    ),
+    "full_status": IntentPattern(
+        name="full_status",
+        keywords=["full status", "everything", "complete overview", "what's happening", "status update"],
+        required_tools=["get_user_context"],
+        missing_prompt_template="I need to call {missing} to get your complete status."
+    ),
 }
 
 
