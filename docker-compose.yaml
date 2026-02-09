@@ -202,7 +202,7 @@ services:
       - AGENT_SERVICE_ADDRESS=orchestrator:50054
       - ENV_FILE_PATH=/app/config/.env
       - CONVERSATIONS_DIR=/app/data/conversations
-      - DASHBOARD_SERVICE_URL=http://dashboard_service:8001
+      - DASHBOARD_SERVICE_URL=http://dashboard:8001
     volumes:
       - ./.env:/app/config/.env:rw
       - ./data/conversations:/app/data/conversations:rw

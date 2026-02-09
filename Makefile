@@ -55,7 +55,9 @@ BOLD := \033[1m
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
         rebuild-orchestrator rebuild-all restart-orchestrator restart-all \
-        verify-code logs-orch logs-tail logs-dump logs-clear
+        verify-code logs-orch logs-tail logs-dump logs-clear \
+        fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
+        open-all open-settings open-integrations
 
 # ============================================================================
 # HELP
@@ -149,6 +151,16 @@ help:
 	@printf '  $(CYAN)make bridge-tools$(RESET)       - List tools exposed via MCP\n'
 	@printf '  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge\n'
 	@printf '  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN)🔧 Fix & Maintenance:$(RESET)\n'
+	@printf '  $(CYAN)make fix-grafana$(RESET)        - Purge Grafana data & reprovision datasources\n'
+	@printf '  $(CYAN)make fix-ui$(RESET)             - Rebuild & restart UI service only\n'
+	@printf '  $(CYAN)make fix-dashboard$(RESET)      - Rebuild & restart dashboard service only\n'
+	@printf '  $(CYAN)make fix-all$(RESET)            - Apply all fixes (Grafana + UI + Dashboard)\n'
+	@printf '  $(CYAN)make rebuild-no-llm$(RESET)     - Rebuild everything except llm_service\n'
+	@printf '  $(CYAN)make open-all$(RESET)           - Open UI, Dashboard, Grafana in browser\n'
+	@printf '  $(CYAN)make open-settings$(RESET)      - Open Settings page in browser\n'
+	@printf '  $(CYAN)make open-integrations$(RESET)  - Open Integrations page in browser\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)📐 Prompt Flow (Visual Workflow & Evaluation):$(RESET)\n'
 	@printf '  $(CYAN)make pf-run Q=\"...\"$(RESET)     - Run agent workflow with query\n'
@@ -284,7 +296,9 @@ status:
 	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
 	@for pair in "llm_service:$(PORT_LLM)" "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
 		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
-		if grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s 2>/dev/null; then \
+		if $(DOCKER_CMD) exec $$SVC grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s >/dev/null 2>&1; then \
+			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
+		elif grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s >/dev/null 2>&1; then \
 			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
 		else \
 			printf '  $(RED)○$(RESET) %-22s $(RED)unreachable$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
@@ -758,7 +772,9 @@ test-tools:
 health:
 	@for pair in "llm_service:$(PORT_LLM)" "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
 		SVC=$${pair%%:*}; PORT=$${pair##*:}; \
-		if grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s 2>/dev/null; then \
+		if $(DOCKER_CMD) exec $$SVC grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s >/dev/null 2>&1; then \
+			printf '  $(GREEN)●$(RESET) %-20s $(GREEN)healthy$(RESET)\n' "$$SVC"; \
+		elif grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s >/dev/null 2>&1; then \
 			printf '  $(GREEN)●$(RESET) %-20s $(GREEN)healthy$(RESET)\n' "$$SVC"; \
 		else \
 			printf '  $(RED)○$(RESET) %-20s $(RED)unreachable$(RESET)\n' "$$SVC"; \
@@ -1110,6 +1126,65 @@ pf-connections:
 pf-build:
 	@printf '$(CYAN)Building Prompt Flow package...$(RESET)\n'
 	@cd promptflow/flows/agent_workflow && pf flow build --source . --output dist --format docker
+
+# ============================================================================
+# FIX & MAINTENANCE COMMANDS
+# ============================================================================
+
+# Fix Grafana datasource UID mismatch (purge stale data, reprovision)
+fix-grafana:
+	@printf '$(CYAN)Fixing Grafana datasource provisioning...$(RESET)\n'
+	@$(COMPOSE_CMD) stop grafana
+	@$(DOCKER_CMD) volume rm grpc_llm_grafana-data 2>/dev/null || true
+	@$(COMPOSE_CMD) up -d grafana
+	@printf '$(GREEN)✓ Grafana data purged and reprovisioned$(RESET)\n'
+	@printf '  Open: http://localhost:3001  (admin/admin)\n'
+
+# Rebuild UI service only (after frontend changes)
+fix-ui:
+	@printf '$(CYAN)Rebuilding UI service...$(RESET)\n'
+	@$(COMPOSE_CMD) build ui_service
+	@$(COMPOSE_CMD) up -d --force-recreate ui_service
+	@printf '$(GREEN)✓ UI service rebuilt and restarted$(RESET)\n'
+	@printf '  Open: http://localhost:5001\n'
+
+# Rebuild dashboard service only (after backend/adapter changes)
+fix-dashboard:
+	@printf '$(CYAN)Rebuilding dashboard service...$(RESET)\n'
+	@$(COMPOSE_CMD) build dashboard
+	@$(COMPOSE_CMD) up -d --force-recreate dashboard
+	@printf '$(GREEN)✓ Dashboard service rebuilt and restarted$(RESET)\n'
+	@printf '  Open: http://localhost:8001\n'
+
+# Apply all fixes (Grafana + UI + dashboard) without touching LLM/models
+fix-all: fix-grafana fix-ui fix-dashboard
+	@$(COMPOSE_CMD) restart orchestrator
+	@printf '$(GREEN)✓ All fixes applied (Grafana, UI, Dashboard, Orchestrator)$(RESET)\n'
+
+# Rebuild everything EXCEPT llm_service (skip model re-copy)
+rebuild-no-llm:
+	@printf '$(CYAN)Rebuilding all services except llm_service...$(RESET)\n'
+	@for svc in orchestrator chroma_service sandbox_service ui_service dashboard bridge_service; do \
+		printf '  $(CYAN)Building $$svc...$(RESET)\n'; \
+		$(COMPOSE_CMD) build $$svc 2>/dev/null || true; \
+	done
+	@$(COMPOSE_CMD) up -d --force-recreate orchestrator chroma_service sandbox_service ui_service dashboard bridge_service
+	@printf '$(GREEN)✓ All services rebuilt (llm_service skipped)$(RESET)\n'
+
+# Open all web UIs in browser (macOS)
+open-all:
+	@open http://localhost:5001
+	@open http://localhost:8001
+	@open http://localhost:3001
+	@printf '$(GREEN)✓ Opened UI (:5001), Dashboard (:8001), Grafana (:3001)$(RESET)\n'
+
+# Open Settings page
+open-settings:
+	@open http://localhost:5001/settings
+
+# Open Integrations page
+open-integrations:
+	@open http://localhost:5001/integrations
 
 # ============================================================================
 # Docker Troubleshooting Guide

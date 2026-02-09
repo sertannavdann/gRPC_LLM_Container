@@ -29,7 +29,6 @@ RUN rm -rf ./proto
 
 COPY llm_service/llm_service.py .
 COPY llm_service/config.py .
-COPY llm_service/models/ /app/models/
 
 EXPOSE 50051
 CMD ["python", "llm_service.py"]
