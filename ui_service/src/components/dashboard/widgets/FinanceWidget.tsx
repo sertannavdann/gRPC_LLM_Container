@@ -171,14 +171,14 @@ export function FinanceWidget({ data, expanded, onFocus, onCollapse }: FinanceWi
         </div>
         
         <div className={`${expanded ? 'overflow-auto max-h-[calc(100vh-320px)]' : ''}`}>
-          {data.transactions.slice(0, expanded ? undefined : 4).map(txn => (
+          {(data.transactions || []).slice(0, expanded ? undefined : 4).map(txn => (
             <TransactionRow key={txn.id} txn={txn} />
           ))}
         </div>
       </div>
       
       {/* Footer - show more link */}
-      {!expanded && data.transactions.length > 4 && (
+      {!expanded && (data.transactions || []).length > 4 && (
         <button 
           onClick={onFocus}
           className="flex items-center justify-center gap-1 w-full mt-3 py-2 text-xs text-gray-400 hover:text-white transition-colors"

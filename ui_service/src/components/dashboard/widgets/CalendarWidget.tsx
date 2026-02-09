@@ -114,7 +114,7 @@ export function CalendarWidget({ data, expanded, onFocus, onCollapse }: Calendar
               <span>{event.location.address}</span>
             </div>
           )}
-          {event.attendees.length > 0 && (
+          {event.attendees?.length > 0 && (
             <div className="flex items-center gap-1.5 text-xs text-gray-400">
               <Users className="w-3 h-3" />
               <span>{event.attendees.map(a => a.name).join(', ')}</span>
@@ -125,7 +125,10 @@ export function CalendarWidget({ data, expanded, onFocus, onCollapse }: Calendar
     </div>
   );
   
-  const eventsToShow = expanded ? data.events : data.next_3.length > 0 ? data.next_3 : data.events.slice(0, 3);
+  const events = data.events || [];
+  const next3 = data.next_3 || [];
+  const imminent = data.imminent || [];
+  const eventsToShow = expanded ? events : next3.length > 0 ? next3 : events.slice(0, 3);
   
   return (
     <div className={`bg-gray-800 rounded-xl p-4 ${expanded ? 'h-full' : ''}`}>
@@ -134,10 +137,10 @@ export function CalendarWidget({ data, expanded, onFocus, onCollapse }: Calendar
         <div className="flex items-center gap-2">
           <Calendar className="w-5 h-5 text-blue-400" />
           <h3 className="font-semibold">Calendar</h3>
-          {data.imminent.length > 0 && (
+          {imminent.length > 0 && (
             <span className="flex items-center gap-1 px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded-full">
               <AlertTriangle className="w-3 h-3" />
-              {data.imminent.length} imminent
+              {imminent.length} imminent
             </span>
           )}
         </div>
@@ -177,12 +180,12 @@ export function CalendarWidget({ data, expanded, onFocus, onCollapse }: Calendar
       </div>
       
       {/* Footer - show more link */}
-      {!expanded && data.events.length > 3 && (
-        <button 
+      {!expanded && events.length > 3 && (
+        <button
           onClick={onFocus}
           className="flex items-center justify-center gap-1 w-full mt-3 py-2 text-xs text-gray-400 hover:text-white transition-colors"
         >
-          <span>View all {data.events.length} events</span>
+          <span>View all {events.length} events</span>
           <ChevronRight className="w-3 h-3" />
         </button>
       )}

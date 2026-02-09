@@ -155,8 +155,9 @@ export function NavigationWidget({ data, expanded, onFocus, onCollapse }: Naviga
     </div>
   );
   
-  const hasRoutes = data.routes.length > 0;
-  const primaryRoute = data.primary_route || data.routes[0];
+  const routes = data.routes || [];
+  const hasRoutes = routes.length > 0;
+  const primaryRoute = data.primary_route || routes[0];
   
   return (
     <div className={`bg-gray-800 rounded-xl p-4 ${expanded ? 'h-full' : ''}`}>
@@ -205,10 +206,10 @@ export function NavigationWidget({ data, expanded, onFocus, onCollapse }: Naviga
           {primaryRoute && <RouteCard route={primaryRoute} isPrimary />}
           
           {/* Alternative Routes (expanded only) */}
-          {expanded && data.routes.length > 1 && (
+          {expanded && routes.length > 1 && (
             <>
               <h4 className="text-sm text-gray-400 mt-4 mb-2">Alternatives</h4>
-              {data.routes.slice(1).map(route => (
+              {routes.slice(1).map(route => (
                 <RouteCard key={route.id} route={route} />
               ))}
             </>

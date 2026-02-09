@@ -28,7 +28,7 @@ interface GamingWidgetProps {
 }
 
 export function GamingWidget({ data, expanded, onFocus, onCollapse }: GamingWidgetProps) {
-  if (!data || data.profiles.length === 0) {
+  if (!data || !data.profiles || data.profiles.length === 0) {
     return (
       <div className="bg-gray-800 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">

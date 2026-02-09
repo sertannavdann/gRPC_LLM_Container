@@ -72,7 +72,8 @@ export function WeatherWidget({ data, expanded, onFocus, onCollapse }: WeatherWi
     );
   }
 
-  const { current, forecasts } = data;
+  const { current } = data;
+  const forecasts = data.forecasts || [];
 
   return (
     <div className={`bg-gray-800 rounded-xl p-4 ${expanded ? 'min-h-[400px]' : ''}`}>
