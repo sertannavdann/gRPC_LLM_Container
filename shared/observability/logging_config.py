@@ -7,6 +7,8 @@ Uses structlog for structured logging with:
 - Context propagation across async boundaries
 """
 import logging
+import logging.handlers
+import os
 import sys
 from typing import Optional, Dict, Any
 from contextvars import ContextVar
@@ -80,10 +82,69 @@ def configure_logging(
     root_logger.addHandler(handler)
     root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
+    # Add file handlers for debug and error log separation
+    _add_file_handlers(root_logger, service_name, shared_processors, renderer)
+
     # Quiet noisy libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("grpc").setLevel(logging.WARNING)
     logging.getLogger("opentelemetry").setLevel(logging.WARNING)
+
+
+def _add_file_handlers(
+    root_logger: logging.Logger,
+    service_name: str,
+    shared_processors=None,
+    renderer=None,
+) -> None:
+    """Add rotating file handlers for debug.log and error.log."""
+    log_dir = os.getenv("LOG_DIR", "/app/logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError:
+        return  # Can't create log dir — skip file handlers
+
+    fmt = logging.Formatter(
+        f"%(asctime)s - {service_name} - %(name)s - %(levelname)s - %(message)s"
+    )
+
+    # debug.log: captures everything at DEBUG+
+    try:
+        debug_handler = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir, "debug.log"),
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=3,
+        )
+        debug_handler.setLevel(logging.DEBUG)
+        if STRUCTLOG_AVAILABLE and shared_processors and renderer:
+            debug_handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+                processor=renderer,
+                foreign_pre_chain=shared_processors,
+            ))
+        else:
+            debug_handler.setFormatter(fmt)
+        root_logger.addHandler(debug_handler)
+    except OSError:
+        pass
+
+    # error.log: captures WARNING and above only
+    try:
+        error_handler = logging.handlers.RotatingFileHandler(
+            os.path.join(log_dir, "error.log"),
+            maxBytes=5 * 1024 * 1024,  # 5MB
+            backupCount=3,
+        )
+        error_handler.setLevel(logging.WARNING)
+        if STRUCTLOG_AVAILABLE and shared_processors and renderer:
+            error_handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+                processor=renderer,
+                foreign_pre_chain=shared_processors,
+            ))
+        else:
+            error_handler.setFormatter(fmt)
+        root_logger.addHandler(error_handler)
+    except OSError:
+        pass
 
 
 def _configure_standard_logging(service_name: str, log_level: str) -> None:
@@ -93,6 +154,8 @@ def _configure_standard_logging(service_name: str, log_level: str) -> None:
         format=f"%(asctime)s - {service_name} - %(name)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    # Also add file handlers for standard logging
+    _add_file_handlers(logging.getLogger(), service_name)
 
 
 def _add_service_info(service_name: str):
