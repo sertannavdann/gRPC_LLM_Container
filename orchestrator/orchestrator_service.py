@@ -368,37 +368,23 @@ class LLMEngineWrapper:
         has_tool_results = any(isinstance(m, ToolMessage) for m in messages)
         logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
         logger.debug(f"has_tool_results={has_tool_results} (messages count: {len(messages)})")
-        
+
+        # If we have tool results, use plain-text synthesis instead of JSON
+        # This is far more reliable across model sizes
+        if has_tool_results:
+            return self._synthesize_with_results(messages, conversation, temperature, max_tokens)
+
         # Track multi-turn context
         rollout_context = conversation
         tool_calls_made = []
         iteration = 0
-        
+
         while iteration < self.max_tool_iterations:
             iteration += 1
-            
+
             # Adjust instructions based on whether we have tool results
-            if has_tool_results:
-                # We have tool results - check if we have ALL the info needed
-                prompt = f"""You are a helpful AI assistant with access to tools.
-
-Available tools:
-{tools_desc}
-
-Conversation with tool results:
-{rollout_context}
-
-Instructions:
-1. Review the user's ORIGINAL question and the tool results above
-2. If you have ALL the information needed to fully answer the user's question, respond with: {{"type": "answer", "content": "your complete answer"}}
-3. If you need MORE information that another tool can provide, call that tool: {{"type": "tool_call", "tool": "tool_name", "arguments": {{...}}}}
-
-IMPORTANT: 
-- If user asked about BOTH schedule AND commute, you need results from BOTH get_user_context AND get_commute_time
-- Only give a final answer when you have all needed information
-- Respond with ONLY valid JSON
-
-Your response (JSON only):"""
+            if False:  # Kept for reference — synthesis now handled above
+                pass
             else:
                 # First iteration: Determine if tools needed
                 prompt = f"""You are a helpful AI assistant with access to tools.
@@ -481,6 +467,71 @@ Your response (JSON only):"""
             }
         }
     
+    def _synthesize_with_results(self, messages: list, conversation: str, temperature: float, max_tokens: int) -> dict:
+        """
+        Synthesize a final answer from tool results using plain-text output.
+
+        Instead of forcing JSON output (which small models struggle with),
+        this method asks the LLM to produce a natural language answer
+        directly from the tool results.
+        """
+        # Extract the original user query
+        original_query = ""
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                original_query = msg.content
+                break
+
+        # Extract tool results from ToolMessages
+        tool_results_text = []
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                tool_results_text.append(f"[{msg.name}]: {msg.content}")
+
+        results_block = "\n".join(tool_results_text) if tool_results_text else "No tool results available."
+
+        prompt = f"""You are a helpful AI assistant. The user asked a question and tools were used to gather information.
+
+User's question: {original_query}
+
+Tool results:
+{results_block}
+
+Using the tool results above, provide a clear, complete, and helpful answer to the user's question.
+Be direct and specific — include relevant numbers, times, and details from the tool results.
+Do NOT mention that tools were used. Just answer naturally.
+
+Answer:"""
+
+        logger.debug(f"Synthesis prompt length={len(prompt)}")
+
+        try:
+            response_text = self.client.generate(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                # No response_format="json" — plain text output
+            )
+
+            content = response_text.strip()
+            logger.info(f"Tool result synthesis complete: {len(content)} chars")
+
+            return {
+                "content": content,
+                "tool_calls": [],
+                "_synthesis_metadata": {
+                    "tool_results_count": len(tool_results_text),
+                    "original_query": original_query[:100],
+                }
+            }
+        except Exception as e:
+            logger.error(f"Synthesis generation error: {e}")
+            # Fallback: return raw tool results
+            return {
+                "content": f"Here are the results I found:\n{results_block}",
+                "tool_calls": []
+            }
+
     def _parse_tool_response(self, response_text: str) -> dict:
         """Parse LLM's JSON response into content or tool_calls.
         
