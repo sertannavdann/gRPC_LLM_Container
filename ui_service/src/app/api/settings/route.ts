@@ -12,6 +12,15 @@ interface EnvConfig {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   SERPER_API_KEY?: string;
+  // Adapter keys
+  OPENWEATHER_API_KEY?: string;
+  OPENWEATHER_CITY?: string;
+  GOOGLE_CALENDAR_CLIENT_ID?: string;
+  GOOGLE_CALENDAR_CLIENT_SECRET?: string;
+  GOOGLE_CALENDAR_ACCESS_TOKEN?: string;
+  GOOGLE_CALENDAR_REFRESH_TOKEN?: string;
+  CLASH_ROYALE_API_KEY?: string;
+  CLASH_ROYALE_PLAYER_TAG?: string;
 }
 
 // Provider model defaults
@@ -81,16 +90,53 @@ export async function GET() {
     
     const currentProvider = envConfig.LLM_PROVIDER || 'local';
     
+    // Filter providers: always include 'local', only include cloud providers with API keys
+    const providerKeyMap: Record<string, string> = {
+      perplexity: 'PERPLEXITY_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      anthropic: 'ANTHROPIC_API_KEY',
+    };
+
+    const availableProviders: Record<string, { models: string[]; default: string }> = {};
+    for (const [name, info] of Object.entries(PROVIDER_DEFAULTS)) {
+      if (name === 'local' || envConfig[providerKeyMap[name]]) {
+        availableProviders[name] = info;
+      }
+    }
+
+    // If current provider is not in available list, fall back to 'local'
+    const effectiveProvider = availableProviders[currentProvider] ? currentProvider : 'local';
+    const effectiveModel = effectiveProvider === currentProvider
+      ? envConfig.LLM_PROVIDER_MODEL || PROVIDER_DEFAULTS[currentProvider]?.default || ''
+      : PROVIDER_DEFAULTS.local.default;
+
     return NextResponse.json({
       config: {
-        provider: currentProvider,
-        model: envConfig.LLM_PROVIDER_MODEL || PROVIDER_DEFAULTS[currentProvider]?.default || '',
+        provider: effectiveProvider,
+        model: effectiveModel,
         hasPerplexityKey: !!envConfig.PERPLEXITY_API_KEY,
         hasOpenaiKey: !!envConfig.OPENAI_API_KEY,
         hasAnthropicKey: !!envConfig.ANTHROPIC_API_KEY,
         hasSerperKey: !!envConfig.SERPER_API_KEY,
       },
-      providers: PROVIDER_DEFAULTS,
+      adapters: {
+        openweather: {
+          hasApiKey: !!envConfig.OPENWEATHER_API_KEY,
+          city: envConfig.OPENWEATHER_CITY || 'Toronto,CA',
+        },
+        google_calendar: {
+          hasClientId: !!envConfig.GOOGLE_CALENDAR_CLIENT_ID,
+          hasClientSecret: !!envConfig.GOOGLE_CALENDAR_CLIENT_SECRET,
+          hasAccessToken: !!envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN,
+          hasRefreshToken: !!envConfig.GOOGLE_CALENDAR_REFRESH_TOKEN,
+          connected: !!(envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN && envConfig.GOOGLE_CALENDAR_REFRESH_TOKEN),
+        },
+        clashroyale: {
+          hasApiKey: !!envConfig.CLASH_ROYALE_API_KEY,
+          playerTag: envConfig.CLASH_ROYALE_PLAYER_TAG || '',
+        },
+      },
+      providers: availableProviders,
     });
   } catch (error: any) {
     console.error('[Settings API] GET error:', error);
@@ -105,15 +151,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { provider, model, apiKeys } = body;
-    
+    const { provider, model, apiKeys, adapterKeys } = body;
+
     // Read existing config
     let envConfig: Record<string, string> = {};
     if (existsSync(ENV_PATH)) {
       const content = readFileSync(ENV_PATH, 'utf-8');
       envConfig = parseEnvFile(content);
     }
-    
+
     // Update provider and model
     if (provider) {
       envConfig.LLM_PROVIDER = provider;
@@ -121,24 +167,45 @@ export async function POST(request: NextRequest) {
     if (model) {
       envConfig.LLM_PROVIDER_MODEL = model;
     }
-    
-    // Update API keys (only if provided - don't overwrite with empty)
+
+    // Update LLM API keys (only if provided - don't overwrite with empty)
     if (apiKeys) {
       if (apiKeys.perplexity) envConfig.PERPLEXITY_API_KEY = apiKeys.perplexity;
       if (apiKeys.openai) envConfig.OPENAI_API_KEY = apiKeys.openai;
       if (apiKeys.anthropic) envConfig.ANTHROPIC_API_KEY = apiKeys.anthropic;
       if (apiKeys.serper) envConfig.SERPER_API_KEY = apiKeys.serper;
     }
-    
+
+    // Update adapter keys (only non-empty values)
+    if (adapterKeys) {
+      const adapterKeyMap: Record<string, string> = {
+        OPENWEATHER_API_KEY: adapterKeys.openweatherApiKey,
+        OPENWEATHER_CITY: adapterKeys.openweatherCity,
+        GOOGLE_CALENDAR_CLIENT_ID: adapterKeys.googleCalendarClientId,
+        GOOGLE_CALENDAR_CLIENT_SECRET: adapterKeys.googleCalendarClientSecret,
+        GOOGLE_CALENDAR_ACCESS_TOKEN: adapterKeys.googleCalendarAccessToken,
+        GOOGLE_CALENDAR_REFRESH_TOKEN: adapterKeys.googleCalendarRefreshToken,
+        CLASH_ROYALE_API_KEY: adapterKeys.clashroyaleApiKey,
+        CLASH_ROYALE_PLAYER_TAG: adapterKeys.clashroyalePlayerTag,
+      };
+
+      for (const [envKey, value] of Object.entries(adapterKeyMap)) {
+        if (value !== undefined && value !== '') {
+          envConfig[envKey] = value as string;
+        }
+      }
+    }
+
     // Write back to file
     const content = serializeEnvFile(envConfig);
     writeFileSync(ENV_PATH, content, 'utf-8');
-    
-    console.log(`[Settings API] Updated config: provider=${provider}, model=${model}`);
-    
+
+    const updatedItems = [provider && 'provider', model && 'model', apiKeys && 'apiKeys', adapterKeys && 'adapterKeys'].filter(Boolean);
+    console.log(`[Settings API] Updated: ${updatedItems.join(', ')}`);
+
     return NextResponse.json({
       success: true,
-      message: 'Settings saved. Restart the orchestrator to apply changes.',
+      message: 'Settings saved. Restart services to apply changes.',
       restartRequired: true,
     });
   } catch (error: any) {

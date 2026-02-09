@@ -15,6 +15,8 @@ import {
   DollarSign,
   Activity,
   Home,
+  Plug,
+  Settings,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -22,7 +24,9 @@ const NAV_ITEMS = [
   { href: '/chat', label: 'Chat', icon: Bot },
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/finance', label: 'Finance', icon: DollarSign },
+  { href: '/integrations', label: 'Integrations', icon: Plug },
   { href: '/monitoring', label: 'Monitoring', icon: Activity },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 
 export function Navbar() {
