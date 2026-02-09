@@ -17,8 +17,8 @@ PROTO_DIR := shared/proto
 ENV_FILE := .env
 
 # Service definitions
-SERVICES := orchestrator llm_service chroma_service sandbox_service registry_service ui_service
-CORE_SERVICES := orchestrator llm_service chroma_service sandbox_service registry_service
+SERVICES := orchestrator llm_service chroma_service sandbox_service ui_service
+CORE_SERVICES := orchestrator llm_service chroma_service sandbox_service
 BACKEND_SERVICES := orchestrator llm_service chroma_service sandbox_service
 
 # Docker configuration
@@ -31,7 +31,6 @@ export DOCKER_BUILDKIT := 1
 PORT_LLM := 50051
 PORT_CHROMA := 50052
 PORT_ORCHESTRATOR := 50054
-PORT_REGISTRY := 50055
 PORT_SANDBOX := 50057
 PORT_UI := 3000
 
@@ -56,6 +55,7 @@ BOLD := \033[1m
         install-deps check-deps lint format \
         rebuild-orchestrator rebuild-all restart-orchestrator restart-all \
         verify-code logs-orch logs-tail logs-dump logs-clear \
+        logs-errors logs-debug logs-core logs-adapters \
         fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
         open-all open-settings open-integrations
 
@@ -98,7 +98,7 @@ help:
 	@printf '  $(CYAN)make provider-perplexity$(RESET) - Use Perplexity Sonar API\n'
 	@printf '  $(CYAN)make provider-openai$(RESET)    - Use OpenAI GPT API\n'
 	@printf '  $(CYAN)make provider-anthropic$(RESET) - Use Anthropic Claude API\n'
-	@printf '  $(CYAN)make provider-openclaw$(RESET)  - Use OpenClaw Gateway (gpt-5.x)\n'
+	@printf '  $(CYAN)make provider-anthropic$(RESET) - Use Anthropic API\n'
 	@printf '  $(CYAN)make provider-status$(RESET)    - Show current provider config\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)💬 Chat & Query:$(RESET)\n'
@@ -150,7 +150,7 @@ help:
 	@printf '  $(CYAN)make bridge-health$(RESET)      - Check bridge service health\n'
 	@printf '  $(CYAN)make bridge-tools$(RESET)       - List tools exposed via MCP\n'
 	@printf '  $(CYAN)make bridge-query Q=\"...\"$(RESET) - Test query through bridge\n'
-	@printf '  $(CYAN)make openclaw-setup$(RESET)     - Full bidirectional setup\n'
+	@printf '  $(CYAN)make bridge-up$(RESET)          - Start bridge MCP server\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)🔧 Fix & Maintenance:$(RESET)\n'
 	@printf '  $(CYAN)make fix-grafana$(RESET)        - Purge Grafana data & reprovision datasources\n'
@@ -171,7 +171,7 @@ help:
 	@printf '  $(CYAN)make pf-connections$(RESET)     - List registered connections\n'
 	@printf '  $(CYAN)make pf-build$(RESET)           - Build Docker package\n'
 	@echo ""
-	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, registry_service, ui_service, bridge_service\n'
+	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, ui_service, bridge_service\n'
 	@echo ""
 
 # ============================================================================
@@ -329,10 +329,6 @@ status:
 		MODEL=$$(grep -E "^LLM_PROVIDER_MODEL=" $(ENV_FILE) | cut -d= -f2); \
 		printf '  Provider: $(BOLD)$(CYAN)%s$(RESET)\n' "$$PROVIDER"; \
 		printf '  Model:    $(BOLD)%s$(RESET)\n' "$$MODEL"; \
-		if [ "$$PROVIDER" = "openclaw" ]; then \
-			URL=$$(grep -E "^OPENCLAW_URL=" $(ENV_FILE) | cut -d= -f2); \
-			printf '  Gateway:  $(GREEN)%s$(RESET)\n' "$${URL:-http://host.docker.internal:18789/v1}"; \
-		fi; \
 	fi
 	@echo ""
 
@@ -588,15 +584,6 @@ provider-anthropic:
 	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=claude-3-5-sonnet-20241022/' $(ENV_FILE)
 	@$(MAKE) --no-print-directory restart-orchestrator
 	@printf '$(GREEN)✓ Now using Anthropic Claude$(RESET)\n'
-	@$(MAKE) --no-print-directory provider-status
-
-provider-openclaw:
-	@printf '$(CYAN)Switching to OpenClaw Gateway provider...$(RESET)\n'
-	@sed -i '' 's/^LLM_PROVIDER=.*/LLM_PROVIDER=openclaw/' $(ENV_FILE)
-	@sed -i '' 's/^LLM_PROVIDER_MODEL=.*/LLM_PROVIDER_MODEL=gpt-5.2/' $(ENV_FILE)
-	@grep -q "^OPENCLAW_URL=" $(ENV_FILE) || echo "OPENCLAW_URL=http://host.docker.internal:18789/v1" >> $(ENV_FILE)
-	@$(MAKE) --no-print-directory restart-orchestrator
-	@printf '$(GREEN)✓ Now using OpenClaw Gateway (gpt-5.2)$(RESET)\n'
 	@$(MAKE) --no-print-directory provider-status
 
 # Set custom model for current provider
@@ -946,6 +933,23 @@ logs-orch:
 logs-tail:
 	@$(COMPOSE_CMD) logs -f --tail=50
 
+# Debug log separation targets (file-based logs from containers)
+logs-errors:
+	@printf '$(BOLD)$(RED)Error/Warning Log (logs/error.log)$(RESET)\n'
+	@tail -f logs/error.log 2>/dev/null || printf '$(YELLOW)No error.log yet — rebuild services to generate$(RESET)\n'
+
+logs-debug:
+	@printf '$(BOLD)$(CYAN)Debug Log (logs/debug.log)$(RESET)\n'
+	@tail -f logs/debug.log 2>/dev/null || printf '$(YELLOW)No debug.log yet — rebuild services to generate$(RESET)\n'
+
+logs-core:
+	@printf '$(BOLD)$(CYAN)Core Infrastructure Logs (orchestrator + dashboard)$(RESET)\n'
+	@tail -f logs/debug.log 2>/dev/null | grep -E "orchestrator|dashboard" || printf '$(YELLOW)No debug.log yet$(RESET)\n'
+
+logs-adapters:
+	@printf '$(BOLD)$(CYAN)Adapter/Service Logs (adapters + bridge + sandbox)$(RESET)\n'
+	@tail -f logs/debug.log 2>/dev/null | grep -E "adapter|bridge|sandbox" || printf '$(YELLOW)No debug.log yet$(RESET)\n'
+
 # ============================================================================
 # Observability Stack Commands
 # ============================================================================
@@ -1061,71 +1065,6 @@ bridge-briefing:
 		-H "Content-Type: application/json" \
 		-d '{"arguments": {"include_weather": true, "include_commute": true}}' | jq '.' 2>/dev/null || \
 		echo "$(RED)Error: Could not connect to bridge service$(RESET)"
-
-# Build OpenClaw skill package
-skill-build:
-	@printf '$(CYAN)Building OpenClaw skill package...$(RESET)\n'
-	@cd clawdbot_integration/skills/grpc-llm-skill && npm install && npm run build
-	@printf '$(GREEN)✓ Skill package built$(RESET)\n'
-
-# Full OpenClaw bidirectional setup
-openclaw-setup: bridge-up skill-build
-	@echo ""
-	@printf '$(GREEN)✓ OpenClaw bidirectional integration ready!$(RESET)\n'
-	@echo ""
-	@echo "  Bridge MCP Server:  http://localhost:8100"
-	@echo "  OpenClaw Gateway:   http://localhost:18789"
-	@echo ""
-	@echo "  To test: make bridge-query Q=\"What services are available?\""
-
-# ============================================================================
-# PROMPT FLOW
-# ============================================================================
-
-# Run Prompt Flow agent workflow
-pf-run:
-	@printf '$(CYAN)Running Prompt Flow agent workflow...$(RESET)\n'
-	@cd promptflow/flows/agent_workflow && pf flow test --flow . --inputs user_query="$(Q)" debug_mode=false
-
-# Run Prompt Flow with debug mode
-pf-run-debug:
-	@printf '$(CYAN)Running Prompt Flow agent workflow (debug)...$(RESET)\n'
-	@cd promptflow/flows/agent_workflow && pf flow test --flow . --inputs user_query="$(Q)" debug_mode=true
-
-# Run batch evaluation
-pf-eval:
-	@printf '$(CYAN)Running Prompt Flow evaluation...$(RESET)\n'
-	@cd promptflow/flows/evaluator && pf flow test --flow . --data ../../data/eval_cases.csv
-
-# Serve Prompt Flow as API
-pf-serve:
-	@printf '$(CYAN)Starting Prompt Flow server on port 8080...$(RESET)\n'
-	@cd promptflow/flows/agent_workflow && pf flow serve --source . --port 8080
-
-# Show Prompt Flow trace UI
-pf-trace:
-	@printf '$(CYAN)Starting Prompt Flow trace UI...$(RESET)\n'
-	@pf service start --port 23333
-
-# Create OpenAI connection
-pf-connection-openai:
-	@printf '$(CYAN)Creating OpenAI connection...$(RESET)\n'
-	@pf connection create --file promptflow/connections/openai.yaml --set api_key=$(OPENAI_API_KEY)
-
-# Create Anthropic connection
-pf-connection-anthropic:
-	@printf '$(CYAN)Creating Anthropic connection...$(RESET)\n'
-	@pf connection create --file promptflow/connections/anthropic.yaml --set api_key=$(ANTHROPIC_API_KEY)
-
-# List connections
-pf-connections:
-	@printf '$(CYAN)Listing Prompt Flow connections...$(RESET)\n'
-	@pf connection list
-
-# Build Prompt Flow package
-pf-build:
-	@printf '$(CYAN)Building Prompt Flow package...$(RESET)\n'
-	@cd promptflow/flows/agent_workflow && pf flow build --source . --output dist --format docker
 
 # ============================================================================
 # FIX & MAINTENANCE COMMANDS

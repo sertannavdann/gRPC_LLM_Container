@@ -56,8 +56,7 @@ services:
       - LLM_PORT=50051
       - CHROMA_HOST=chroma_service
       - CHROMA_PORT=50052
-      - REGISTRY_HOST=registry_service
-      - REGISTRY_PORT=50055
+      - DASHBOARD_URL=http://dashboard:8001
       - SANDBOX_HOST=sandbox_service
       - SANDBOX_PORT=50057
       - AGENT_MAX_ITERATIONS=5
@@ -82,6 +81,7 @@ services:
       - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
     networks:
       - rag_net
     healthcheck:
@@ -119,6 +119,7 @@ services:
     volumes:
       - ./dashboard_service/data:/app/data
       - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
+      - ./logs:/app/logs
     networks:
       - rag_net
     depends_on:
@@ -150,6 +151,8 @@ services:
       - SANDBOX_HOST=sandbox_service
       - SANDBOX_PORT=50057
       - DASHBOARD_URL=http://dashboard:8001
+    volumes:
+      - ./logs:/app/logs
     networks:
       - rag_net
     depends_on:
