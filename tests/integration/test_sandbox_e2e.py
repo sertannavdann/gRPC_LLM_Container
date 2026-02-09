@@ -17,8 +17,8 @@ import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from tests.integration.grpc_test_client import AgentTestClient
-from tests.integration.docker_manager import DockerComposeManager
+from integration.grpc_test_client import AgentTestClient
+from integration.docker_manager import DockerComposeManager
 
 logger = logging.getLogger(__name__)
 

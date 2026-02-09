@@ -50,23 +50,25 @@ from .intent_patterns import (
 # Import shared JSON parser for robust tool response parsing
 from shared.utils.json_parser import extract_tool_json, safe_parse_arguments
 
-from shared.clients.llm_client import LLMClient
+from shared.clients.llm_client import LLMClient, LLMClientPool
 from core.checkpointing import CheckpointManager, RecoveryManager
 from core import AgentWorkflow, WorkflowConfig
 from core.state import create_initial_state
 from core.self_consistency import SelfConsistencyVerifier
 from tools.registry import LocalToolRegistry
 from tools.builtin.web_search import web_search
-from tools.builtin.math_solver import math_solver  
+from tools.builtin.math_solver import math_solver, set_sandbox_executor
 from tools.builtin.web_loader import load_web_page
 from tools.builtin.code_executor import execute_code, set_sandbox_client
 from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
 from tools.builtin.knowledge_search import search_knowledge, store_knowledge
+from tools.builtin.finance_query import query_finance
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # Client imports
 from shared.clients.sandbox_client import SandboxClient
+from shared.clients.chroma_client import ChromaClient
 
 # Provider system imports
 from shared.providers import (
@@ -82,6 +84,10 @@ from shared.providers import (
 import os
 import asyncio
 import threading
+
+# LIDM imports
+from .delegation_manager import DelegationManager
+from .capability_map import get_lidm_endpoints
 
 # Protobuf imports
 from shared.generated import agent_pb2
@@ -772,7 +778,15 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # NOTE: Registry/Worker mesh disabled - can be re-enabled when needed
         # Registry and Worker services removed in cleanup
-        
+
+        # Initialize ChromaDB client for context compaction archival
+        try:
+            self.chroma_client = ChromaClient()
+            logger.info(f"ChromaDB client connected for context archival")
+        except Exception as e:
+            logger.warning(f"ChromaDB client init failed: {e}. Context archival disabled.")
+            self.chroma_client = None
+
         # Initialize Self-Consistency Verifier (Agent0 Phase 2)
         self.self_consistency_verifier = None
         if self.config.enable_self_consistency:
@@ -783,6 +797,19 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             )
             logger.info(f"Self-consistency enabled: k={self.config.self_consistency_samples}, threshold={self.config.self_consistency_threshold}")
         
+        # LIDM: Initialize delegation manager if enabled
+        self.delegation_enabled = os.getenv("ENABLE_DELEGATION", "false").lower() == "true"
+        self.delegation_manager = None
+        self.llm_pool = None
+
+        if self.delegation_enabled:
+            endpoints = get_lidm_endpoints()
+            self.llm_pool = LLMClientPool(endpoints)
+            self.delegation_manager = DelegationManager(self.llm_pool)
+            logger.info(f"LIDM delegation enabled with tiers: {self.llm_pool.available_tiers}")
+        else:
+            logger.info("LIDM delegation disabled (set ENABLE_DELEGATION=true to enable)")
+
         # Initialize LLM Engine Wrapper with multi-turn support
         self.llm_engine = LLMEngineWrapper(
             self.llm_client, 
@@ -812,7 +839,12 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Register code executor if sandbox is available
         if self.sandbox_client:
             self.tool_registry.register(execute_code)
-            logger.info("Code executor tool registered")
+            # Wire sandbox into math_solver for codegen→sandbox pipeline
+            set_sandbox_executor(execute_code)
+            logger.info("Code executor tool registered + math_solver sandbox wired")
+
+        # Register finance query tool (bank transaction access)
+        self.tool_registry.register(query_finance)
         
         # NOTE: delegate_to_worker removed - worker mesh disabled
         
@@ -837,7 +869,8 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.workflow = AgentWorkflow(
             tool_registry=self.tool_registry,
             llm_engine=self.llm_engine,
-            config=self.workflow_config
+            config=self.workflow_config,
+            chroma_client=self.chroma_client,
         )
         
         # Compile workflow with checkpointing
@@ -1111,6 +1144,62 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                 "needs_clarification": True
             }
         
+        # LIDM: If delegation is enabled, try routing through DelegationManager
+        if self.delegation_enabled and self.delegation_manager:
+            try:
+                decomposition = self.delegation_manager.analyze_and_route(query)
+                logger.info(f"LIDM strategy={decomposition.strategy}, "
+                             f"sub_tasks={len(decomposition.sub_tasks)}, "
+                             f"complexity={decomposition.complexity_score:.2f}")
+
+                if decomposition.strategy == "decompose" and len(decomposition.sub_tasks) > 1:
+                    # Multi-task delegation
+                    exec_result = self.delegation_manager.execute_delegation(decomposition)
+                    content = self.delegation_manager.aggregate_results(
+                        query, exec_result.get("completed", {}), decomposition
+                    )
+
+                    # Optional verification for high-complexity results
+                    if decomposition.complexity_score > 0.8:
+                        verification = self.delegation_manager.verify_result(
+                            query, content, decomposition.complexity_score
+                        )
+                        if verification.get("revised_answer"):
+                            content = verification["revised_answer"]
+                        logger.info(f"LIDM verification: method={verification.get('method')}, "
+                                     f"confidence={verification.get('confidence', 0):.2f}")
+
+                    return {
+                        "content": content,
+                        "messages": [],
+                        "tool_results": exec_result.get("sub_results", []),
+                        "iteration": 0,
+                        "lidm_strategy": decomposition.strategy,
+                    }
+
+                elif decomposition.strategy == "direct" and decomposition.sub_tasks:
+                    # Single capability, route to best tier
+                    task = decomposition.sub_tasks[0]
+                    tier = task.target_tier
+
+                    # If routing to a non-default tier, use the pool directly
+                    if tier != "heavy" or self.llm_pool:
+                        result = self.llm_pool.generate(
+                            prompt=query, tier=tier, max_tokens=1024
+                        )
+                        return {
+                            "content": result,
+                            "messages": [],
+                            "tool_results": [],
+                            "iteration": 0,
+                            "lidm_strategy": "direct",
+                            "lidm_tier": tier,
+                        }
+                    # Fall through to standard workflow for heavy tier (default)
+
+            except Exception as e:
+                logger.warning(f"LIDM delegation failed, falling back to standard workflow: {e}")
+
         # Get system prompt enhancement for multi-tool intents
         intent_prompt = get_intent_system_prompt(query)
         

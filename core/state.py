@@ -72,9 +72,9 @@ class WorkflowConfig(BaseModel):
     """
     
     max_iterations: int = Field(default=5, ge=1, le=20)
-    context_window: int = Field(default=6, ge=1, le=20)
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    model_name: str = Field(default="Qwen2.5-14B-Instruct-Q4_K.gguf")
+    context_window: int = Field(default=12, ge=1, le=50)
+    temperature: float = Field(default=0.15, ge=0.0, le=2.0)
+    model_name: str = Field(default="Mistral-Small-24B-Instruct-2501.Q8_0.gguf")
     enable_streaming: bool = Field(default=True)
     max_tool_calls_per_turn: int = Field(default=5, ge=1, le=10)
     timeout_seconds: int = Field(default=120, ge=10, le=600)
@@ -102,9 +102,9 @@ class ModelConfig(BaseModel):
     """
     
     model_path: str = Field(
-        default="inference/models/Qwen2.5-14B-Instruct-Q4_K.gguf"
+        default="inference/models/Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
     )
-    n_ctx: int = Field(default=2048, ge=512, le=32768)
+    n_ctx: int = Field(default=16384, ge=512, le=131072)
     n_threads: int = Field(default=4, ge=1, le=16)
     n_gpu_layers: int = Field(default=0, ge=0, le=100)  # Metal acceleration
     use_mlock: bool = Field(default=False)  # Set True for production

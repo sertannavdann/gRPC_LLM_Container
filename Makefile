@@ -29,6 +29,8 @@ export DOCKER_BUILDKIT := 1
 
 # gRPC ports
 PORT_LLM := 50051
+PORT_LLM_STANDARD := 50061
+PORT_LLM_AIRLLM := 50062
 PORT_CHROMA := 50052
 PORT_ORCHESTRATOR := 50054
 PORT_SANDBOX := 50057
@@ -49,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-        test test-unit test-integration test-e2e \
+        test test-unit test-integration test-e2e test-monkey \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -57,7 +59,8 @@ BOLD := \033[1m
         verify-code logs-orch logs-tail logs-dump logs-clear \
         logs-errors logs-debug logs-core logs-adapters \
         fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
-        open-all open-settings open-integrations
+        open-all open-settings open-integrations \
+        lidm-up lidm-status lidm-list-models airllm-up airllm-logs test-lidm
 
 # ============================================================================
 # HELP
@@ -111,6 +114,7 @@ help:
 	@printf '  $(CYAN)make test-unit$(RESET)          - Run unit tests only\n'
 	@printf '  $(CYAN)make test-integration$(RESET)   - Run integration tests\n'
 	@printf '  $(CYAN)make test-e2e$(RESET)           - Run end-to-end tests\n'
+	@printf '  $(CYAN)make test-monkey$(RESET)        - Run monkey runner (requires services up)\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)📦 Proto Generation:$(RESET)\n'
 	@printf '  $(CYAN)make proto-gen$(RESET)          - Generate all protobuf stubs\n'
@@ -162,7 +166,15 @@ help:
 	@printf '  $(CYAN)make open-settings$(RESET)      - Open Settings page in browser\n'
 	@printf '  $(CYAN)make open-integrations$(RESET)  - Open Integrations page in browser\n'
 	@echo ""
-	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, ui_service, bridge_service\n'
+	@printf '$(BOLD)$(GREEN)🧠 LIDM (Local Inference Delegation):$(RESET)\n'
+	@printf '  $(CYAN)make lidm-up$(RESET)             - Start all LIDM services (heavy + standard)\n'
+	@printf '  $(CYAN)make lidm-status$(RESET)          - Show active models across all instances\n'
+	@printf '  $(CYAN)make lidm-list-models$(RESET)     - List models with capabilities per instance\n'
+	@printf '  $(CYAN)make test-lidm$(RESET)            - Run LIDM unit + integration tests\n'
+	@printf '  $(CYAN)make airllm-up$(RESET)            - Start AirLLM service (optional/batch)\n'
+	@printf '  $(CYAN)make airllm-logs$(RESET)          - Tail AirLLM service logs\n'
+	@echo ""
+	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, llm_service_standard, chroma_service, sandbox_service, ui_service, bridge_service\n'
 	@echo ""
 
 # ============================================================================
@@ -744,6 +756,10 @@ test-tools:
 	@printf '$(CYAN)Running tool tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_builtin_tools.py -v
 
+test-monkey:
+	@printf '$(CYAN)Running monkey runner tests (requires services up)...$(RESET)\n'
+	@cd tests && python -m pytest integration/test_monkey_runner.py -v --tb=short -x
+
 # ============================================================================
 # HEALTH CHECKS (used internally, prefer `make status` for user-facing)
 # ============================================================================
@@ -1115,6 +1131,54 @@ open-settings:
 # Open Integrations page
 open-integrations:
 	@open http://localhost:5001/integrations
+
+# ============================================================================
+# LIDM: Local Inference Delegation Module
+# ============================================================================
+
+# Start all LIDM services (heavy + standard LLM instances + orchestrator)
+lidm-up:
+	@printf '$(CYAN)Starting LIDM services (multi-instance LLM)...$(RESET)\n'
+	@$(COMPOSE_CMD) up -d llm_service llm_service_standard orchestrator
+	@printf '$(GREEN)✓ LIDM services started (heavy :50051, standard :50061)$(RESET)\n'
+
+# Show active models across all LIDM instances
+lidm-status:
+	@printf '$(BOLD)$(CYAN)LIDM Instance Status:$(RESET)\n'
+	@echo "─────────────────────────────────────────"
+	@printf '  $(BOLD)Heavy$(RESET) (Mistral-24B :50051):  '
+	@grpcurl -plaintext localhost:50051 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "unreachable"
+	@printf '  $(BOLD)Standard$(RESET) (Qwen-14B :50061): '
+	@grpcurl -plaintext localhost:50061 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "unreachable"
+	@printf '  $(BOLD)Ultra$(RESET) (AirLLM 70B :50062):  '
+	@grpcurl -plaintext localhost:50062 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "not running (use: make airllm-up)"
+
+# List models with capabilities per instance
+lidm-list-models:
+	@printf '$(BOLD)$(CYAN)LIDM Model Registry:$(RESET)\n'
+	@echo "─────────────────────────────────────────"
+	@printf '$(BOLD)Heavy Instance (:50051):$(RESET)\n'
+	@grpcurl -plaintext localhost:50051 llm.LLMService/ListModels 2>/dev/null | jq '.' || echo "  unreachable"
+	@echo ""
+	@printf '$(BOLD)Standard Instance (:50061):$(RESET)\n'
+	@grpcurl -plaintext localhost:50061 llm.LLMService/ListModels 2>/dev/null | jq '.' || echo "  unreachable"
+
+# Start AirLLM service (optional, requires NVIDIA GPU)
+airllm-up:
+	@printf '$(CYAN)Starting AirLLM service (70B layer-streaming)...$(RESET)\n'
+	@printf '$(YELLOW)Requires NVIDIA GPU + CUDA. First load may take 10+ minutes.$(RESET)\n'
+	@$(COMPOSE_CMD) --profile airllm up -d llm_service_airllm
+	@printf '$(GREEN)✓ AirLLM service starting on :50062$(RESET)\n'
+
+# Tail AirLLM service logs
+airllm-logs:
+	@$(COMPOSE_CMD) logs -f llm_service_airllm
+
+# Run LIDM tests
+test-lidm:
+	@printf '$(CYAN)Running LIDM unit + integration tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_model_registry.py -v --tb=short 2>/dev/null || true
+	@printf '$(GREEN)✓ LIDM tests complete$(RESET)\n'
 
 # ============================================================================
 # Docker Troubleshooting Guide

@@ -45,9 +45,9 @@ class OrchestratorConfig:
     
     # Workflow settings
     max_iterations: int = 5
-    context_window: int = 3
-    temperature: float = 0.7
-    model_name: str = "qwen2.5-0.5b-instruct-q5_k_m.gguf"
+    context_window: int = 12
+    temperature: float = 0.15
+    model_name: str = "Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
     enable_streaming: bool = True
     max_tool_calls_per_turn: int = 5
     timeout_seconds: int = 120
@@ -63,6 +63,12 @@ class OrchestratorConfig:
     enable_self_consistency: bool = False
     self_consistency_samples: int = 5
     self_consistency_threshold: float = 0.6
+
+    # LIDM: Delegation settings
+    enable_delegation: bool = False
+    llm_heavy_host: str = "llm_service:50051"
+    llm_standard_host: str = "llm_service_standard:50051"
+    llm_ultra_host: str = ""
     
     @classmethod
     def from_env(cls) -> "OrchestratorConfig":
@@ -128,4 +134,9 @@ class OrchestratorConfig:
             enable_self_consistency=os.getenv("ENABLE_SELF_CONSISTENCY", "false").lower() == "true",
             self_consistency_samples=int(os.getenv("SELF_CONSISTENCY_SAMPLES", "5")),
             self_consistency_threshold=float(os.getenv("SELF_CONSISTENCY_THRESHOLD", "0.6")),
+            # LIDM
+            enable_delegation=os.getenv("ENABLE_DELEGATION", "false").lower() == "true",
+            llm_heavy_host=os.getenv("LLM_HEAVY_HOST", "llm_service:50051"),
+            llm_standard_host=os.getenv("LLM_STANDARD_HOST", "llm_service_standard:50051"),
+            llm_ultra_host=os.getenv("LLM_ULTRA_HOST", ""),
         )

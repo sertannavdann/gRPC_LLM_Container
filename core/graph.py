@@ -16,6 +16,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 
 from .state import AgentState, WorkflowConfig, ToolExecutionResult
+from .context_compactor import compact_context
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class AgentWorkflow:
         tool_registry,  # LocalToolRegistry
         llm_engine,  # LlamaEngine
         config: WorkflowConfig,
+        chroma_client=None,  # Optional ChromaClient for context archival
     ):
         """
         Initialize workflow with tool registry and LLM engine.
@@ -52,10 +54,12 @@ class AgentWorkflow:
             tool_registry: LocalToolRegistry instance with registered tools
             llm_engine: LlamaEngine for local inference
             config: WorkflowConfig with iteration limits and LLM params
+            chroma_client: Optional ChromaClient for context compaction archival
         """
         self.registry = tool_registry
         self.llm = llm_engine
         self.config = config
+        self.chroma_client = chroma_client
         
         # Build graph structure
         self.graph = self._build_graph()
@@ -106,6 +110,12 @@ class AgentWorkflow:
             'budget', 'spending', 'finance', 'money', 'balance', 'account',
             'health', 'steps', 'sleep', 'heart rate', 'fitness', 'wellness',
             'briefing', 'summary', 'day', 'my', 'mine',
+
+            # Finance / bank indicators
+            'transaction', 'transactions', 'purchase', 'purchases',
+            'bank', 'debit', 'credit', 'merchant', 'expense', 'expenses',
+            'income', 'payment', 'payments', 'cost', 'costs',
+            'spent', 'bought', 'paid', 'subscription',
 
             # Knowledge base / RAG indicators
             'knowledge', 'notes', 'documents', 'remember', 'saved',
@@ -217,8 +227,17 @@ class AgentWorkflow:
         """
         messages = state["messages"]
         
-        # Apply context window to prevent token overflow
-        recent_messages = messages[-self.config.context_window:]
+        # Compact context: summarise + archive evicted turns instead of
+        # silently dropping them.  Falls back to a simple slice when the
+        # LLM summariser or ChromaDB is unavailable.
+        conversation_id = state.get("conversation_id", "unknown")
+        recent_messages = compact_context(
+            messages=messages,
+            max_messages=self.config.context_window,
+            llm_engine=self.llm,
+            chroma_client=self.chroma_client,
+            conversation_id=conversation_id,
+        )
         
         # Extract last user query to determine if tools are needed
         last_user_message = next(

@@ -5,7 +5,7 @@ Tests FINDING #1: Tool Calling is BROKEN
 
 import pytest
 import logging
-from tests.integration.grpc_test_client import AgentTestClient
+from integration.grpc_test_client import AgentTestClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

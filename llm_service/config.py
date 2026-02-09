@@ -32,15 +32,15 @@ class LLMServiceConfig:
         verbose: Enable verbose model logging
     """
     # Model configuration
-    model_path: str = "./models/qwen2.5-0.5b-instruct-q5_k_m.gguf"
-    n_ctx: int = 4096
+    model_path: str = "./models/Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
+    n_ctx: int = 16384
     n_threads: int = 4
     n_batch: int = 512
     verbose: bool = False
-    
+
     # Generation defaults
-    max_tokens: int = 1024
-    default_temperature: float = 0.7
+    max_tokens: int = 2048
+    default_temperature: float = 0.15
     
     # Service configuration
     host: str = "[::]"
@@ -51,29 +51,41 @@ class LLMServiceConfig:
     def from_env(cls) -> "LLMServiceConfig":
         """
         Load configuration from environment variables.
-        
+
+        When LLM_CTX_SIZE / LLM_MAX_TOKENS / LLM_TEMPERATURE are **not** set
+        explicitly the model_registry auto-configures them from the model
+        filename.  Explicit env-vars always win.
+
         Environment variables:
             LLM_MODEL_PATH: Path to GGUF model
-            LLM_CTX_SIZE: Context window size
+            LLM_CTX_SIZE: Context window size (auto if unset)
             LLM_THREADS: CPU threads
             LLM_BATCH_SIZE: Batch size
-            LLM_MAX_TOKENS: Max generation tokens
-            LLM_TEMPERATURE: Default temperature
+            LLM_MAX_TOKENS: Max generation tokens (auto if unset)
+            LLM_TEMPERATURE: Default temperature (auto if unset)
             LLM_HOST: gRPC host
             LLM_PORT: gRPC port
             LLM_MAX_WORKERS: Max workers
             LLM_VERBOSE: Enable verbose logging (1/0)
-        
+
         Returns:
             LLMServiceConfig: Configuration instance
         """
+        from llm_service.model_registry import auto_configure
+
+        model_path = os.getenv("LLM_MODEL_PATH", cls.model_path)
+
+        # Auto-detect optimal params; explicit env-vars override.
+        override_ctx = int(os.getenv("LLM_CTX_SIZE")) if os.getenv("LLM_CTX_SIZE") else None
+        auto = auto_configure(model_path, override_ctx=override_ctx)
+
         return cls(
-            model_path=os.getenv("LLM_MODEL_PATH", cls.model_path),
-            n_ctx=int(os.getenv("LLM_CTX_SIZE", str(cls.n_ctx))),
+            model_path=model_path,
+            n_ctx=auto["n_ctx"],
             n_threads=int(os.getenv("LLM_THREADS", str(cls.n_threads))),
             n_batch=int(os.getenv("LLM_BATCH_SIZE", str(cls.n_batch))),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", str(cls.max_tokens))),
-            default_temperature=float(os.getenv("LLM_TEMPERATURE", str(cls.default_temperature))),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", str(auto["max_tokens"]))),
+            default_temperature=float(os.getenv("LLM_TEMPERATURE", str(auto["default_temperature"]))),
             host=os.getenv("LLM_HOST", cls.host),
             port=int(os.getenv("LLM_PORT", str(cls.port))),
             max_workers=int(os.getenv("LLM_MAX_WORKERS", str(cls.max_workers))),

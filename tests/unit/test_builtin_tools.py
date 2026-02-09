@@ -272,8 +272,9 @@ class TestMathSolver:
         result = math_solver("undefined_func(10)")
         
         assert result["status"] == "error"
-        # Python parser reports syntax error for undefined functions
-        assert "syntax" in result["error"].lower() or "error" in result["error"].lower()
+        # May be NameError ("Undefined") or SyntaxError depending on parser
+        err = result["error"].lower()
+        assert any(w in err for w in ("undefined", "syntax", "not defined", "error"))
     
     def test_complex_expression(self):
         """Test complex mathematical expression."""

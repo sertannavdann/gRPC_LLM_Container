@@ -4,9 +4,13 @@ package llm;
 service LLMService {
   // Streaming text generation
   rpc Generate(GenerateRequest) returns (stream GenerateResponse);
-  
+
   // Batch generation for self-consistency scoring (Phase 2: Agent0)
   rpc GenerateBatch(GenerateBatchRequest) returns (GenerateBatchResponse);
+
+  // LIDM: Model introspection RPCs
+  rpc GetActiveModel(GetActiveModelRequest) returns (GetActiveModelResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
 }
 
 message GenerateRequest {
@@ -36,4 +40,30 @@ message GenerateBatchResponse {
   float self_consistency_score = 2;        // p̂ = proportion agreeing with majority
   string majority_answer = 3;              // Most common answer
   int32 majority_count = 4;                // How many responses agree
+}
+
+// LIDM: Model introspection messages
+message GetActiveModelRequest {}
+message GetActiveModelResponse {
+  string model_name = 1;
+  string model_filename = 2;
+  int32 context_window = 3;
+  int32 max_tokens = 4;
+  repeated string capabilities = 5;
+  string tier = 6;
+  string backend = 7;
+}
+
+message ListModelsRequest {}
+message ModelInfo {
+  string filename = 1;
+  string name = 2;
+  int32 context_window = 3;
+  int32 recommended_ctx = 4;
+  repeated string capabilities = 5;
+  string tier = 6;
+}
+message ListModelsResponse {
+  repeated ModelInfo models = 1;
+  string active_model = 2;
 }

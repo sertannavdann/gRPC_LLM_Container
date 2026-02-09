@@ -17,8 +17,8 @@ import logging
 import time
 from pathlib import Path
 
-from tests.integration.grpc_test_client import AgentTestClient
-from tests.integration.docker_manager import DockerComposeManager
+from integration.grpc_test_client import AgentTestClient
+from integration.docker_manager import DockerComposeManager
 
 logger = logging.getLogger(__name__)
 

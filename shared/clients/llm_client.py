@@ -1,6 +1,6 @@
 import grpc
 import logging
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Dict, Tuple
 from .base_client import BaseClient
 
 # Try local import first (when used as a service), fall back to shared/generated
@@ -30,13 +30,13 @@ class LLMClient(BaseClient):
     def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7, response_format: str = "") -> str:
         """
         Generate text from LLM.
-        
+
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             response_format: Optional format constraint (e.g., "json")
-        
+
         Returns:
             Generated text
         """
@@ -93,20 +93,6 @@ class LLMClient(BaseClient):
     ) -> dict:
         """
         Generate k samples for self-consistency scoring (Agent0 Phase 2).
-        
-        Args:
-            prompt: Input prompt
-            num_samples: Number of samples to generate (k)
-            max_tokens: Maximum tokens per sample
-            temperature: Sampling temperature
-            response_format: Optional format constraint (e.g., "json")
-        
-        Returns:
-            Dict with keys:
-                - responses: List of generated texts
-                - self_consistency_score: p̂ (proportion agreeing with majority)
-                - majority_answer: Most common answer
-                - majority_count: Number of responses that agree
         """
         try:
             response = self.stub.GenerateBatch(
@@ -133,3 +119,106 @@ class LLMClient(BaseClient):
                 "majority_answer": f"LLM Service Error: {e.details()}",
                 "majority_count": 0
             }
+
+    def get_active_model(self) -> dict:
+        """Get information about the currently loaded model on this instance."""
+        try:
+            response = self.stub.GetActiveModel(
+                llm_pb2.GetActiveModelRequest(),
+                timeout=5,
+            )
+            return {
+                "model_name": response.model_name,
+                "model_filename": response.model_filename,
+                "context_window": response.context_window,
+                "max_tokens": response.max_tokens,
+                "capabilities": list(response.capabilities),
+                "tier": response.tier,
+                "backend": response.backend,
+            }
+        except grpc.RpcError as e:
+            logger.error(f"GetActiveModel failed: {e.code().name}")
+            return {"error": str(e.details())}
+
+    def list_models(self) -> dict:
+        """List all known models from the registry."""
+        try:
+            response = self.stub.ListModels(
+                llm_pb2.ListModelsRequest(),
+                timeout=5,
+            )
+            models = []
+            for m in response.models:
+                models.append({
+                    "filename": m.filename,
+                    "name": m.name,
+                    "context_window": m.context_window,
+                    "recommended_ctx": m.recommended_ctx,
+                    "capabilities": list(m.capabilities),
+                    "tier": m.tier,
+                })
+            return {
+                "models": models,
+                "active_model": response.active_model,
+            }
+        except grpc.RpcError as e:
+            logger.error(f"ListModels failed: {e.code().name}")
+            return {"models": [], "active_model": "", "error": str(e.details())}
+
+
+class LLMClientPool:
+    """
+    LIDM: Manages connections to multiple LLM service instances.
+
+    Routes requests to the appropriate tier based on capability requirements.
+    """
+
+    def __init__(self, endpoints: Dict[str, str]):
+        """
+        Args:
+            endpoints: Mapping of tier → "host:port" strings.
+                       e.g. {"heavy": "llm_service:50051", "standard": "llm_service_standard:50051"}
+        """
+        self.clients: Dict[str, LLMClient] = {}
+        for tier, endpoint in endpoints.items():
+            if not endpoint:
+                continue
+            host, port_str = endpoint.rsplit(":", 1)
+            port = int(port_str)
+            self.clients[tier] = LLMClient(host=host, port=port)
+            logger.info(f"LLMClientPool: {tier} → {host}:{port}")
+
+        if not self.clients:
+            logger.warning("LLMClientPool initialized with no endpoints")
+
+    def get_client(self, tier: str) -> Optional[LLMClient]:
+        """Get client for a specific tier. Falls back to 'standard', then any available."""
+        if tier in self.clients:
+            return self.clients[tier]
+        if "standard" in self.clients:
+            logger.debug(f"Tier '{tier}' not available, falling back to 'standard'")
+            return self.clients["standard"]
+        # Return any available client
+        if self.clients:
+            fallback_tier = next(iter(self.clients))
+            logger.debug(f"Tier '{tier}' not available, falling back to '{fallback_tier}'")
+            return self.clients[fallback_tier]
+        return None
+
+    def generate(self, prompt: str, tier: str = "standard", **kwargs) -> str:
+        """Generate using a specific tier's LLM instance."""
+        client = self.get_client(tier)
+        if client is None:
+            return "Error: No LLM service available"
+        return client.generate(prompt, **kwargs)
+
+    def get_active_models(self) -> Dict[str, dict]:
+        """Query active model info from all connected instances."""
+        results = {}
+        for tier, client in self.clients.items():
+            results[tier] = client.get_active_model()
+        return results
+
+    @property
+    def available_tiers(self) -> list:
+        return list(self.clients.keys())

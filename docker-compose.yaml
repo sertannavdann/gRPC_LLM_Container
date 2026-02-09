@@ -7,8 +7,33 @@ services:
     container_name: llm_service
     ports:
       - "50051:50051"
+    environment:
+      - LLM_MODEL_PATH=./models/Mistral-Small-24B-Instruct-2501.Q8_0.gguf
+      # LLM_CTX_SIZE is auto-detected from model_registry; override here if needed
     volumes:
       - ./llm_service/models:/app/models
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # LIDM: Standard-tier LLM instance (Qwen-14B for multilingual/math/finance)
+  llm_service_standard:
+    build:
+      context: .
+      dockerfile: llm_service/Dockerfile
+    container_name: llm_service_standard
+    ports:
+      - "50061:50051"
+    environment:
+      - LLM_MODEL_PATH=./models/Qwen2.5-14B-Instruct-Q4_K.gguf
+      - N_CTX=16384
+    volumes:
+      - ./llm_service/models:/app/models
+      - ./logs:/app/logs
     networks:
       - rag_net
     healthcheck:
@@ -44,6 +69,7 @@ services:
       - "8890:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8890)
     depends_on:
       - llm_service
+      - llm_service_standard
       - chroma_service
       - sandbox_service
       - otel-collector
@@ -54,13 +80,20 @@ services:
       - ORCHESTRATOR_PORT=50054
       - LLM_HOST=llm_service
       - LLM_PORT=50051
+      # LIDM: Multi-instance LLM routing
+      - ENABLE_DELEGATION=${ENABLE_DELEGATION:-false}
+      - LLM_HEAVY_HOST=llm_service:50051
+      - LLM_STANDARD_HOST=llm_service_standard:50051
+      - LLM_ULTRA_HOST=${LLM_ULTRA_HOST:-}
       - CHROMA_HOST=chroma_service
       - CHROMA_PORT=50052
       - DASHBOARD_URL=http://dashboard:8001
       - SANDBOX_HOST=sandbox_service
       - SANDBOX_PORT=50057
       - AGENT_MAX_ITERATIONS=5
-      - AGENT_TEMPERATURE=0.7
+      - AGENT_CONTEXT_WINDOW=12
+      - AGENT_TEMPERATURE=0.15
+      - AGENT_MODEL_NAME=Mistral-Small-24B-Instruct-2501.Q8_0.gguf
       - ENABLE_SELF_CONSISTENCY=false
       - SELF_CONSISTENCY_SAMPLES=5
       - SELF_CONSISTENCY_THRESHOLD=0.6
@@ -308,6 +341,37 @@ services:
     networks:
       - rag_net
     restart: unless-stopped
+
+  # LIDM: Ultra-tier AirLLM instance (70B+ layer-streaming, optional/batch)
+  # Requires NVIDIA GPU + CUDA. Start separately with: make airllm-up
+  llm_service_airllm:
+    build:
+      context: .
+      dockerfile: llm_service/Dockerfile.airllm
+    container_name: llm_service_airllm
+    ports:
+      - "50062:50051"
+    environment:
+      - MODEL_REPO=meta-llama/Llama-3.1-70B-Instruct
+      - COMPRESSION=4bit
+      - BACKEND=airllm
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./logs:/app/logs
+    networks:
+      - rag_net
+    profiles:
+      - airllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   rag_net:
