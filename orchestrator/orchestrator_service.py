@@ -382,12 +382,8 @@ class LLMEngineWrapper:
         while iteration < self.max_tool_iterations:
             iteration += 1
 
-            # Adjust instructions based on whether we have tool results
-            if False:  # Kept for reference — synthesis now handled above
-                pass
-            else:
-                # First iteration: Determine if tools needed
-                prompt = f"""You are a helpful AI assistant with access to tools.
+            # First call: determine if tools are needed (synthesis handled by _synthesize_with_results)
+            prompt = f"""You are a helpful AI assistant with access to tools.
 
 Available tools:
 {tools_desc}

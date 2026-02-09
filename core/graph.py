@@ -106,6 +106,10 @@ class AgentWorkflow:
             'budget', 'spending', 'finance', 'money', 'balance', 'account',
             'health', 'steps', 'sleep', 'heart rate', 'fitness', 'wellness',
             'briefing', 'summary', 'day', 'my', 'mine',
+
+            # Knowledge base / RAG indicators
+            'knowledge', 'notes', 'documents', 'remember', 'saved',
+            'stored', 'recall', 'learned', 'previous',
         }
         
         # Check for tool keywords

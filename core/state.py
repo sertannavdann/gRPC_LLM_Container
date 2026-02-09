@@ -72,9 +72,9 @@ class WorkflowConfig(BaseModel):
     """
     
     max_iterations: int = Field(default=5, ge=1, le=20)
-    context_window: int = Field(default=3, ge=1, le=10)
+    context_window: int = Field(default=6, ge=1, le=20)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    model_name: str = Field(default="qwen2.5-0.5b-instruct-q5_k_m.gguf")
+    model_name: str = Field(default="Qwen2.5-14B-Instruct-Q4_K.gguf")
     enable_streaming: bool = Field(default=True)
     max_tool_calls_per_turn: int = Field(default=5, ge=1, le=10)
     timeout_seconds: int = Field(default=120, ge=10, le=600)
@@ -102,7 +102,7 @@ class ModelConfig(BaseModel):
     """
     
     model_path: str = Field(
-        default="inference/models/qwen2.5-0.5b-instruct-q5_k_m.gguf"
+        default="inference/models/Qwen2.5-14B-Instruct-Q4_K.gguf"
     )
     n_ctx: int = Field(default=2048, ge=512, le=32768)
     n_threads: int = Field(default=4, ge=1, le=16)
