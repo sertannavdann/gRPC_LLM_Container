@@ -30,6 +30,7 @@ storage:
     pool:
       max_workers: 100
       queue_depth: 10000
+    blocklist_poll: 5m  # Reduce polling frequency to avoid file race conditions
 
 query_frontend:
   search:
