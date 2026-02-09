@@ -57,7 +57,7 @@ Builds (with cache) then starts.
 - Logs: `make logs-<svc>`
 - Shell: `make shell-<svc>`
 
-Services: `orchestrator`, `llm_service`, `chroma_service`, `sandbox_service`, `registry_service`, `ui_service`
+Services: `orchestrator`, `llm_service`, `chroma_service`, `sandbox_service`, `ui_service`, `bridge_service`
 
 ---
 

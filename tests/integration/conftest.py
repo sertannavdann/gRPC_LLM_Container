@@ -89,7 +89,7 @@ def test_environment():
     if not docker_cmd:
         pytest.skip("Docker not found in PATH. Please ensure Docker is installed and services are running via 'make up'.")
     
-    # Check if agent_service is reachable (assumes already running)
+    # Check if orchestrator is reachable (assumes already running)
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
@@ -97,7 +97,7 @@ def test_environment():
         sock.close()
         
         if result != 0:
-            pytest.skip("agent_service not reachable on port 50054. Please start services with 'make up' first.")
+            pytest.skip("orchestrator not reachable on port 50054. Please start services with 'make up' first.")
     except Exception as e:
         pytest.skip(f"Cannot check service health: {e}. Please ensure services are running.")
     

@@ -197,8 +197,6 @@ gRPC_llm/
 │       ├── web_loader.py
 │       └── code_executor.py  # Sandbox integration
 ├── sandbox_service/        # Secure code execution
-├── worker_service/         # Specialized workers
-├── registry_service/       # Service discovery
 ├── llm_service/            # LLM inference
 ├── chroma_service/         # Vector database
 ├── ui_service/             # Next.js frontend

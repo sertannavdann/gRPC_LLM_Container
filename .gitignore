@@ -94,9 +94,6 @@ dashboard_service/logs/
 # Ignore orchestrator service data
 orchestrator_service/data/
 orchestrator_service/logs/
-# Ignore agent service data
-agent_service/data/
-agent_service/logs/
 # Ignore docker-compose override files
 docker-compose.override.yaml
 # Ignore local configuration files
@@ -105,8 +102,6 @@ config/.env
 # Ignore conversation data
 ui_servicedata/conversations/
 data/logs/
-
-clawdbot_integration/skills/*
 
 # Bank data (real financial data - local only)
 dashboard_service/Bank/*.csv

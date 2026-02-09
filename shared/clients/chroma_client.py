@@ -6,7 +6,7 @@ try:
     from chroma_service import chroma_pb2_grpc
 except ModuleNotFoundError:
     try:
-        # Import from shared/generated when running in agent_service container
+        # Import from shared/generated as fallback
         from shared.generated import chroma_pb2, chroma_pb2_grpc
     except ModuleNotFoundError:
         # Last resort: try relative import

@@ -1,14 +1,8 @@
 """
 Orchestrator gRPC service - Unified agent coordination service.
 
-Combines agent_service and routing logic into a single orchestrator that:
-- Routes queries to appropriate tools/services  
-- Manages agent workflows
-- Handles conversation persistence
-- Provides crash recovery
-
-This replaces the separate agent_service + llm_service split with a
-unified orchestration layer.
+Routes queries to appropriate tools/services, manages agent workflows,
+handles conversation persistence, and provides crash recovery.
 """
 
 import uuid
@@ -56,7 +50,6 @@ from .intent_patterns import (
 # Import shared JSON parser for robust tool response parsing
 from shared.utils.json_parser import extract_tool_json, safe_parse_arguments
 
-# These will be copied from agent_service
 from shared.clients.llm_client import LLMClient
 from core.checkpointing import CheckpointManager, RecoveryManager
 from core import AgentWorkflow, WorkflowConfig

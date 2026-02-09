@@ -1,8 +1,8 @@
 """
 Orchestrator service configuration.
 
-Consolidates configuration from agent_service and llm_service into a single
-unified config for the orchestrator.
+Unified config for the orchestrator including LLM provider settings,
+tool configuration, and service endpoints.
 
 Supports multiple LLM providers:
 - local: Uses local llama.cpp via gRPC (default)

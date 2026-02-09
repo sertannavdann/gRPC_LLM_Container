@@ -162,15 +162,6 @@ help:
 	@printf '  $(CYAN)make open-settings$(RESET)      - Open Settings page in browser\n'
 	@printf '  $(CYAN)make open-integrations$(RESET)  - Open Integrations page in browser\n'
 	@echo ""
-	@printf '$(BOLD)$(GREEN)📐 Prompt Flow (Visual Workflow & Evaluation):$(RESET)\n'
-	@printf '  $(CYAN)make pf-run Q=\"...\"$(RESET)     - Run agent workflow with query\n'
-	@printf '  $(CYAN)make pf-run-debug Q=\"...\"$(RESET) - Run with debug output\n'
-	@printf '  $(CYAN)make pf-eval$(RESET)            - Run batch evaluation\n'
-	@printf '  $(CYAN)make pf-serve$(RESET)           - Serve flow as API (port 8080)\n'
-	@printf '  $(CYAN)make pf-trace$(RESET)           - Start trace UI (port 23333)\n'
-	@printf '  $(CYAN)make pf-connections$(RESET)     - List registered connections\n'
-	@printf '  $(CYAN)make pf-build$(RESET)           - Build Docker package\n'
-	@echo ""
 	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, chroma_service, sandbox_service, ui_service, bridge_service\n'
 	@echo ""
 

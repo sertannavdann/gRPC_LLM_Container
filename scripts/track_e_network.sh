@@ -19,7 +19,6 @@ GRPC_SERVICES=(
     "orchestrator:50054"
     "llm_service:50051"
     "chroma_service:50052"
-    "registry_service:50053"
     "sandbox_service:50055"
 )
 
@@ -66,7 +65,6 @@ echo "  ├─────────────────────┼─
 echo "  │ orchestrator        │ 50054 │ gRPC     │ orchestrator    │"
 echo "  │ llm_service         │ 50051 │ gRPC     │ llm_service     │"
 echo "  │ chroma_service      │ 50052 │ gRPC     │ chroma_service  │"
-echo "  │ registry_service    │ 50053 │ gRPC     │ registry_service│"
 echo "  │ sandbox_service     │ 50055 │ gRPC     │ sandbox_service │"
 echo "  │ dashboard_service   │ 5001  │ HTTP     │ dashboard_service│"
 echo "  │ bridge_service (MCP)│ 8100  │ HTTP/SSE │ bridge_service  │"
@@ -80,7 +78,7 @@ echo "  └─────────────────────┴─
 echo ""
 echo "▶ DNS Resolution Test (inside orchestrator container)"
 echo "─────────────────────────────────────────────────────────────"
-docker exec orchestrator sh -c 'for svc in llm_service chroma_service registry_service; do getent hosts $svc 2>/dev/null && echo "  ✅ $svc resolves" || echo "  ❌ $svc does NOT resolve"; done' 2>/dev/null || echo "  ❌ orchestrator container not running"
+docker exec orchestrator sh -c 'for svc in llm_service chroma_service sandbox_service; do getent hosts $svc 2>/dev/null && echo "  ✅ $svc resolves" || echo "  ❌ $svc does NOT resolve"; done' 2>/dev/null || echo "  ❌ orchestrator container not running"
 
 # Summary
 echo ""

@@ -9,7 +9,7 @@ try:
     from llm_service import llm_pb2_grpc
 except ModuleNotFoundError:
     try:
-        # Import from shared/generated when running in agent_service container
+        # Import from shared/generated as fallback
         from shared.generated import llm_pb2, llm_pb2_grpc
     except ModuleNotFoundError:
         # Last resort: try relative import
