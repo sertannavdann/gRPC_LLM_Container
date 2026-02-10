@@ -53,7 +53,7 @@ class CurriculumAgent(nn.Module):
         # Sample executor
         action = torch.multinomial(probs, 1).item()
         executor = self.executors[action]
-        confidence = probs[0][action].item()  # probs is [1, num_executors] usually if batched, here likely [num_executors] if 1D input
+        confidence = probs[action].item()
         
         return executor, confidence
     

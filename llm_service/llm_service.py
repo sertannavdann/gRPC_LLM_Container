@@ -334,17 +334,8 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
         return majority_answer, count, consistency_score
 
     def _get_json_grammar(self):
-        """Define strict JSON grammar for LLM"""
-        grammar_str = r'''
-root ::= object
-value ::= object | array | string | number | "true" | "false" | "null"
-object ::= "{" ws ( string ws ":" ws value (ws "," ws string ws ":" ws value)* )? ws "}"
-array ::= "[" ws ( value (ws "," ws value)* )? ws "]"
-string ::= "\"" [^"\\\n]* "\""
-number ::= "-"? ( "0" | [1-9] [0-9]* ) ( "." [0-9]+ )? ( [eE] [-+]? [0-9]+ )?
-ws ::= [ \t\n]*
-'''
-        return LlamaGrammar.from_string(grammar_str)
+        """Build LlamaGrammar from the module-level JSON_GRAMMAR constant."""
+        return LlamaGrammar.from_string(JSON_GRAMMAR)
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=CONFIG.max_workers))

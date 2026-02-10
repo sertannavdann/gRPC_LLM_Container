@@ -343,8 +343,7 @@ class AgentWorkflow:
             tool_args = tool_call["function"]["arguments"]
             tool_call_id = tool_call.get("id", f"call_{tool_name}")
             
-            # DEBUG: Log actual arguments being passed
-            logger.info(f"Tool {tool_name} called with args: {tool_args}")
+            logger.debug("Tool %s called with args: %r", tool_name, tool_args)
             
             start_time = datetime.now()
             

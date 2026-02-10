@@ -74,11 +74,12 @@ class Agent0TrainingLoop:
         mean_reward = rewards.mean()
         advantages = rewards - mean_reward  # Normalize within batch
         
-        # Policy gradient update
-        loss = 0
-        for i, traj in enumerate(trajectories):
-            # Negative log-likelihood weighted by advantage
-            loss -= torch.log(torch.tensor(traj['confidence'])) * advantages[i]
+        # Policy gradient update (clamp confidence to avoid log(0) -> -inf)
+        confidences = torch.tensor(
+            [t['confidence'] for t in trajectories], dtype=rewards.dtype
+        )
+        confidences = torch.clamp(confidences, min=1e-8)
+        loss = -(torch.log(confidences) * advantages).sum()
         
         self.optimizer.zero_grad()
         loss.backward()

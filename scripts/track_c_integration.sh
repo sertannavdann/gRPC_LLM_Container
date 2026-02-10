@@ -13,10 +13,10 @@ echo "════════════════════════�
 echo ""
 echo "▶ C1. Google Calendar OAuth Adapter Status"
 echo "─────────────────────────────────────────────────────────────"
-if [ -f "shared/adapters/calendar/google.py" ]; then
-    echo "  ✅ google.py adapter exists"
+if [ -f "shared/adapters/calendar/google_calendar.py" ]; then
+    echo "  ✅ google_calendar.py adapter exists"
 else
-    echo "  ❌ google.py adapter NOT FOUND"
+    echo "  ❌ google_calendar.py adapter NOT FOUND"
 fi
 
 # Check adapter structure
@@ -74,7 +74,7 @@ echo "  Track C Summary - Actions Required"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 echo "  C1. Google Calendar OAuth:"
-echo "      - Create shared/adapters/calendar/google.py"
+echo "      - Create shared/adapters/calendar/google_calendar.py"
 echo "      - Implement OAuth 2.0 flow with refresh token"
 echo "      - Add OAuth callback route to UI service"
 echo "      - Create integration test with mock API"

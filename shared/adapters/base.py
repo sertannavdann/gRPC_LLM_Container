@@ -2,11 +2,12 @@
 Base Adapter Interface - Data-Oriented Design
 
 This module defines the adapter interface using Protocols (structural typing)
-rather than inheritance, enabling true data-oriented polymorphism.
+with an optional BaseAdapter(ABC, Generic[T]) convenience base class.
 
 Key principles:
 - Adapters are pure functions: fetch_raw() → transform() → canonical data
-- No inheritance hierarchy, dispatch via registry lookup
+- Structural typing via Protocol; BaseAdapter provides shared wiring
+- Dispatch via registry lookup
 - Each adapter is responsible for ONE platform in ONE category
 """
 from abc import ABC, abstractmethod

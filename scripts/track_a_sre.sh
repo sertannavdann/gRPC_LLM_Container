@@ -20,7 +20,7 @@ echo ""
 echo "▶ Services needing health endpoint implementation:"
 echo "─────────────────────────────────────────────────────────────"
 for svc in orchestrator llm_service chroma_service dashboard_service bridge_service sandbox_service; do
-    if ! grep -q "healthcheck:" docker-compose.yaml 2>/dev/null | grep -A5 "$svc"; then
+    if ! grep -A5 "$svc" docker-compose.yaml 2>/dev/null | grep -q "healthcheck:"; then
         echo "  - $svc: needs healthcheck in docker-compose.yaml"
     fi
 done

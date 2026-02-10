@@ -27,12 +27,15 @@ COPY sandbox_service/ /app/sandbox_service/
 # Set working directory
 WORKDIR /app/sandbox_service
 
+# Ensure sandbox user owns application directory
+RUN chown -R sandbox:sandbox /app
+
 # Security: Set resource limits via environment
 ENV SANDBOX_TIMEOUT=30
 ENV SANDBOX_MEMORY_MB=256
 
-# Run as non-root user for code execution
-# Note: The service itself runs as root but switches to sandbox user for code execution
+# Run container as non-root sandbox user
+USER sandbox
 
 EXPOSE 50057
 
