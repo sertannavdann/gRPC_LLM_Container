@@ -22,7 +22,11 @@
       "Bash(npx tsc:*)",
       "Bash(grpc_health_probe:*)",
       "Bash(echo:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git log:*)",
+      "Bash(python -c:*)",
+      "Bash(curl:*)",
+      "Bash(python -m py_compile:*)"
     ]
   }
 }
