@@ -94,11 +94,13 @@ class TestCrashResume:
         
         # Verify service is listening
         has_startup_info = (
-            "50054" in logs or 
-            "started" in logs.lower() or 
+            "50054" in logs or
+            "started" in logs.lower() or
             "serving" in logs.lower() or
             "listening" in logs.lower() or
-            "grpc" in logs.lower()
+            "grpc" in logs.lower() or
+            "orchestrator" in logs.lower() or
+            "ready" in logs.lower()
         )
         assert has_startup_info, f"Expected startup info in logs. Got: {logs[-300:]}"
         

@@ -108,3 +108,5 @@ dashboard_service/Bank/*.csv
 
 **.csv
 **.ipynb
+
+data/conversations/**

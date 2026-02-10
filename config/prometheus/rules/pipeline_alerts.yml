@@ -1,0 +1,58 @@
+groups:
+  - name: decision_pipeline
+    rules:
+      # High inference latency (>5s for non-ultra tiers)
+      - alert: HighInferenceLatency
+        expr: histogram_quantile(0.95, rate(pipeline_inference_duration_ms_bucket[5m])) > 5000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 inference latency exceeds 5s"
+          description: "95th percentile inference duration is {{ $value | humanize }}ms"
+
+      # Excessive LIDM delegation errors (>10% rate)
+      - alert: LIDMDelegationErrors
+        expr: rate(lidm_delegation_errors_total[5m]) / (rate(lidm_delegation_requests_total[5m]) + 0.001) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LIDM delegation error rate exceeds 10%"
+
+      # Tool execution failures (>10% error rate)
+      - alert: ToolExecutionFailures
+        expr: rate(tool_errors_total[5m]) / (rate(tool_calls_total[5m]) + 0.001) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tool execution error rate exceeds 10%"
+
+      # Memory pressure (RSS > 4GB)
+      - alert: HighMemoryUsage
+        expr: process_memory_rss_bytes > 4294967296
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Process RSS exceeds 4GB"
+          description: "Current RSS: {{ $value | humanize }}B"
+
+      # Low token generation rate (<1 token/sec sustained)
+      - alert: LowTokenGenerationRate
+        expr: histogram_quantile(0.5, rate(pipeline_token_generation_rate_bucket[5m])) < 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Median token generation rate below 1 tok/s"
+
+      # Context window saturation (>90%)
+      - alert: ContextWindowSaturation
+        expr: pipeline_context_utilization > 0.9
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Context window utilization above 90%"

@@ -178,6 +178,14 @@ class AdaptersResponse(BaseModel):
     adapters: List[AdapterInfo]
 
 
+class CredentialUpdate(BaseModel):
+    """Request to hot-reload adapter credentials."""
+    category: str
+    platform: str
+    credentials: dict = {}
+    settings: dict = {}
+
+
 # =============================================================================
 # APPLICATION SETUP
 # =============================================================================
@@ -522,6 +530,98 @@ async def get_alerts(
         }
     except Exception as e:
         logger.error(f"Error fetching alerts for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ADMIN: CREDENTIAL HOT-RELOAD
+# =============================================================================
+
+# Map (platform, field) → environment variable name
+_CREDENTIAL_ENV_MAP: dict[tuple[str, str], str] = {
+    ("openweather", "api_key"): "OPENWEATHER_API_KEY",
+    ("openweather", "city"): "OPENWEATHER_CITY",
+    ("google_calendar", "client_id"): "GOOGLE_CALENDAR_CLIENT_ID",
+    ("google_calendar", "client_secret"): "GOOGLE_CALENDAR_CLIENT_SECRET",
+    ("google_calendar", "access_token"): "GOOGLE_CALENDAR_ACCESS_TOKEN",
+    ("google_calendar", "refresh_token"): "GOOGLE_CALENDAR_REFRESH_TOKEN",
+    ("clashroyale", "api_key"): "CLASH_ROYALE_API_KEY",
+    ("clashroyale", "player_tag"): "CLASH_ROYALE_PLAYER_TAG",
+}
+
+
+@app.post("/admin/credentials", tags=["Admin"])
+async def update_credentials(
+    update: CredentialUpdate,
+    user_id: str = Query(default="default", description="User identifier"),
+):
+    """
+    Hot-reload adapter credentials without container restart.
+
+    Accepts credentials via HTTP, updates process-level env vars,
+    evicts the cached aggregator, and re-creates it with new config.
+    """
+    try:
+        # 1. Update process-level env vars
+        for field, value in update.credentials.items():
+            env_key = _CREDENTIAL_ENV_MAP.get((update.platform, field))
+            if env_key and value:
+                os.environ[env_key] = value
+                logger.info(f"Updated env var {env_key} for {update.platform}")
+
+        for field, value in update.settings.items():
+            env_key = _CREDENTIAL_ENV_MAP.get((update.platform, field))
+            if env_key and value:
+                os.environ[env_key] = value
+                logger.info(f"Updated env setting {env_key} for {update.platform}")
+
+        # 2. Evict all cached aggregators so they pick up new env vars
+        evicted = list(_aggregators.keys())
+        _aggregators.clear()
+
+        # 3. Pre-warm the aggregator for this user
+        get_aggregator(user_id)
+
+        logger.info(
+            f"Hot-reloaded credentials for {update.platform} "
+            f"(evicted {len(evicted)} aggregator(s))"
+        )
+        return {
+            "success": True,
+            "platform": update.platform,
+            "message": f"Credentials updated for {update.platform}. Dashboard data will refresh on next fetch.",
+        }
+    except Exception as e:
+        logger.error(f"Credential hot-reload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/disconnect", tags=["Admin"])
+async def disconnect_adapter(
+    update: CredentialUpdate,
+    user_id: str = Query(default="default", description="User identifier"),
+):
+    """
+    Remove adapter credentials and evict cached aggregator.
+    """
+    try:
+        # Remove env vars for this platform
+        for field in list(update.credentials.keys()) or ["api_key", "city", "client_id", "client_secret", "access_token", "refresh_token", "player_tag"]:
+            env_key = _CREDENTIAL_ENV_MAP.get((update.platform, field))
+            if env_key:
+                os.environ.pop(env_key, None)
+                logger.info(f"Removed env var {env_key}")
+
+        _aggregators.clear()
+        get_aggregator(user_id)
+
+        return {
+            "success": True,
+            "platform": update.platform,
+            "message": f"Disconnected {update.platform}.",
+        }
+    except Exception as e:
+        logger.error(f"Adapter disconnect failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

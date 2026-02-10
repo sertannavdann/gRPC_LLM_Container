@@ -64,8 +64,16 @@ export function HealthWidget({ data, expanded, onFocus, onCollapse }: HealthWidg
     return new Intl.NumberFormat().format(num);
   };
   
-  const stepsProgress = data.steps_progress;
-  const hrvStatus = getHRVStatus(data.hrv);
+  // Guard against null/undefined numeric fields from partial API responses
+  const steps = data.steps ?? 0;
+  const stepsGoal = data.steps_goal ?? 10000;
+  const stepsProgress = data.steps_progress ?? 0;
+  const heartRate = data.heart_rate ?? 0;
+  const hrv = data.hrv ?? 0;
+  const sleepHours = data.sleep_hours ?? 0;
+  const sleepScore = data.sleep_score ?? 0;
+  const readiness = data.readiness ?? 0;
+  const hrvStatus = getHRVStatus(hrv);
   
   // Metric Card Component
   const MetricCard = ({ 
@@ -118,7 +126,7 @@ export function HealthWidget({ data, expanded, onFocus, onCollapse }: HealthWidg
         <div className="flex items-center gap-2">
           <Heart className="w-5 h-5 text-red-400" />
           <h3 className="font-semibold">Health</h3>
-          {data.hrv < 40 && (
+          {hrv < 40 && (
             <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded-full">
               Low HRV
             </span>
@@ -146,15 +154,15 @@ export function HealthWidget({ data, expanded, onFocus, onCollapse }: HealthWidg
       
       {/* Readiness Score - Hero */}
       <div className={`bg-gradient-to-br from-gray-700/50 to-gray-800 rounded-lg p-4 mb-4 border ${
-        data.readiness >= 70 ? 'border-green-500/30' : 
-        data.readiness >= 50 ? 'border-yellow-500/30' : 'border-red-500/30'
+        readiness >= 70 ? 'border-green-500/30' :
+        readiness >= 50 ? 'border-yellow-500/30' : 'border-red-500/30'
       }`}>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-gray-400 mb-1">Readiness Score</p>
             <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-bold ${getScoreColor(data.readiness)}`}>
-                {data.readiness}
+              <span className={`text-3xl font-bold ${getScoreColor(readiness)}`}>
+                {readiness}
               </span>
               <span className="text-gray-500">/100</span>
             </div>
@@ -177,51 +185,51 @@ export function HealthWidget({ data, expanded, onFocus, onCollapse }: HealthWidg
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="4"
-                strokeDasharray={`${(data.readiness / 100) * 176} 176`}
-                className={getScoreColor(data.readiness)}
+                strokeDasharray={`${(readiness / 100) * 176} 176`}
+                className={getScoreColor(readiness)}
               />
             </svg>
-            <Zap className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-6 h-6 ${getScoreColor(data.readiness)}`} />
+            <Zap className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-6 h-6 ${getScoreColor(readiness)}`} />
           </div>
         </div>
       </div>
       
       {/* Metrics Grid */}
       <div className="grid grid-cols-2 gap-3">
-        <MetricCard 
+        <MetricCard
           icon={Footprints}
           label="Steps"
-          value={formatNumber(data.steps)}
+          value={formatNumber(steps)}
           color="text-blue-400"
-          subtext={`Goal: ${formatNumber(data.steps_goal)}`}
+          subtext={`Goal: ${formatNumber(stepsGoal)}`}
           progress={stepsProgress}
         />
-        
-        <MetricCard 
+
+        <MetricCard
           icon={Heart}
           label="Heart Rate"
-          value={data.heart_rate}
+          value={heartRate}
           unit="bpm"
           color="text-red-400"
           subtext="Current"
         />
-        
-        <MetricCard 
+
+        <MetricCard
           icon={Activity}
           label="HRV"
-          value={data.hrv}
+          value={hrv}
           unit="ms"
           color={hrvStatus.color}
           subtext={hrvStatus.status}
         />
-        
-        <MetricCard 
+
+        <MetricCard
           icon={Moon}
           label="Sleep"
-          value={data.sleep_hours.toFixed(1)}
+          value={sleepHours.toFixed(1)}
           unit="hrs"
-          color={getScoreColor(data.sleep_score)}
-          subtext={`Score: ${data.sleep_score}/100`}
+          color={getScoreColor(sleepScore)}
+          subtext={`Score: ${sleepScore}/100`}
         />
       </div>
       

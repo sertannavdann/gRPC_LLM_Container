@@ -37,16 +37,18 @@ export function NavigationWidget({ data, expanded, onFocus, onCollapse }: Naviga
     );
   }
   
-  const formatDuration = (minutes: number) => {
-    if (minutes < 60) return `${minutes} min`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+  const formatDuration = (minutes: number | null | undefined) => {
+    const m = minutes ?? 0;
+    if (m < 60) return `${m} min`;
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
     return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
   };
-  
-  const formatDistance = (km: number) => {
-    if (km < 1) return `${Math.round(km * 1000)} m`;
-    return `${km.toFixed(1)} km`;
+
+  const formatDistance = (km: number | null | undefined) => {
+    const k = km ?? 0;
+    if (k < 1) return `${Math.round(k * 1000)} m`;
+    return `${k.toFixed(1)} km`;
   };
   
   const formatETA = (isoString: string) => {

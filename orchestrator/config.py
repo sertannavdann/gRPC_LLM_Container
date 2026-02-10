@@ -47,7 +47,7 @@ class OrchestratorConfig:
     max_iterations: int = 5
     context_window: int = 12
     temperature: float = 0.15
-    model_name: str = "Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
+    model_name: str = "qwen2.5-3b-instruct-q5_k_m.gguf"
     enable_streaming: bool = True
     max_tool_calls_per_turn: int = 5
     timeout_seconds: int = 120

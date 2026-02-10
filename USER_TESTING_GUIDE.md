@@ -1,8 +1,8 @@
 # User Testing Guide - gRPC LLM Agent Framework
 
 > **Purpose**: This document is a comprehensive guide for understanding, testing, and operating the gRPC LLM Agent Framework. It includes architecture details, port mappings, functionality overview, and testing procedures.
-> **Date**: February 8, 2026
-> **Version**: Cohesion Branch
+> **Date**: February 9, 2026
+> **Version**: Cohesion Branch (LIDM + Hot-Reload)
 > **Tester Name**: _________________________
 
 ---
@@ -27,6 +27,11 @@
    - [6.9 Weather Integration](#69-weather-integration)
    - [6.10 Gaming Integration](#610-gaming-integration)
    - [6.11 Integrations Configuration Page](#611-integrations-configuration-page)
+   - [6.12 Settings Page (Provider Management)](#612-settings-page-provider-management)
+   - [6.13 LIDM Multi-Model Routing](#613-lidm-multi-model-routing)
+   - [6.14 Context Compaction](#614-context-compaction)
+   - [6.15 Finance Widget Filtering (Dashboard)](#615-finance-widget-filtering-dashboard)
+   - [6.16 Credential Hot-Reload](#616-credential-hot-reload)
 7. [Observability & Monitoring](#7-observability--monitoring)
 8. [Error Handling Tests](#8-error-handling-tests)
 9. [Refactoring Changelog](#9-refactoring-changelog)
@@ -152,7 +157,8 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
 │  │  UI Service  │    │  Dashboard   │    │ MCP Bridge   │                   │
-│  │  (Flask:5001)│    │ (FastAPI:8001)│   │ (FastAPI:8100)│                  │
+│  │ (Next.js:5001)│   │ (FastAPI:8001)│   │ (FastAPI:8100)│                  │
+│  │ Chat+Dash+Fin│    │ Adapters+Bank│    │ OpenClaw bidi│                   │
 │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                   │
 └─────────┼───────────────────┼───────────────────┼───────────────────────────┘
           │                   │                   │
@@ -162,21 +168,21 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                      ORCHESTRATOR (gRPC:50054)                       │    │
-│  │  • Multi-tool intent analysis    • Request routing                   │    │
-│  │  • Guardrails & rate limiting    • Token bucket management          │    │
-│  │  • Idempotency support           • Crash recovery                   │    │
+│  │  • LIDM delegation (standard/heavy/ultra)  • Provider router        │    │
+│  │  • Context compaction + ChromaDB archival  • Crash recovery         │    │
+│  │  • Multi-tool intent analysis              • Guardrails + rate limit│    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
           │
           ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                            BACKEND SERVICES                                  │
+│                         BACKEND SERVICES (LIDM Tiers)                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                   │
-│  │ LLM Service  │    │ChromaDB Svc  │    │Sandbox Service│                  │
-│  │ (gRPC:50051) │    │ (gRPC:50052) │    │ (gRPC:50057)  │                  │
-│  │ Multi-provider│   │ Vector store │    │ Code execution│                  │
-│  └──────────────┘    └──────────────┘    └──────────────┘                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │ LLM Standard │  │ LLM Heavy    │  │ChromaDB Svc  │  │Sandbox Service│   │
+│  │ (gRPC:50051) │  │ (gRPC:50058) │  │ (gRPC:50052) │  │ (gRPC:50057)  │   │
+│  │ Qwen 14B     │  │ Mistral 24B  │  │ Vector store │  │ Code execution│   │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
           │
           ▼
@@ -216,7 +222,7 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 
 | Service | Container Name | HTTP Port | Description |
 |---------|----------------|-----------|-------------|
-| **UI Service** | `ui_service` | 5001 | Flask web chat interface |
+| **UI Service** | `ui_service` | 5001 | Next.js web interface (Chat, Dashboard, Finance, Integrations, Settings) |
 | **Dashboard** | `dashboard_service` | 8001, 8002 | FastAPI context aggregation + Finance UI |
 | **MCP Bridge** | `bridge_service` | 8100 | Model Context Protocol server |
 
@@ -238,8 +244,10 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 | Dashboard (Next.js) | http://localhost:5001/dashboard | — |
 | Finance (embedded) | http://localhost:5001/finance | — |
 | Integrations | http://localhost:5001/integrations | — |
+| Settings | http://localhost:5001/settings | — |
 | Monitoring (Grafana embed) | http://localhost:5001/monitoring | — |
 | Dashboard API | http://localhost:8001/docs | — |
+| Credential Hot-Reload API | http://localhost:8001/admin/credentials | POST |
 | Finance Dashboard (standalone) | http://localhost:8001 | — |
 | MCP Bridge | http://localhost:8100/tools | — |
 | Grafana | http://localhost:3001 | admin / admin |
@@ -412,18 +420,20 @@ make c                  # chat
 
 **URL**: http://localhost:5001/chat
 
-> The UI now has a **landing page** at `/` with navigation to Chat, Dashboard, Finance, and Monitoring pages.
+> The UI now has a **landing page** at `/` with navigation to Chat, Dashboard, Finance, Integrations, Monitoring, and Settings pages.
 
 #### Test 1.0: Landing Page & Navigation (NEW)
 | Field | Value |
 |-------|-------|
 | **Landing page at `/` loads?** | Yes / No |
-| **4 page cards visible (Chat, Dashboard, Finance, Monitoring)?** | Yes / No |
-| **Navbar visible at top?** | Yes / No |
+| **6 page cards visible (Chat, Dashboard, Finance, Integrations, Monitoring, Settings)?** | Yes / No |
+| **Navbar visible at top (7 items)?** | Yes / No |
 | **Click "AI Chat" → goes to `/chat`?** | Yes / No |
 | **Click "Dashboard" → goes to `/dashboard`?** | Yes / No |
 | **Click "Finance" → goes to `/finance`?** | Yes / No |
+| **Click "Integrations" → goes to `/integrations`?** | Yes / No |
 | **Click "Monitoring" → goes to `/monitoring`?** | Yes / No |
+| **Click "Settings" → goes to `/settings`?** | Yes / No |
 | **Active page is highlighted in navbar?** | Yes / No |
 
 #### Test 1.1: Basic Greeting
@@ -800,7 +810,7 @@ curl http://localhost:8001/context/gaming | jq
 **URL**: http://localhost:5001/integrations
 
 > Allows connecting/disconnecting external services via API key configuration.
-> Credentials are stored in `.env` file and read at runtime.
+> Credentials are stored in `.env` and **hot-reloaded** to the dashboard_service — no container restart needed.
 
 #### Test 11.1: Page Load
 | Field | Value |
@@ -811,24 +821,25 @@ curl http://localhost:8001/context/gaming | jq
 | **Active count badge correct?** | Yes / No |
 | **Navigation bar has "Integrations" link?** | Yes / No |
 
-#### Test 11.2: OpenWeather Connection
+#### Test 11.2: OpenWeather Connection (Hot-Reload)
 | Field | Value |
 |-------|-------|
 | **Expand OpenWeather card** | Click to expand |
 | **Shows API Key and City fields?** | Yes / No |
 | **Enter API key → click "Connect"** | |
-| **Success message appears?** | Yes / No |
+| **Success message says "Dashboard will refresh automatically"?** | Yes / No |
+| **No "restart required" error?** | Yes / No |
 | **Card shows "Connected" status?** | Yes / No |
-| **Dashboard weather widget populates?** | Yes / No (after refresh) |
+| **Dashboard weather widget populates within 60s?** | Yes / No |
 
-#### Test 11.3: Clash Royale Connection
+#### Test 11.3: Clash Royale Connection (Hot-Reload)
 | Field | Value |
 |-------|-------|
 | **Expand Clash Royale card** | Click to expand |
 | **Shows API Key and Player Tag fields?** | Yes / No |
 | **Enter credentials → click "Connect"** | |
-| **Success message appears?** | Yes / No |
-| **Dashboard gaming widget populates?** | Yes / No (after refresh) |
+| **Success message says "Dashboard will refresh automatically"?** | Yes / No |
+| **Dashboard gaming widget populates within 60s?** | Yes / No |
 
 #### Test 11.4: Google Calendar Connection
 | Field | Value |
@@ -859,6 +870,231 @@ curl http://localhost:8001/context/gaming | jq
 | UI clarity | | |
 | Error handling | | |
 | Security (credential display) | | |
+
+---
+
+### 6.12 Settings Page (Provider Management)
+
+**URL**: http://localhost:5001/settings
+
+> Configure which LLM provider the agent uses, select models, and manage API keys for external providers.
+
+#### Test 12.1: Settings Page Load
+| Field | Value |
+|-------|-------|
+| **Page loads?** | Yes / No |
+| **Provider selection dropdown visible?** | Yes / No |
+| **Current provider highlighted?** | Yes / No |
+| **API key fields visible?** | Yes / No |
+
+#### Test 12.2: Provider Switching
+| Field | Value |
+|-------|-------|
+| **Select a different provider (e.g. Perplexity)** | |
+| **Enter API key if required** | |
+| **Click Save** | |
+| **Orchestrator restart triggered?** | Yes / No |
+| **New provider active in next chat message?** | Yes / No |
+
+#### Test 12.3: API Key Management
+| Field | Value |
+|-------|-------|
+| **Perplexity API key field visible?** | Yes / No |
+| **OpenAI API key field visible?** | Yes / No |
+| **Anthropic API key field visible?** | Yes / No |
+| **Serper API key field visible?** | Yes / No |
+| **Keys masked with show/hide toggle?** | Yes / No |
+
+#### Test 12.4: LIDM Delegation Toggle
+| Field | Value |
+|-------|-------|
+| **"Multi-Model Delegation (LIDM)" section visible?** | Yes / No |
+| **Toggle switch present with Layers icon?** | Yes / No |
+| **Toggle OFF by default?** | Yes / No |
+| **Enable toggle → amber Docker profile notice appears?** | Yes / No |
+| **Notice says `docker compose --profile lidm up -d`?** | Yes / No |
+| **Heavy tier model dropdown visible (e.g. Mistral-24B)?** | Yes / No |
+| **Standard tier model dropdown visible (e.g. Qwen-14B)?** | Yes / No |
+
+#### Test 12.5: LIDM Model Selection
+| Field | Value |
+|-------|-------|
+| **Change Heavy tier to a different model** | |
+| **Change Standard tier to a different model** | |
+| **Click Save** | |
+| **Reload page → selections persisted?** | Yes / No |
+| **Current Configuration summary shows LIDM status?** | Yes / No |
+
+---
+
+### 6.13 LIDM Multi-Model Routing
+
+> LIDM (Layered Inference Delegation Model) routes queries to different LLM instances based on complexity.
+> Standard tier (14B) handles simple queries, Heavy tier (24B) handles complex reasoning.
+>
+> **Prerequisites**:
+> 1. Enable delegation in **Settings → Multi-Model Delegation (LIDM)** toggle, or set `ENABLE_DELEGATION=true` in `.env`
+> 2. Start the standard-tier container: `docker compose --profile lidm up -d`
+> 3. Verify both containers running: `docker ps | grep llm_service`
+>
+> **Monitor**: Grafana → gRPC LLM Overview → LIDM Delegation panel (delegation_requests_total, delegation_latency_ms)
+
+#### Test 13.1: Simple Query → Standard Tier
+| Field | Value |
+|-------|-------|
+| **Delegation enabled via Settings toggle?** | Yes / No |
+| **Profile container running?** (`docker ps \| grep llm_service_standard`) | Yes / No |
+| **Input** | "Hello, what time is it?" |
+| **Expected tier** | Standard (configured model) |
+| **Check orchestrator logs**: `make logs-orchestrator` | |
+| **Log shows standard tier selected?** | Yes / No |
+
+#### Test 13.2: Complex Query → Heavy Tier
+| Field | Value |
+|-------|-------|
+| **Input** | "Analyze the pros and cons of microservice architectures vs monoliths for a team of 5 developers" |
+| **Expected tier** | Heavy (configured model) |
+| **Log shows heavy tier selected?** | Yes / No |
+
+#### Test 13.3: Multi-Tool Query → Tier Escalation
+| Field | Value |
+|-------|-------|
+| **Input** | "Search the web for latest Python features and execute a code example" |
+| **Expected** | Heavy tier (multi-tool + reasoning) |
+| **Multiple tools invoked?** | Yes / No |
+| **Higher tier used?** | Yes / No |
+
+#### Test 13.4: Graceful Fallback (Standard Tier Down)
+| Field | Value |
+|-------|-------|
+| **Stop standard tier**: `docker stop grpc_llm-llm_service_standard-1` | |
+| **Send a query** | "What is 2+2?" |
+| **Fallback to heavy tier (single-instance)?** | Yes / No |
+| **No DEADLINE_EXCEEDED error?** | Yes / No |
+| **Restart**: `docker compose --profile lidm up -d` | |
+
+#### Test 13.5: LIDM Disabled (Default Behaviour)
+| Field | Value |
+|-------|-------|
+| **Disable delegation in Settings toggle** | |
+| **Or confirm `ENABLE_DELEGATION=false` in .env** | |
+| **Standard-tier container NOT started** | Verify with `docker ps` |
+| **Send any query** | "Hello" |
+| **Routed to single LLM instance (no delegation)?** | Yes / No |
+| **No errors or timeouts?** | Yes / No |
+
+#### Test 13.6: Grafana Metrics Verification
+| Field | Value |
+|-------|-------|
+| **Open Grafana**: http://localhost:3000 | |
+| **Navigate to gRPC LLM Overview dashboard** | |
+| **`delegation_requests_total` counter visible?** | Yes / No |
+| **Counter increments with strategy + tier labels?** | Yes / No |
+| **`delegation_latency_ms` histogram visible?** | Yes / No |
+
+---
+
+### 6.14 Context Compaction
+
+> When conversation history exceeds the token window, older turns are automatically summarized and archived to ChromaDB.
+> The compacted summary replaces evicted messages so the LLM retains context.
+
+#### Test 14.1: Long Conversation Compaction
+| Field | Value |
+|-------|-------|
+| **Send 15+ messages in one conversation** | |
+| **Check orchestrator logs for "compacting context"** | |
+| **Compaction triggered?** | Yes / No |
+| **Older messages summarized into system message?** | Yes / No |
+| **Agent still remembers early context?** | Yes / No |
+
+#### Test 14.2: Archived Context Retrieval
+| Field | Value |
+|-------|-------|
+| **After compaction, ask about something from the start of the conversation** | |
+| **Agent recalls archived context via ChromaDB?** | Yes / No |
+| **Response is coherent with original context?** | Yes / No |
+
+---
+
+### 6.15 Finance Widget Filtering (Dashboard)
+
+**URL**: http://localhost:5001/dashboard
+
+> The Finance widget on the dashboard now supports filtering when expanded (maximized).
+> Filters include: spending category, date range, and text search.
+> A link to the full Chart.js finance dashboard is always visible.
+
+#### Test 15.1: Finance Widget Summary
+| Field | Value |
+|-------|-------|
+| **Finance widget visible on dashboard?** | Yes / No |
+| **Shows Income, Expenses, Net cards?** | Yes / No |
+| **Shows last 4 transactions?** | Yes / No |
+| **"Full Dashboard" external link visible?** | Yes / No |
+| **Link opens port 8001 in new tab?** | Yes / No |
+
+#### Test 15.2: Expanded Mode + Filters
+| Field | Value |
+|-------|-------|
+| **Click maximize icon on Finance widget** | |
+| **Widget expands to full view?** | Yes / No |
+| **Filter toggle button (funnel icon) visible?** | Yes / No |
+| **Click filter toggle → filter bar appears?** | Yes / No |
+| **Category dropdown populated?** | Yes / No |
+| **Date range pickers work?** | Yes / No |
+| **Search input accepts text?** | Yes / No |
+
+#### Test 15.3: Filter Application
+| Field | Value |
+|-------|-------|
+| **Select a category → transactions filtered?** | Yes / No |
+| **Set date range → summary cards update?** | Yes / No |
+| **Type search term → results filter?** | Yes / No |
+| **"Clear all" button resets filters?** | Yes / No |
+| **Transaction count reflects filtered results?** | Yes / No |
+
+#### Test 15.4: Collapse Back
+| Field | Value |
+|-------|-------|
+| **Click minimize → returns to grid view?** | Yes / No |
+| **Filters reset on collapse?** | Yes / No |
+| **Widget shows unfiltered summary again?** | Yes / No |
+
+---
+
+### 6.16 Credential Hot-Reload
+
+> When you connect an adapter in the Integrations page, credentials are sent directly to the
+> dashboard_service via `POST /admin/credentials`. The aggregator is rebuilt immediately—
+> no container restart needed.
+
+#### Test 16.1: Hot-Reload Verification
+| Field | Value |
+|-------|-------|
+| **Go to Integrations → connect OpenWeather** | |
+| **Success message says "Dashboard will refresh automatically"?** | Yes / No |
+| **Go to Dashboard → refresh** | |
+| **Weather widget now shows live data?** | Yes / No |
+| **No manual `docker compose restart` needed?** | Yes / No |
+
+#### Test 16.2: Hot-Reload API Direct Test
+```bash
+# Directly test the hot-reload endpoint
+curl -X POST http://localhost:8001/admin/credentials?user_id=default \
+  -H "Content-Type: application/json" \
+  -d '{"category": "weather", "platform": "openweather", "credentials": {"api_key": "YOUR_KEY"}, "settings": {"city": "Toronto,CA"}}'
+```
+| Field | Value |
+|-------|-------|
+| **Returns `{"success": true}`?** | Yes / No |
+| **`curl http://localhost:8001/context/weather` now returns data?** | Yes / No |
+
+#### Test 16.3: Disconnect Hot-Reload
+| Field | Value |
+|-------|-------|
+| **Disconnect adapter in Integrations page** | |
+| **Dashboard widget reverts to empty/mock state?** | Yes / No |
 
 ---
 
@@ -1016,77 +1252,57 @@ The following commits document the evolution of the framework:
 
 | Commit | Type | Description |
 |--------|------|-------------|
+| `latest` | **feat** | UI hot-reload, finance filters, landing page update, dashboard real data fetchers |
+| `67971fc` | **feat** | LIDM multi-instance routing + 67 tests (245 unit total) |
+| `prev` | **feat** | Context compaction, finance query tool, math→sandbox, model registry |
 | `1cfb228` | **feat** | Phase 7: Real adapter integrations — OpenWeather, Google Calendar, Clash Royale |
 | `ae852ce` | **feat** | UI navigation, finance chart filters, real bank data, responsive layout, observability |
 | `28bcf69` | docs | Add comprehensive user testing guide |
 | `3b5ed39` | docs | Add Prompt Flow integration section to HLD |
 | `56fa758` | build | Add Prompt Flow Makefile targets |
 | `3a7ee86` | **feat** | Add Microsoft Prompt Flow integration |
-| `a9bedac` | chore | Update llm_service and gitignore settings |
-| `5c02893` | docs | Add network documentation and make targets |
 | `de1f727` | **feat** | Add multi-tool intent analysis and guardrails |
-| `b0128ed` | chore | Add grpc_health_probe to all gRPC services |
-| `4762021` | docs | Add branch summary and parallel execution plan |
-| `2357c42` | chore | Add execution track status scripts |
 | `620f3b1` | **feat** | Add finance dashboard with transaction visualization |
 | `1967d9d` | **feat** | Add CIBC CSV finance adapter with transaction categorization |
 | `9df08ec` | **feat** | Add tool selection evaluation framework |
 | `aae9582` | **feat** | Add token bucket rate limiting for provider management |
 | `27c5784` | **feat** | Add idempotency support for safe tool retries |
-| `f9e9531` | test | Enforce strict assertions to expose formatting bugs |
-| `60cba85` | fix | Replace multiprocessing.Queue with subprocess for Docker reliability |
 | `eaa8a9c` | fix | Rewrite crash resume tests for realistic service restart behavior |
-| `554ec98` | merge | Merge remote Cohesion branch — resolve requirements.txt conflict |
 
 ### Feature Highlights
 
-#### Multi-Tool Intent Analysis (`de1f727`)
-- Orchestrator now analyzes queries requiring multiple tools
-- Added guardrails for request validation
-- Improved tool routing accuracy
+#### LIDM Multi-Model Routing (67971fc)
+- Layered Inference Delegation Model routes queries by complexity
+- Standard tier: local 14B model for simple queries
+- Heavy tier: Mistral-Small-24B or external providers for complex reasoning
+- Ultra tier: AirLLM 70B for most demanding tasks
+- DelegationManager with LLMClientPool for connection management
+- 67 dedicated tests, 245 unit tests total passing
 
-#### Finance Dashboard (`620f3b1`, `1967d9d`)
-- Bank transaction visualization with Chart.js
-- CIBC CSV adapter for transaction import
-- Automatic categorization of transactions
-- Filtering by date, category, and account
+#### Context Compaction + Model Registry
+- Auto-summarizes conversation history when context window fills
+- Archives summarized turns to ChromaDB for retrieval
+- Model registry with `auto_configure()` for runtime model discovery
+- Math queries routed through sandbox pipeline for accurate computation
+- Finance query tool bridges dashboard `/bank/*` endpoints to chat
 
-#### Token Bucket Rate Limiting (`aae9582`)
-- Per-provider request throttling
-- Configurable bucket size and refill rates
-- Prevents API rate limit exhaustion
+#### Credential Hot-Reload
+- `POST /admin/credentials` on dashboard_service accepts credentials via HTTP
+- Updates `os.environ` in-process and evicts cached aggregator
+- UI Integrations page calls this endpoint after writing to `.env`
+- No container restart needed — dashboard picks up new credentials immediately
+- Disconnect flow via `POST /admin/disconnect` clears credentials
 
-#### Idempotency Support (`27c5784`)
-- Safe retry mechanism for tool calls
-- Deduplication of repeated requests
-- Crash recovery without duplicate side effects
+#### Finance Widget Filtering
+- Dashboard FinanceWidget shows filter controls when expanded/maximized
+- Category dropdown, date range pickers, text search
+- Dedicated `/api/dashboard/finance` route proxies filters to bank endpoints
+- "Full Dashboard" link opens standalone Chart.js finance UI (port 8001)
 
-#### UI Navigation & Landing Page (`ae852ce`)
-- Persistent top navbar with active-state highlighting
-- Landing page with card-based navigation to Chat, Dashboard, Finance, Monitoring
-- Route pages: `/chat`, `/dashboard`, `/finance`, `/monitoring`
-- Finance chart filters now update all 4 charts + summary cards + transactions
-- Dashboard wired to real bank data with graceful mock fallback
-- Responsive grid layout with CSS clamp for side panels
-- Grafana embedded in Monitoring page with kiosk mode + dashboard tabs
-
-#### Phase 7: Real Adapter Integrations (`1cfb228`)
-- **OpenWeather** adapter — live weather data, forecasts, extreme-temp alerts
-- **Clash Royale** adapter — player stats, battle history, trophy tracking
-- **Google Calendar** adapter — event listing, upcoming schedule
-- Canonical schemas: `WeatherData`, `GamingProfile` in `shared/schemas/canonical.py`
-- Dashboard aggregator extended with weather/gaming category support
-- Integrations configuration page for secure API key management
-
-#### Prompt Flow Integration (`3a7ee86`)
-- Microsoft Prompt Flow pipeline support
-- Makefile targets for flow execution
-- HLD documentation updated
-
-#### Tool Selection Evals (`9df08ec`)
-- Framework for measuring tool routing accuracy
-- Benchmark suite for evaluating improvements
-- Regression detection for tool selection
+#### Dashboard Real Data Fetchers
+- Calendar, health, navigation data now fetched from dashboard_service first
+- Falls back to mock data only when real adapters aren’t configured
+- Weather and gaming already used real fetchers; now all 6 categories do
 
 ---
 
@@ -1105,10 +1321,15 @@ Rate each feature's importance (1=Low, 5=Critical):
 | Web search | Yes / No | | Yes / No |
 | Dashboard | Yes / No | | Yes / No |
 | Finance dashboard | Yes / No | | Yes / No |
+| Finance widget filtering | Yes / No | | Yes / No |
 | MCP Bridge | Yes / No | | Yes / No |
 | Weather integration | Yes / No | | Yes / No |
 | Gaming integration | Yes / No | | Yes / No |
 | Integrations page | Yes / No | | Yes / No |
+| Credential hot-reload | Yes / No | | Yes / No |
+| Settings / provider mgmt | Yes / No | | Yes / No |
+| LIDM multi-model routing | Yes / No | | Yes / No |
+| Context compaction | Yes / No | | Yes / No |
 | Monitoring | Yes / No | | Yes / No |
 
 ### 10.2 Critical Issues Found

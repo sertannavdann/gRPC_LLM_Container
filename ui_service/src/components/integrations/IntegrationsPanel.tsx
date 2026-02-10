@@ -153,9 +153,9 @@ export function IntegrationsPanel() {
 
       setSuccessMessage(result.message);
 
-      // Restart dashboard service if needed
-      if (result.restartRequired) {
-        await restartDashboard();
+      // Only show restart notice if hot-reload failed
+      if (result.restartRequired && !result.hotReloaded) {
+        setServiceStatus('error');
       }
 
       // Refresh adapter list
@@ -465,8 +465,8 @@ export function IntegrationsPanel() {
 
       {/* Footer help text */}
       <div className="text-xs text-muted-foreground text-center pt-4 pb-8 border-t border-border">
-        After connecting a service, the dashboard will automatically refresh to display your data.
-        API keys are stored locally in your .env configuration file.
+        After connecting a service, credentials are sent to the dashboard service automatically.
+        Your dashboard will display live data on the next refresh cycle (≤60 seconds).
       </div>
     </div>
   );

@@ -187,7 +187,12 @@ async function fetchRealWeather(): Promise<any> {
     const res = await fetch(`${DASHBOARD_SERVICE}/context/weather?user_id=demo_user`, { next: { revalidate: 300 } });
     if (!res.ok) return null;
     const data = await res.json();
-    return data.weather || data;
+    // Dashboard service wraps weather in {"category","user_id","data":{current,forecasts,platforms}}
+    const inner = data.data || data.weather || data;
+    // Ensure we have the shape the widget expects: {current, forecasts, platforms}
+    if (inner.current) return inner;
+    if (data.current) return data;
+    return null;
   } catch (err) {
     console.warn('[Dashboard API] Weather fetch failed:', (err as Error).message);
     return null;
@@ -200,9 +205,50 @@ async function fetchRealGaming(): Promise<any> {
     const res = await fetch(`${DASHBOARD_SERVICE}/context/gaming?user_id=demo_user`, { next: { revalidate: 300 } });
     if (!res.ok) return null;
     const data = await res.json();
-    return data.gaming || data;
+    return data.gaming || data.data || data;
   } catch (err) {
     console.warn('[Dashboard API] Gaming fetch failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// ---------- Real calendar data fetcher ----------
+async function fetchRealCalendar(): Promise<any> {
+  try {
+    const res = await fetch(`${DASHBOARD_SERVICE}/context/calendar?user_id=demo_user`, { next: { revalidate: 120 } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.calendar || data.data || data;
+  } catch (err) {
+    console.warn('[Dashboard API] Calendar fetch failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// ---------- Real health data fetcher ----------
+async function fetchRealHealth(): Promise<any> {
+  try {
+    const res = await fetch(`${DASHBOARD_SERVICE}/context/health?user_id=demo_user`, { next: { revalidate: 120 } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const raw = data.health || data.data || data;
+    // Merge with defaults so null numeric fields don't crash widgets
+    return { ...mockHealthData, ...raw, today: { ...mockHealthData.today, ...(raw.today || {}) } };
+  } catch (err) {
+    console.warn('[Dashboard API] Health fetch failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// ---------- Real navigation data fetcher ----------
+async function fetchRealNavigation(): Promise<any> {
+  try {
+    const res = await fetch(`${DASHBOARD_SERVICE}/context/navigation?user_id=demo_user`, { next: { revalidate: 60 } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.navigation || data.data || data;
+  } catch (err) {
+    console.warn('[Dashboard API] Navigation fetch failed:', (err as Error).message);
     return null;
   }
 }
@@ -217,16 +263,23 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category');
 
     // Fetch real data in parallel, fall back to mocks/empty where unavailable
-    const [financeData, weatherData, gamingData] = await Promise.all([
+    const [financeData, weatherData, gamingData, calendarData, healthData, navigationData] = await Promise.all([
       fetchRealFinance().then(d => d || mockFinanceData),
       fetchRealWeather().then(d => d || emptyWeatherData),
       fetchRealGaming().then(d => d || emptyGamingData),
+      fetchRealCalendar().then(d => d || mockCalendarData),
+      fetchRealHealth().then(d => d || mockHealthData),
+      fetchRealNavigation().then(d => d || mockNavigationData),
     ]);
 
-    // Set next_3 from events
-    mockCalendarData.next_3 = mockCalendarData.events.slice(0, 3);
-    mockCalendarData.imminent = mockCalendarData.events.filter(e => e.urgency === 'HIGH');
-    mockNavigationData.primary_route = mockNavigationData.routes[0];
+    // Ensure calendar data has next_3 / imminent populated
+    if (calendarData.events) {
+      calendarData.next_3 = calendarData.next_3 || calendarData.events.slice(0, 3);
+      calendarData.imminent = calendarData.imminent || calendarData.events.filter((e: any) => e.urgency === 'HIGH');
+    }
+    if (navigationData.routes && !navigationData.primary_route) {
+      navigationData.primary_route = navigationData.routes[0] || null;
+    }
 
     // Build relevance classification
     const relevance = {
@@ -236,7 +289,7 @@ export async function GET(request: NextRequest) {
     };
 
     // Calendar high priority (imminent events)
-    mockCalendarData.imminent.forEach(event => {
+    (calendarData.imminent || []).forEach((event: any) => {
       relevance.high.push({
         type: 'calendar',
         subtype: 'event',
@@ -248,23 +301,23 @@ export async function GET(request: NextRequest) {
     });
 
     // Health alerts
-    if (mockHealthData.hrv && mockHealthData.hrv < 40) {
+    if (healthData.hrv && healthData.hrv < 40) {
       relevance.high.push({
         type: 'health',
         subtype: 'hrv_alert',
         title: 'Low HRV',
-        alert: `HRV is ${mockHealthData.hrv}ms`,
+        alert: `HRV is ${healthData.hrv}ms`,
         priority: 75,
       });
     }
 
     // Traffic alerts
-    if (mockNavigationData.primary_route?.traffic_level === 'heavy') {
+    if (navigationData.primary_route?.traffic_level === 'heavy') {
       relevance.high.push({
         type: 'navigation',
         subtype: 'traffic',
         title: 'Heavy Traffic',
-        alert: `${mockNavigationData.primary_route.duration_minutes} min to work`,
+        alert: `${navigationData.primary_route.duration_minutes} min to work`,
         priority: 65,
       });
     }
@@ -284,20 +337,22 @@ export async function GET(request: NextRequest) {
     }
 
     // Medium priority items
-    relevance.medium.push({
-      type: 'health',
-      subtype: 'steps',
-      title: `Steps: ${Math.round(mockHealthData.steps_progress * 100)}% of goal`,
-      priority: 35,
-    });
+    if (healthData.steps_progress) {
+      relevance.medium.push({
+        type: 'health',
+        subtype: 'steps',
+        title: `Steps: ${Math.round(healthData.steps_progress * 100)}% of goal`,
+        priority: 35,
+      });
+    }
 
     // If specific category requested
     if (category) {
       const categoryData: Record<string, any> = {
         finance: financeData,
-        calendar: mockCalendarData,
-        health: mockHealthData,
-        navigation: mockNavigationData,
+        calendar: calendarData,
+        health: healthData,
+        navigation: navigationData,
         weather: weatherData,
         gaming: gamingData,
       };
@@ -313,9 +368,9 @@ export async function GET(request: NextRequest) {
       user_id: 'demo_user',
       context: {
         finance: financeData,
-        calendar: mockCalendarData,
-        health: mockHealthData,
-        navigation: mockNavigationData,
+        calendar: calendarData,
+        health: healthData,
+        navigation: navigationData,
         weather: weatherData,
         gaming: gamingData,
       },

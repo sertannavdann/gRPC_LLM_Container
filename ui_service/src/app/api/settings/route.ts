@@ -12,6 +12,10 @@ interface EnvConfig {
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   SERPER_API_KEY?: string;
+  // LIDM delegation
+  ENABLE_DELEGATION?: string;
+  LIDM_HEAVY_MODEL?: string;
+  LIDM_STANDARD_MODEL?: string;
   // Adapter keys
   OPENWEATHER_API_KEY?: string;
   OPENWEATHER_CITY?: string;
@@ -23,11 +27,27 @@ interface EnvConfig {
   CLASH_ROYALE_PLAYER_TAG?: string;
 }
 
+// LIDM: Available models per tier (must exist in llm_service/models/)
+const LIDM_TIER_MODELS: Record<string, string[]> = {
+  heavy: [
+    'Qwen2.5-14B-Instruct-Q4_K.gguf',
+    'Mistral-Small-24B-Instruct-2501.Q8_0.gguf',
+  ],
+  standard: [
+    'qwen2.5-0.5b-instruct-q5_k_m.gguf',
+  ],
+};
+
 // Provider model defaults
 const PROVIDER_DEFAULTS: Record<string, { models: string[]; default: string }> = {
   local: {
-    models: ['qwen2.5-0.5b-instruct', 'qwen2.5-3b-instruct', 'qwen2.5-14b-instruct'],
-    default: 'qwen2.5-0.5b-instruct',
+    models: [
+      'qwen2.5-3b-instruct-q5_k_m',
+      'Qwen2.5-14B-Instruct-Q4_K',
+      'Mistral-Small-24B-Instruct-2501.Q8_0',
+      'qwen2.5-0.5b-instruct-q5_k_m',
+    ],
+    default: 'qwen2.5-3b-instruct-q5_k_m',
   },
   perplexity: {
     models: ['sonar-pro', 'sonar', 'sonar-deep-research'],
@@ -118,7 +138,12 @@ export async function GET() {
         hasOpenaiKey: !!envConfig.OPENAI_API_KEY,
         hasAnthropicKey: !!envConfig.ANTHROPIC_API_KEY,
         hasSerperKey: !!envConfig.SERPER_API_KEY,
+        // LIDM delegation
+        delegationEnabled: (envConfig.ENABLE_DELEGATION || 'false').toLowerCase() === 'true',
+        lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K.gguf',
+        lidmStandardModel: envConfig.LIDM_STANDARD_MODEL || 'qwen2.5-0.5b-instruct-q5_k_m.gguf',
       },
+      lidmTierModels: LIDM_TIER_MODELS,
       adapters: {
         openweather: {
           hasApiKey: !!envConfig.OPENWEATHER_API_KEY,
@@ -151,7 +176,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { provider, model, apiKeys, adapterKeys } = body;
+    const { provider, model, apiKeys, adapterKeys, delegation } = body;
 
     // Read existing config
     let envConfig: Record<string, string> = {};
@@ -166,6 +191,13 @@ export async function POST(request: NextRequest) {
     }
     if (model) {
       envConfig.LLM_PROVIDER_MODEL = model;
+    }
+
+    // Update LIDM delegation settings
+    if (delegation !== undefined) {
+      envConfig.ENABLE_DELEGATION = delegation.enabled ? 'true' : 'false';
+      if (delegation.heavyModel) envConfig.LIDM_HEAVY_MODEL = delegation.heavyModel;
+      if (delegation.standardModel) envConfig.LIDM_STANDARD_MODEL = delegation.standardModel;
     }
 
     // Update LLM API keys (only if provided - don't overwrite with empty)

@@ -360,6 +360,12 @@ def serve():
     server.add_insecure_port(f"{CONFIG.host}:{CONFIG.port}")
     logger.info(f"LLM Service operational on {CONFIG.host}:{CONFIG.port}")
     server.start()
+
+    # Eagerly preload the model so the first request doesn't block for 30-120s
+    logger.info("Preloading model...")
+    _model_manager.get_model()
+    logger.info("Model preloaded, ready for requests")
+
     server.wait_for_termination()
 
 if __name__ == "__main__":

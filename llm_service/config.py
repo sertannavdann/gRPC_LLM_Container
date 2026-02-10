@@ -32,7 +32,7 @@ class LLMServiceConfig:
         verbose: Enable verbose model logging
     """
     # Model configuration
-    model_path: str = "./models/Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
+    model_path: str = "./models/qwen2.5-3b-instruct-q5_k_m.gguf"
     n_ctx: int = 16384
     n_threads: int = 4
     n_batch: int = 512
@@ -71,7 +71,10 @@ class LLMServiceConfig:
         Returns:
             LLMServiceConfig: Configuration instance
         """
-        from llm_service.model_registry import auto_configure
+        try:
+            from llm_service.model_registry import auto_configure
+        except ImportError:
+            from model_registry import auto_configure
 
         model_path = os.getenv("LLM_MODEL_PATH", cls.model_path)
 

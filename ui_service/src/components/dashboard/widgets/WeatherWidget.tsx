@@ -72,7 +72,19 @@ export function WeatherWidget({ data, expanded, onFocus, onCollapse }: WeatherWi
     );
   }
 
-  const { current } = data;
+  const raw = data.current;
+  // Guard against null/undefined numeric fields from partial API responses
+  const current = {
+    ...raw,
+    temperature_celsius: raw.temperature_celsius ?? 0,
+    feels_like_celsius: raw.feels_like_celsius ?? 0,
+    humidity: raw.humidity ?? 0,
+    wind_speed_kmh: raw.wind_speed_kmh ?? 0,
+    visibility_meters: raw.visibility_meters ?? 0,
+    condition: raw.condition ?? 'unknown',
+    description: raw.description ?? '',
+    platform: raw.platform ?? 'unknown',
+  };
   const forecasts = data.forecasts || [];
 
   return (
@@ -148,9 +160,11 @@ export function WeatherWidget({ data, expanded, onFocus, onCollapse }: WeatherWi
 }
 
 function ForecastItem({ forecast }: { forecast: WeatherForecast }) {
-  const time = new Date(forecast.forecast_time);
+  const time = new Date(forecast.forecast_time || Date.now());
   const hour = time.getHours();
   const label = hour === 0 ? '12am' : hour < 12 ? `${hour}am` : hour === 12 ? '12pm' : `${hour - 12}pm`;
+  const temp = forecast.temperature_celsius ?? 0;
+  const precip = forecast.precipitation_probability ?? 0;
 
   return (
     <div className="bg-gray-700/30 rounded-lg p-2 text-center">
@@ -158,10 +172,10 @@ function ForecastItem({ forecast }: { forecast: WeatherForecast }) {
       <div className="flex justify-center mb-1">
         {getConditionIcon(forecast.condition)}
       </div>
-      <div className="text-sm font-medium">{Math.round(forecast.temperature_celsius)}°</div>
-      {forecast.precipitation_probability > 0.1 && (
+      <div className="text-sm font-medium">{Math.round(temp)}°</div>
+      {precip > 0.1 && (
         <div className="text-xs text-blue-400 mt-0.5">
-          {Math.round(forecast.precipitation_probability * 100)}%
+          {Math.round(precip * 100)}%
         </div>
       )}
     </div>

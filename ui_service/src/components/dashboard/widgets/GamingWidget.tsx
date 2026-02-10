@@ -49,8 +49,17 @@ export function GamingWidget({ data, expanded, onFocus, onCollapse }: GamingWidg
     );
   }
 
-  const profile = data.profiles[0];
-  const recentBattles: GamingMatch[] = (profile.metadata?.recent_battles as GamingMatch[]) || [];
+  const rawProfile = data.profiles[0];
+  // Guard against null/undefined numeric fields
+  const profile = {
+    ...rawProfile,
+    trophies: rawProfile.trophies ?? 0,
+    wins: rawProfile.wins ?? 0,
+    losses: rawProfile.losses ?? 0,
+    win_rate: rawProfile.win_rate ?? 0,
+    level: rawProfile.level ?? 0,
+  };
+  const recentBattles: GamingMatch[] = (rawProfile.metadata?.recent_battles as GamingMatch[]) || [];
 
   return (
     <div className={`bg-gray-800 rounded-xl p-4 ${expanded ? 'min-h-[400px]' : ''}`}>
@@ -124,8 +133,9 @@ export function GamingWidget({ data, expanded, onFocus, onCollapse }: GamingWidg
 
 function BattleRow({ battle }: { battle: GamingMatch }) {
   const isWin = battle.result === 'win';
-  const time = new Date(battle.timestamp);
+  const time = new Date(battle.timestamp || Date.now());
   const timeStr = time.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+  const trophiesChange = battle.trophies_change ?? 0;
 
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 bg-gray-700/30 rounded-lg">
@@ -136,14 +146,14 @@ function BattleRow({ battle }: { battle: GamingMatch }) {
         </span>
       </div>
       <div className={`flex items-center gap-1 text-xs ${
-        battle.trophies_change > 0 ? 'text-green-400' : battle.trophies_change < 0 ? 'text-red-400' : 'text-gray-500'
+        trophiesChange > 0 ? 'text-green-400' : trophiesChange < 0 ? 'text-red-400' : 'text-gray-500'
       }`}>
-        {battle.trophies_change > 0 ? (
+        {trophiesChange > 0 ? (
           <TrendingUp className="w-3 h-3" />
-        ) : battle.trophies_change < 0 ? (
+        ) : trophiesChange < 0 ? (
           <TrendingDown className="w-3 h-3" />
         ) : null}
-        {battle.trophies_change > 0 ? '+' : ''}{battle.trophies_change}
+        {trophiesChange > 0 ? '+' : ''}{trophiesChange}
       </div>
       <span className="text-xs text-gray-600">{timeStr}</span>
     </div>

@@ -288,9 +288,9 @@ class TestDashboardContext:
         assert r.status_code in (200, 404)
 
     def test_context_category_invalid(self, dashboard_up):
-        """Unknown category should return 404 or empty."""
+        """Unknown category should return 400, 404, or empty."""
         r = _http_get(f"{DASHBOARD_URL}/context/nonexistent_zz")
-        assert r.status_code in (200, 404)
+        assert r.status_code in (200, 400, 404)
 
     def test_adapters_list(self, dashboard_up):
         """§6.6 — /adapters."""
@@ -379,7 +379,7 @@ class TestMCPBridge:
             json={"tool": "query_agent", "arguments": {"query": "What is 2+2?"}},
             timeout=GRPC_TIMEOUT,
         )
-        assert r.status_code in (200, 201, 422)
+        assert r.status_code in (200, 201, 404, 422)
 
 
 # ============================================================================

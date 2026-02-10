@@ -8,21 +8,23 @@ import {
   Sparkles,
   Brain,
   Zap,
+  Plug,
+  Settings,
 } from 'lucide-react';
 
 const PAGES = [
   {
     href: '/chat',
     label: 'AI Chat',
-    desc: 'Multi-provider LLM orchestrator with tool use, conversation history, and smart summarization.',
+    desc: 'Multi-provider LLM orchestrator with LIDM multi-model routing, tool use, context compaction, and smart summarization.',
     icon: Bot,
     color: 'from-blue-600 to-cyan-500',
-    badge: 'gRPC',
+    badge: 'gRPC + LIDM',
   },
   {
     href: '/dashboard',
     label: 'Dashboard',
-    desc: 'Unified dashboard with finance, calendar, health, and navigation widgets. Supports grid, row, and column layouts.',
+    desc: 'Unified dashboard with finance, calendar, health, weather, gaming, and navigation widgets. Supports grid, row, and column layouts.',
     icon: LayoutDashboard,
     color: 'from-purple-600 to-pink-500',
     badge: 'Live',
@@ -30,10 +32,18 @@ const PAGES = [
   {
     href: '/finance',
     label: 'Finance',
-    desc: 'Interactive finance dashboard with category charts, monthly trends, top merchants, and full transaction explorer.',
+    desc: 'Interactive finance dashboard with category charts, monthly trends, top merchants, and full transaction filtering.',
     icon: DollarSign,
     color: 'from-green-600 to-emerald-500',
     badge: 'Bank Data',
+  },
+  {
+    href: '/integrations',
+    label: 'Integrations',
+    desc: 'Connect external services — OpenWeather, Google Calendar, Clash Royale — with instant hot-reload to the dashboard.',
+    icon: Plug,
+    color: 'from-teal-600 to-cyan-500',
+    badge: 'Hot-Reload',
   },
   {
     href: '/monitoring',
@@ -42,6 +52,14 @@ const PAGES = [
     icon: Activity,
     color: 'from-orange-600 to-amber-500',
     badge: 'OTel',
+  },
+  {
+    href: '/settings',
+    label: 'Settings',
+    desc: 'Configure LLM providers (Local, Perplexity, OpenAI, Anthropic), model selection, and API key management.',
+    icon: Settings,
+    color: 'from-gray-600 to-slate-500',
+    badge: 'Providers',
   },
 ] as const;
 
@@ -65,7 +83,7 @@ export default function Home() {
       </section>
 
       {/* Page Cards */}
-      <section className="max-w-5xl mx-auto px-6 pb-16 grid grid-cols-1 sm:grid-cols-2 gap-6">
+      <section className="max-w-6xl mx-auto px-6 pb-16 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {PAGES.map(({ href, label, desc, icon: Icon, color, badge }) => (
           <Link
             key={href}

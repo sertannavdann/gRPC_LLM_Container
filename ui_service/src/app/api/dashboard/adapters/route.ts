@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 const ENV_PATH = process.env.ENV_FILE_PATH || '/app/.env';
+const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:8001';
 
 function parseEnvFile(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -222,13 +223,50 @@ export async function POST(request: NextRequest) {
 
       console.log(`[Adapters API] Connected ${category}/${platform}`);
 
+      // Hot-reload credentials to dashboard_service (no container restart needed)
+      let hotReloadOk = false;
+      try {
+        // Build credential/settings maps matching dashboard_service env var naming
+        const credMap: Record<string, string> = {};
+        const settingsMap: Record<string, string> = {};
+        for (const field of adapterDef.auth_fields) {
+          const value = credentials[field.key];
+          if (!value) continue;
+          if (field.type === 'text') {
+            settingsMap[field.key.replace(/^[a-z]+/, '').replace(/^[A-Z]/, c => c.toLowerCase())] = value;
+          } else {
+            // Derive short key: openweatherApiKey -> api_key, clashroyalePlayerTag -> player_tag
+            const shortKey = field.envVar.split('_').slice(field.envVar.startsWith('GOOGLE') ? 2 : 1).join('_').toLowerCase();
+            credMap[shortKey] = value;
+          }
+        }
+
+        const hotReloadRes = await fetch(`${DASHBOARD_SERVICE}/admin/credentials?user_id=default`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category, platform, credentials: credMap, settings: settingsMap }),
+          signal: AbortSignal.timeout(5000),
+        });
+        hotReloadOk = hotReloadRes.ok;
+        if (hotReloadOk) {
+          console.log(`[Adapters API] Hot-reloaded credentials for ${platform}`);
+        } else {
+          console.warn(`[Adapters API] Hot-reload failed: ${hotReloadRes.status}`);
+        }
+      } catch (err) {
+        console.warn('[Adapters API] Hot-reload unavailable:', (err as Error).message);
+      }
+
       return NextResponse.json({
         success: true,
         action,
         category,
         platform,
-        message: `Connected ${adapterDef.name}. Restart dashboard service to activate.`,
-        restartRequired: true,
+        message: hotReloadOk
+          ? `Connected ${adapterDef.name}. Dashboard will refresh automatically.`
+          : `Connected ${adapterDef.name}. Run: docker compose restart dashboard to activate.`,
+        restartRequired: !hotReloadOk,
+        hotReloaded: hotReloadOk,
       });
     }
 
@@ -250,6 +288,18 @@ export async function POST(request: NextRequest) {
       writeFileSync(ENV_PATH, lines.join('\n') + '\n', 'utf-8');
 
       console.log(`[Adapters API] Disconnected ${category}/${platform}`);
+
+      // Hot-reload disconnect to dashboard_service
+      try {
+        await fetch(`${DASHBOARD_SERVICE}/admin/disconnect?user_id=default`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category, platform, credentials: {}, settings: {} }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch (err) {
+        console.warn('[Adapters API] Disconnect hot-reload unavailable:', (err as Error).message);
+      }
 
       return NextResponse.json({
         success: true,

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Zap,
   Shield,
+  Layers,
 } from 'lucide-react';
 
 interface ProviderInfo {
@@ -28,6 +29,9 @@ interface SettingsConfig {
   hasOpenaiKey: boolean;
   hasAnthropicKey: boolean;
   hasSerperKey: boolean;
+  delegationEnabled: boolean;
+  lidmHeavyModel: string;
+  lidmStandardModel: string;
 }
 
 type RestartStatus = 'idle' | 'restarting' | 'waiting' | 'ready' | 'error';
@@ -66,6 +70,12 @@ export default function SettingsPage() {
   });
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
 
+  // LIDM delegation state
+  const [delegationEnabled, setDelegationEnabled] = useState(false);
+  const [lidmHeavyModel, setLidmHeavyModel] = useState('');
+  const [lidmStandardModel, setLidmStandardModel] = useState('');
+  const [lidmTierModels, setLidmTierModels] = useState<Record<string, string[]>>({});
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -81,6 +91,11 @@ export default function SettingsPage() {
       setProviders(data.providers);
       setSelectedProvider(data.config.provider);
       setSelectedModel(data.config.model);
+      // LIDM
+      setDelegationEnabled(data.config.delegationEnabled ?? false);
+      setLidmHeavyModel(data.config.lidmHeavyModel || '');
+      setLidmStandardModel(data.config.lidmStandardModel || '');
+      if (data.lidmTierModels) setLidmTierModels(data.lidmTierModels);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -140,6 +155,11 @@ export default function SettingsPage() {
           provider: selectedProvider,
           model: selectedModel,
           apiKeys: hasNewKeys ? apiKeys : undefined,
+          delegation: {
+            enabled: delegationEnabled,
+            heavyModel: lidmHeavyModel || undefined,
+            standardModel: lidmStandardModel || undefined,
+          },
         }),
       });
       const data = await res.json();
@@ -257,6 +277,84 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* LIDM Delegation */}
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Multi-Model Delegation (LIDM)</h2>
+        <div className="p-4 border rounded-xl space-y-4">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-lg ${delegationEnabled ? 'bg-violet-500/10' : 'bg-muted/50'}`}>
+                <Layers className={`h-5 w-5 ${delegationEnabled ? 'text-violet-400' : 'text-muted-foreground'}`} />
+              </div>
+              <div>
+                <div className="text-sm font-medium">Enable LIDM Delegation</div>
+                <div className="text-xs text-muted-foreground">
+                  Route queries by complexity to different model tiers
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setDelegationEnabled(!delegationEnabled)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                delegationEnabled ? 'bg-violet-500' : 'bg-muted'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                delegationEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
+            </button>
+          </div>
+
+          {delegationEnabled && (
+            <div className="space-y-4 pt-2 border-t border-border/50">
+              {/* Requirement notice */}
+              <div className="flex items-start gap-2 p-3 bg-amber-500/10 rounded-lg">
+                <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-500">
+                  LIDM requires the standard-tier LLM container. Start with:{' '}
+                  <code className="font-mono bg-amber-500/10 px-1 rounded">docker compose --profile lidm up -d</code>
+                </p>
+              </div>
+
+              {/* Heavy tier model */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Heavy Tier Model (complex reasoning)</label>
+                <select
+                  value={lidmHeavyModel}
+                  onChange={(e) => setLidmHeavyModel(e.target.value)}
+                  className="w-full p-2 text-sm rounded-lg border bg-background font-mono"
+                >
+                  {(lidmTierModels.heavy || []).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Standard tier model */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Standard Tier Model (simple queries)</label>
+                <select
+                  value={lidmStandardModel}
+                  onChange={(e) => setLidmStandardModel(e.target.value)}
+                  className="w-full p-2 text-sm rounded-lg border bg-background font-mono"
+                >
+                  {(lidmTierModels.standard || []).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Metrics hint */}
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5" />
+                Monitor delegation metrics in Grafana → gRPC LLM Overview dashboard
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Current config summary */}
       {config && (
         <section className="p-4 bg-muted/30 rounded-xl border space-y-3">
@@ -273,6 +371,18 @@ export default function SettingsPage() {
               <span className="text-muted-foreground">Model: </span>
               <span className="font-mono">{config.model}</span>
             </div>
+            <div>
+              <span className="text-muted-foreground">LIDM: </span>
+              <span className={`font-mono ${config.delegationEnabled ? 'text-violet-400' : ''}`}>
+                {config.delegationEnabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </div>
+            {config.delegationEnabled && (
+              <div>
+                <span className="text-muted-foreground">Tiers: </span>
+                <span className="font-mono text-xs">Heavy + Standard</span>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             {[

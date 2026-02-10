@@ -80,9 +80,48 @@ class ProviderMetrics:
     provider_errors_total: Counter
 
 
+@dataclass
+class LIDMMetrics:
+    """Metrics for LIDM multi-model delegation routing."""
+
+    # Delegation requests by tier (standard/heavy/ultra) and strategy (direct/decompose)
+    delegation_requests_total: Counter
+
+    # Delegation latency by tier
+    delegation_latency_ms: Histogram
+
+    # Tier fallback count (requested tier unavailable → fallback)
+    delegation_fallbacks_total: Counter
+
+    # Delegation errors
+    delegation_errors_total: Counter
+
+
+@dataclass
+class DecisionPipelineMetrics:
+    """Metrics for the query decision pipeline: classify → route → infer → respond."""
+
+    # Query classification by detected category and routed tier
+    classification_total: Counter
+
+    # Inference duration (time inside LLM generate, not full request)
+    inference_duration_ms: Histogram
+
+    # Token generation throughput (tokens per second per call)
+    token_generation_rate: Histogram
+
+    # Context window utilization ratio (0.0–1.0)
+    context_utilization: ObservableGauge
+
+    # Process memory RSS in bytes
+    memory_rss_bytes: ObservableGauge
+
+
 # Shared state for observable gauges
 _active_requests: int = 0
 _cumulative_costs: Dict[str, float] = {}
+_context_utilization: float = 0.0
+_memory_rss_bytes: int = 0
 
 
 def _get_active_requests() -> int:
@@ -232,6 +271,97 @@ def create_provider_metrics(meter: Optional[Meter] = None) -> ProviderMetrics:
     )
 
 
+def create_lidm_metrics(meter: Optional[Meter] = None) -> LIDMMetrics:
+    """
+    Create metrics for LIDM delegation routing.
+
+    Returns:
+        LIDMMetrics dataclass with configured metric instruments
+    """
+    m = meter or get_meter()
+
+    delegation_requests_total = m.create_counter(
+        name="lidm_delegation_requests_total",
+        description="Total LIDM delegation requests by tier and strategy",
+        unit="1",
+    )
+
+    delegation_latency_ms = m.create_histogram(
+        name="lidm_delegation_latency_ms",
+        description="LIDM delegation latency by tier in milliseconds",
+        unit="ms",
+    )
+
+    delegation_fallbacks_total = m.create_counter(
+        name="lidm_delegation_fallbacks_total",
+        description="Total LIDM tier fallbacks (requested tier unavailable)",
+        unit="1",
+    )
+
+    delegation_errors_total = m.create_counter(
+        name="lidm_delegation_errors_total",
+        description="Total LIDM delegation errors",
+        unit="1",
+    )
+
+    return LIDMMetrics(
+        delegation_requests_total=delegation_requests_total,
+        delegation_latency_ms=delegation_latency_ms,
+        delegation_fallbacks_total=delegation_fallbacks_total,
+        delegation_errors_total=delegation_errors_total,
+    )
+
+
+def create_decision_pipeline_metrics(meter: Optional[Meter] = None) -> DecisionPipelineMetrics:
+    """
+    Create metrics for the query decision pipeline.
+
+    Tracks classification, inference latency, token throughput,
+    context window utilisation, and process memory.
+    """
+    m = meter or get_meter()
+
+    classification_total = m.create_counter(
+        name="pipeline_classification_total",
+        description="Queries classified by category and routed tier",
+        unit="1",
+    )
+
+    inference_duration_ms = m.create_histogram(
+        name="pipeline_inference_duration_ms",
+        description="LLM inference duration (generate call only)",
+        unit="ms",
+    )
+
+    token_generation_rate = m.create_histogram(
+        name="pipeline_token_generation_rate",
+        description="Token generation throughput (tokens/sec)",
+        unit="1",
+    )
+
+    context_utilization = m.create_observable_gauge(
+        name="pipeline_context_utilization",
+        description="Context window utilisation ratio (0.0–1.0)",
+        unit="1",
+        callbacks=[lambda options: [metrics.Observation(_context_utilization)]],
+    )
+
+    memory_rss_bytes = m.create_observable_gauge(
+        name="process_memory_rss_bytes",
+        description="Process resident set size in bytes",
+        unit="By",
+        callbacks=[lambda options: [metrics.Observation(_memory_rss_bytes)]],
+    )
+
+    return DecisionPipelineMetrics(
+        classification_total=classification_total,
+        inference_duration_ms=inference_duration_ms,
+        token_generation_rate=token_generation_rate,
+        context_utilization=context_utilization,
+        memory_rss_bytes=memory_rss_bytes,
+    )
+
+
 # Convenience functions for updating metrics
 
 def increment_active_requests() -> None:
@@ -250,6 +380,28 @@ def add_provider_cost(provider: str, cost_usd: float) -> None:
     """Add to cumulative provider cost."""
     global _cumulative_costs
     _cumulative_costs[provider] = _cumulative_costs.get(provider, 0) + cost_usd
+
+
+def update_context_utilization(ratio: float) -> None:
+    """Update context window utilisation gauge (0.0–1.0)."""
+    global _context_utilization
+    _context_utilization = max(0.0, min(1.0, ratio))
+
+
+def update_memory_rss() -> None:
+    """Snapshot current process RSS into the gauge."""
+    global _memory_rss_bytes
+    try:
+        import resource
+        # maxrss is in bytes on Linux, kilobytes on macOS
+        import platform
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if platform.system() == "Darwin":
+            _memory_rss_bytes = rss  # already bytes on macOS
+        else:
+            _memory_rss_bytes = rss * 1024  # KB → bytes on Linux
+    except Exception:
+        _memory_rss_bytes = 0
 
 
 class TimerContext:
@@ -279,3 +431,29 @@ def time_operation(histogram: Histogram, **attributes) -> TimerContext:
             # ... operation ...
     """
     return TimerContext(histogram, attributes)
+
+
+class MemoryReporter:
+    """Background thread that periodically snapshots process memory into gauges."""
+
+    def __init__(self, interval_seconds: float = 15.0):
+        self._interval = interval_seconds
+        self._thread: Optional["threading.Thread"] = None
+        self._stop_event = None
+
+    def start(self) -> None:
+        import threading
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="memory-reporter"
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._stop_event:
+            self._stop_event.set()
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            update_memory_rss()
+            self._stop_event.wait(self._interval)
