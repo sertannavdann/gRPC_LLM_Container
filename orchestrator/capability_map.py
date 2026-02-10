@@ -6,9 +6,22 @@ Maps task capabilities to the appropriate LLM service tier/endpoint.
 
 import os
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
+
+# Module-level ConfigManager reference (set at startup)
+_config_manager: Optional["ConfigManager"] = None
+
+
+def set_config_manager(mgr: "ConfigManager") -> None:
+    """Wire the ConfigManager for dynamic config lookups."""
+    global _config_manager
+    _config_manager = mgr
+    logger.info("capability_map: ConfigManager wired for dynamic routing")
 
 # Default capability → tier mapping
 # The DelegationManager resolves tier → actual endpoint via LLMClientPool
@@ -30,7 +43,14 @@ CAPABILITY_MAP: Dict[str, Dict[str, str]] = {
 
 
 def get_tier_for_capability(capability: str) -> str:
-    """Resolve capability to tier name. Defaults to 'standard'."""
+    """Resolve capability to tier name. Defaults to 'standard'.
+
+    Checks dynamic config first, falls back to static CAPABILITY_MAP.
+    """
+    if _config_manager is not None:
+        tier = _config_manager.get_config().get_tier_for_category(capability)
+        if tier is not None:
+            return tier
     entry = CAPABILITY_MAP.get(capability, {})
     return entry.get("tier", "standard")
 
@@ -57,11 +77,19 @@ def get_required_tier(capabilities: list) -> str:
 
 def get_lidm_endpoints() -> Dict[str, str]:
     """
-    Build tier → endpoint mapping from environment variables.
+    Build tier → endpoint mapping.
+
+    Checks dynamic config first, falls back to environment variables.
 
     Returns dict like:
         {"heavy": "llm_service:50051", "standard": "llm_service_standard:50051", ...}
     """
+    if _config_manager is not None:
+        dynamic = _config_manager.get_config().get_tier_endpoints()
+        if dynamic:
+            logger.info(f"LIDM endpoints (dynamic): {dynamic}")
+            return dynamic
+
     endpoints = {}
 
     heavy = os.getenv("LLM_HEAVY_HOST", "llm_service:50051")

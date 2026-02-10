@@ -23,14 +23,20 @@ from shared.observability import (
     create_request_metrics,
     create_tool_metrics,
     create_provider_metrics,
+    create_lidm_metrics,
+    create_decision_pipeline_metrics,
     create_span,
     get_correlation_id,
     set_correlation_id,
     increment_active_requests,
     decrement_active_requests,
+    update_context_utilization,
     RequestMetrics,
     ToolMetrics,
     ProviderMetrics,
+    LIDMMetrics,
+    DecisionPipelineMetrics,
+    MemoryReporter,
 )
 from shared.observability.grpc_interceptor import ObservabilityServerInterceptor
 
@@ -87,7 +93,9 @@ import threading
 
 # LIDM imports
 from .delegation_manager import DelegationManager
-from .capability_map import get_lidm_endpoints
+from .capability_map import get_lidm_endpoints, set_config_manager
+from .config_manager import ConfigManager
+from .routing_config import RoutingConfig
 
 # Protobuf imports
 from shared.generated import agent_pb2
@@ -278,13 +286,15 @@ class LLMEngineWrapper:
         temperature: float = 0.7,
         max_tokens: int = 512,
         max_tool_iterations: int = 5,
-        sandbox_client = None  # Optional SandboxClient for code execution
+        sandbox_client = None,  # Optional SandboxClient for code execution
+        pipeline_metrics: Optional[DecisionPipelineMetrics] = None,
     ):
         self.client = llm_client
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_tool_iterations = max_tool_iterations
         self.sandbox_client = sandbox_client
+        self.pipeline_metrics = pipeline_metrics
         logger.debug(
             f"LLMEngineWrapper initialized: temp={temperature}, "
             f"max_tokens={max_tokens}, max_tool_iterations={max_tool_iterations}"
@@ -320,21 +330,34 @@ class LLMEngineWrapper:
     def _generate_direct(self, messages: list, temperature: float, max_tokens: int) -> dict:
         """Generate direct response without tools."""
         prompt = self._format_messages(messages)
-        
+
         if not prompt.strip():
             logger.warning("Empty prompt generated from messages")
             return {
                 "content": "I received an empty message. Please try again.",
                 "tool_calls": []
             }
-        
+
         try:
+            infer_start = time.perf_counter()
             response_text = self.client.generate(
                 prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature
             )
-            
+            infer_ms = (time.perf_counter() - infer_start) * 1000
+
+            # Record inference metrics
+            if self.pipeline_metrics:
+                self.pipeline_metrics.inference_duration_ms.record(
+                    infer_ms, {"mode": "direct"})
+                # Approximate token count (~4 chars/token) and record rate
+                approx_tokens = max(len(response_text) // 4, 1)
+                if infer_ms > 0:
+                    tps = approx_tokens / (infer_ms / 1000)
+                    self.pipeline_metrics.token_generation_rate.record(
+                        tps, {"mode": "direct"})
+
             return {
                 "content": response_text.strip(),
                 "tool_calls": []
@@ -406,13 +429,18 @@ Your response (JSON only):"""
             
             try:
                 # Generate with JSON grammar constraint
+                infer_start = time.perf_counter()
                 response_text = self.client.generate(
                     prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     response_format="json"
                 )
-                
+                infer_ms = (time.perf_counter() - infer_start) * 1000
+                if self.pipeline_metrics:
+                    self.pipeline_metrics.inference_duration_ms.record(
+                        infer_ms, {"mode": "tool_calling"})
+
                 # Parse response
                 parsed = self._parse_tool_response(response_text)
                 
@@ -502,12 +530,22 @@ Answer:"""
         logger.debug(f"Synthesis prompt length={len(prompt)}")
 
         try:
+            infer_start = time.perf_counter()
             response_text = self.client.generate(
                 prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 # No response_format="json" — plain text output
             )
+            infer_ms = (time.perf_counter() - infer_start) * 1000
+            if self.pipeline_metrics:
+                self.pipeline_metrics.inference_duration_ms.record(
+                    infer_ms, {"mode": "synthesis"})
+                approx_tokens = max(len(response_text) // 4, 1)
+                if infer_ms > 0:
+                    tps = approx_tokens / (infer_ms / 1000)
+                    self.pipeline_metrics.token_generation_rate.record(
+                        tps, {"mode": "synthesis"})
 
             content = response_text.strip()
             logger.info(f"Tool result synthesis complete: {len(content)} chars")
@@ -740,6 +778,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.request_metrics: Optional[RequestMetrics] = None
         self.tool_metrics: Optional[ToolMetrics] = None
         self.provider_metrics: Optional[ProviderMetrics] = None
+        self.lidm_metrics: Optional[LIDMMetrics] = None
+        self.pipeline_metrics: Optional[DecisionPipelineMetrics] = None
+        self._memory_reporter: Optional[MemoryReporter] = None
 
         if self.observability_enabled:
             logger.info("Initializing observability stack...")
@@ -752,9 +793,20 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             self.request_metrics = create_request_metrics()
             self.tool_metrics = create_tool_metrics()
             self.provider_metrics = create_provider_metrics()
-            logger.info("Observability initialized with metrics")
+            self.lidm_metrics = create_lidm_metrics()
+            self.pipeline_metrics = create_decision_pipeline_metrics()
+
+            # Start background memory reporter (snapshots RSS every 15s)
+            self._memory_reporter = MemoryReporter(interval_seconds=15.0)
+            self._memory_reporter.start()
+            logger.info("Observability initialized with metrics (incl. LIDM + pipeline + memory)")
         else:
             logger.info("Observability disabled (set ENABLE_OBSERVABILITY=true to enable)")
+
+        # Initialize dynamic routing config
+        config_path = os.getenv("ROUTING_CONFIG_PATH", "/app/config/routing_config.json")
+        self.config_manager = ConfigManager(config_path)
+        set_config_manager(self.config_manager)
 
         # Initialize provider system
         setup_providers()
@@ -803,20 +855,35 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.llm_pool = None
 
         if self.delegation_enabled:
-            endpoints = get_lidm_endpoints()
-            self.llm_pool = LLMClientPool(endpoints)
-            self.delegation_manager = DelegationManager(self.llm_pool)
-            logger.info(f"LIDM delegation enabled with tiers: {self.llm_pool.available_tiers}")
+            routing_config = self.config_manager.get_config()
+            endpoints = routing_config.get_tier_endpoints() or get_lidm_endpoints()
+            # Guard: verify at least one non-heavy endpoint is reachable
+            reachable = self._check_lidm_endpoints(endpoints)
+            if reachable:
+                self.llm_pool = LLMClientPool(reachable)
+                self.delegation_manager = DelegationManager(
+                    self.llm_pool,
+                    metrics=self.lidm_metrics,
+                    config=routing_config,
+                )
+                # Register observers for hot-reload
+                self.config_manager.register_observer(self.delegation_manager.on_config_changed)
+                self.config_manager.register_observer(self._on_routing_config_changed)
+                logger.info(f"LIDM delegation enabled with tiers: {self.llm_pool.available_tiers}")
+            else:
+                self.delegation_enabled = False
+                logger.warning("LIDM delegation requested but no tier endpoints reachable — disabled")
         else:
             logger.info("LIDM delegation disabled (set ENABLE_DELEGATION=true to enable)")
 
         # Initialize LLM Engine Wrapper with multi-turn support
         self.llm_engine = LLMEngineWrapper(
-            self.llm_client, 
+            self.llm_client,
             temperature=self.config.temperature,
             max_tokens=512,
             max_tool_iterations=self.config.max_iterations,
-            sandbox_client=self.sandbox_client
+            sandbox_client=self.sandbox_client,
+            pipeline_metrics=self.pipeline_metrics,
         )
         
         # Initialize Tool Registry
@@ -947,6 +1014,44 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             provider_metrics=self.provider_metrics if self.observability_enabled else None,
             provider_name=provider_type,
         )
+
+    def _on_routing_config_changed(self, config: RoutingConfig) -> None:
+        """Observer callback: reconfigure LLMClientPool tier endpoints on hot-reload."""
+        if self.llm_pool is None:
+            return
+        new_endpoints = config.get_tier_endpoints()
+        if new_endpoints:
+            self.llm_pool.reconfigure(new_endpoints)
+            logger.info(f"LLMClientPool reconfigured: tiers={self.llm_pool.available_tiers}")
+
+    @staticmethod
+    def _check_lidm_endpoints(endpoints: Dict[str, str]) -> Dict[str, str]:
+        """
+        Probe LIDM tier endpoints and return only reachable ones.
+
+        Uses a fast TCP connect (1s timeout) so the orchestrator never blocks
+        on a missing llm_service_standard container.
+        """
+        import socket
+
+        reachable: Dict[str, str] = {}
+        for tier, addr in endpoints.items():
+            if not addr:
+                continue
+            try:
+                host, port_str = addr.rsplit(":", 1)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1.0)
+                result = sock.connect_ex((host, int(port_str)))
+                sock.close()
+                if result == 0:
+                    reachable[tier] = addr
+                    logger.info(f"LIDM tier '{tier}' reachable at {addr}")
+                else:
+                    logger.warning(f"LIDM tier '{tier}' at {addr} — not reachable (skipped)")
+            except Exception as e:
+                logger.warning(f"LIDM tier '{tier}' at {addr} — probe error: {e} (skipped)")
+        return reachable
     
     def _run_startup_recovery(self):
         """Run crash recovery on service startup."""
@@ -1132,7 +1237,13 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # Analyze intent for multi-tool queries
         intent_analysis = analyze_intent(query)
-        
+
+        # Record classification metric
+        if self.observability_enabled and self.pipeline_metrics:
+            intent_name = intent_analysis.intent.name if intent_analysis.intent else "general"
+            self.pipeline_metrics.classification_total.add(
+                1, {"category": intent_name, "tier": "standard"})
+
         # Check if clarification is needed (e.g., missing destination)
         if intent_analysis.needs_clarification:
             logger.info(f"Intent requires clarification: {intent_analysis.clarifying_question}")
@@ -1146,13 +1257,22 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # LIDM: If delegation is enabled, try routing through DelegationManager
         if self.delegation_enabled and self.delegation_manager:
+            lidm_start = time.perf_counter()
             try:
                 decomposition = self.delegation_manager.analyze_and_route(query)
-                logger.info(f"LIDM strategy={decomposition.strategy}, "
+                strategy = decomposition.strategy
+                logger.info(f"LIDM strategy={strategy}, "
                              f"sub_tasks={len(decomposition.sub_tasks)}, "
                              f"complexity={decomposition.complexity_score:.2f}")
 
-                if decomposition.strategy == "decompose" and len(decomposition.sub_tasks) > 1:
+                # Record LIDM classification
+                if self.observability_enabled and self.pipeline_metrics:
+                    task_type = decomposition.task_type if hasattr(decomposition, "task_type") else "unknown"
+                    for st in decomposition.sub_tasks:
+                        self.pipeline_metrics.classification_total.add(
+                            1, {"category": task_type, "tier": st.target_tier})
+
+                if strategy == "decompose" and len(decomposition.sub_tasks) > 1:
                     # Multi-task delegation
                     exec_result = self.delegation_manager.execute_delegation(decomposition)
                     content = self.delegation_manager.aggregate_results(
@@ -1169,15 +1289,23 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                         logger.info(f"LIDM verification: method={verification.get('method')}, "
                                      f"confidence={verification.get('confidence', 0):.2f}")
 
+                    # Record LIDM metrics
+                    if self.observability_enabled and self.lidm_metrics:
+                        elapsed = (time.perf_counter() - lidm_start) * 1000
+                        self.lidm_metrics.delegation_requests_total.add(
+                            1, {"strategy": "decompose", "tier": "multi"})
+                        self.lidm_metrics.delegation_latency_ms.record(
+                            elapsed, {"strategy": "decompose", "tier": "multi"})
+
                     return {
                         "content": content,
                         "messages": [],
                         "tool_results": exec_result.get("sub_results", []),
                         "iteration": 0,
-                        "lidm_strategy": decomposition.strategy,
+                        "lidm_strategy": strategy,
                     }
 
-                elif decomposition.strategy == "direct" and decomposition.sub_tasks:
+                elif strategy == "direct" and decomposition.sub_tasks:
                     # Single capability, route to best tier
                     task = decomposition.sub_tasks[0]
                     tier = task.target_tier
@@ -1187,6 +1315,15 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                         result = self.llm_pool.generate(
                             prompt=query, tier=tier, max_tokens=1024
                         )
+
+                        # Record LIDM metrics
+                        if self.observability_enabled and self.lidm_metrics:
+                            elapsed = (time.perf_counter() - lidm_start) * 1000
+                            self.lidm_metrics.delegation_requests_total.add(
+                                1, {"strategy": "direct", "tier": tier})
+                            self.lidm_metrics.delegation_latency_ms.record(
+                                elapsed, {"strategy": "direct", "tier": tier})
+
                         return {
                             "content": result,
                             "messages": [],
@@ -1199,6 +1336,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
 
             except Exception as e:
                 logger.warning(f"LIDM delegation failed, falling back to standard workflow: {e}")
+                if self.observability_enabled and self.lidm_metrics:
+                    self.lidm_metrics.delegation_errors_total.add(
+                        1, {"error": type(e).__name__})
 
         # Get system prompt enhancement for multi-tool intents
         intent_prompt = get_intent_system_prompt(query)
@@ -1247,6 +1387,14 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Extract results
         messages = final_state.get("messages", [])
         last_message = messages[-1] if messages else None
+
+        # Update context window utilization gauge
+        if self.observability_enabled and self.pipeline_metrics:
+            total_chars = sum(len(str(m.content)) for m in messages if hasattr(m, "content"))
+            # Approximate context usage: ~4 chars/token, config context_window is in K tokens
+            max_tokens = self.config.context_window * 1024
+            approx_tokens_used = total_chars // 4
+            update_context_utilization(approx_tokens_used / max(max_tokens, 1))
 
         content = ""
         if last_message:
@@ -1354,6 +1502,11 @@ def serve(config: Optional[OrchestratorConfig] = None):
     server.add_insecure_port(f'{config.host}:{config.port}')
     server.start()
     logger.info(f"Orchestrator server started on {config.host}:{config.port}")
+
+    # Start admin API for dynamic routing config (daemon thread)
+    from .admin_api import start_admin_server
+    admin_port = int(os.getenv("ADMIN_API_PORT", "8003"))
+    start_admin_server(orchestrator_service.config_manager, port=admin_port)
 
     try:
         server.wait_for_termination()

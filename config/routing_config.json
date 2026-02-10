@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "categories": {
+    "coding": {
+      "tier": "heavy",
+      "priority": "high"
+    },
+    "reasoning": {
+      "tier": "heavy",
+      "priority": "high"
+    },
+    "analysis": {
+      "tier": "heavy",
+      "priority": "medium"
+    },
+    "verification": {
+      "tier": "ultra",
+      "priority": "high"
+    },
+    "deep_research": {
+      "tier": "ultra",
+      "priority": "high"
+    },
+    "finance": {
+      "tier": "standard",
+      "priority": "medium"
+    },
+    "multilingual": {
+      "tier": "standard",
+      "priority": "medium"
+    },
+    "math": {
+      "tier": "standard",
+      "priority": "medium"
+    },
+    "fast_response": {
+      "tier": "standard",
+      "priority": "low"
+    },
+    "routing": {
+      "tier": "standard",
+      "priority": "low"
+    },
+    "classification": {
+      "tier": "standard",
+      "priority": "low"
+    },
+    "extraction": {
+      "tier": "standard",
+      "priority": "low"
+    },
+    "search": {
+      "tier": "external",
+      "priority": "medium"
+    }
+  },
+  "tiers": {
+    "heavy": {
+      "endpoint": "llm_service:50051",
+      "max_concurrent_requests": 10,
+      "priority": 1,
+      "enabled": true
+    },
+    "standard": {
+      "endpoint": "llm_service_standard:50051",
+      "max_concurrent_requests": 10,
+      "priority": 2,
+      "enabled": true
+    }
+  },
+  "performance": {
+    "complexity_threshold_direct": 0.5,
+    "self_consistency_threshold": 0.6,
+    "delegation_latency_threshold_ms": 5000,
+    "max_sub_tasks": 5
+  }
+}

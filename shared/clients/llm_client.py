@@ -25,7 +25,7 @@ class LLMClient(BaseClient):
     def __init__(self, host: str = "llm_service", port: int = 50051):
         super().__init__(host, port)
         self.stub = llm_pb2_grpc.LLMServiceStub(self.channel)
-        self._stream_timeout = 30
+        self._stream_timeout = 120
 
     def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7, response_format: str = "") -> str:
         """
@@ -48,7 +48,7 @@ class LLMClient(BaseClient):
                     temperature=temperature,
                     response_format=response_format
                 ),
-                timeout=30
+                timeout=120
             )
             output = ""
             for response in responses:
@@ -218,6 +218,30 @@ class LLMClientPool:
         for tier, client in self.clients.items():
             results[tier] = client.get_active_model()
         return results
+
+    def reconfigure(self, endpoints: Dict[str, str]) -> None:
+        """Hot-swap tier endpoints. Closes removed tiers, creates new ones, skips unchanged."""
+        current_tiers = set(self.clients.keys())
+        new_tiers = set(endpoints.keys())
+
+        # Remove tiers no longer present
+        for tier in current_tiers - new_tiers:
+            logger.info(f"LLMClientPool: removing tier '{tier}'")
+            del self.clients[tier]
+
+        # Add or update tiers
+        for tier, endpoint in endpoints.items():
+            if not endpoint:
+                continue
+            host, port_str = endpoint.rsplit(":", 1)
+            port = int(port_str)
+
+            existing = self.clients.get(tier)
+            if existing and existing.service_name == host and existing.port == port:
+                continue  # unchanged
+
+            logger.info(f"LLMClientPool: (re)configuring tier '{tier}' → {host}:{port}")
+            self.clients[tier] = LLMClient(host=host, port=port)
 
     @property
     def available_tiers(self) -> list:

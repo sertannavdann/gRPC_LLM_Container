@@ -15,6 +15,13 @@ from typing import List, Optional, Dict, Any
 
 from shared.clients.llm_client import LLMClientPool
 from .capability_map import get_tier_for_capability, get_required_tier
+from .routing_config import RoutingConfig
+
+# Optional import — metrics may not be available if observability is off
+try:
+    from shared.observability.metrics import LIDMMetrics
+except ImportError:
+    LIDMMetrics = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +58,21 @@ class DelegationManager:
     then routes sub-tasks to the appropriate LLM instance per capability.
     """
 
-    def __init__(self, client_pool: LLMClientPool):
+    def __init__(
+        self,
+        client_pool: LLMClientPool,
+        metrics: Optional["LIDMMetrics"] = None,
+        config: Optional[RoutingConfig] = None,
+    ):
         self.pool = client_pool
         self._classify_tier = "standard"  # Use standard model for routing decisions
+        self._metrics = metrics
+
+        # Configurable thresholds (overridden by config / hot-reload)
+        perf = config.performance if config else None
+        self._complexity_threshold = perf.complexity_threshold_direct if perf else 0.5
+        self._consistency_threshold = perf.self_consistency_threshold if perf else 0.6
+        self._max_sub_tasks = perf.max_sub_tasks if perf else 5
 
     def analyze_and_route(self, query: str, context: str = "") -> TaskDecomposition:
         """
@@ -74,7 +93,7 @@ class DelegationManager:
         task_type = classification.get("task_type", "general")
 
         # Simple query → direct routing
-        if complexity < 0.5 or len(capabilities) <= 1:
+        if complexity < self._complexity_threshold or len(capabilities) <= 1:
             tier = get_required_tier(capabilities) if capabilities else "standard"
             sub_task = SubTask(
                 task_id=f"st_{uuid.uuid4().hex[:6]}",
@@ -258,7 +277,7 @@ Is this answer correct and complete? Respond with a JSON object:
 
             consistency = batch_result.get("self_consistency_score", 0.0)
 
-            if consistency >= 0.6:
+            if consistency >= self._consistency_threshold:
                 return {
                     "verified": True,
                     "method": "self_consistency",
@@ -382,7 +401,7 @@ JSON:"""
                 parsed = [parsed]
 
             sub_tasks = []
-            for i, item in enumerate(parsed[:5]):  # Cap at 5
+            for i, item in enumerate(parsed[:self._max_sub_tasks]):
                 task_id = item.get("id", f"st_{i+1}")
                 sub_tasks.append(SubTask(
                     task_id=task_id,
@@ -411,3 +430,16 @@ JSON:"""
         for task in sub_tasks:
             task.target_tier = get_required_tier(task.required_capabilities)
             logger.debug(f"Routed {task.task_id}: {task.required_capabilities} → {task.target_tier}")
+
+    # ── Observer ────────────────────────────────────────────────────────
+
+    def on_config_changed(self, config: RoutingConfig) -> None:
+        """Called by ConfigManager when routing config is updated."""
+        perf = config.performance
+        self._complexity_threshold = perf.complexity_threshold_direct
+        self._consistency_threshold = perf.self_consistency_threshold
+        self._max_sub_tasks = perf.max_sub_tasks
+        logger.info(
+            f"DelegationManager reconfigured: complexity_threshold={self._complexity_threshold}, "
+            f"consistency_threshold={self._consistency_threshold}, max_sub_tasks={self._max_sub_tasks}"
+        )
