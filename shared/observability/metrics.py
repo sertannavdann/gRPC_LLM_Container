@@ -457,3 +457,85 @@ class MemoryReporter:
         while not self._stop_event.is_set():
             update_memory_rss()
             self._stop_event.wait(self._interval)
+
+
+# =============================================================================
+# MODULE METRICS
+# =============================================================================
+
+@dataclass
+class ModuleMetrics:
+    """Metrics for NEXUS dynamic module system."""
+
+    # Module builds attempted
+    module_builds_total: Counter
+
+    # Module validations by result (pass/fail)
+    module_validations_total: Counter
+
+    # Module installs/uninstalls
+    module_installs_total: Counter
+
+    # Module health status (loaded/failed/disabled)
+    module_status: ObservableGauge
+
+    # Module credential operations
+    module_credential_ops_total: Counter
+
+
+# Shared state for module gauge
+_module_counts: Dict[str, int] = {"loaded": 0, "failed": 0, "disabled": 0}
+
+
+def update_module_counts(loaded: int, failed: int, disabled: int) -> None:
+    """Update module status counts for gauge."""
+    global _module_counts
+    _module_counts = {"loaded": loaded, "failed": failed, "disabled": disabled}
+
+
+def create_module_metrics(meter: Optional[Meter] = None) -> ModuleMetrics:
+    """Create metrics for the NEXUS module system."""
+    m = meter or get_meter()
+
+    module_builds_total = m.create_counter(
+        name="nexus_module_builds_total",
+        description="Total module build attempts",
+        unit="1",
+    )
+
+    module_validations_total = m.create_counter(
+        name="nexus_module_validations_total",
+        description="Total module validations by result",
+        unit="1",
+    )
+
+    module_installs_total = m.create_counter(
+        name="nexus_module_installs_total",
+        description="Total module install/uninstall operations",
+        unit="1",
+    )
+
+    module_status = m.create_observable_gauge(
+        name="nexus_module_status",
+        description="Current module counts by status",
+        unit="1",
+        callbacks=[lambda options: [
+            metrics.Observation(_module_counts.get("loaded", 0), {"status": "loaded"}),
+            metrics.Observation(_module_counts.get("failed", 0), {"status": "failed"}),
+            metrics.Observation(_module_counts.get("disabled", 0), {"status": "disabled"}),
+        ]],
+    )
+
+    module_credential_ops_total = m.create_counter(
+        name="nexus_module_credential_ops_total",
+        description="Total module credential operations",
+        unit="1",
+    )
+
+    return ModuleMetrics(
+        module_builds_total=module_builds_total,
+        module_validations_total=module_validations_total,
+        module_installs_total=module_installs_total,
+        module_status=module_status,
+        module_credential_ops_total=module_credential_ops_total,
+    )

@@ -25,17 +25,20 @@ from shared.observability import (
     create_provider_metrics,
     create_lidm_metrics,
     create_decision_pipeline_metrics,
+    create_module_metrics,
     create_span,
     get_correlation_id,
     set_correlation_id,
     increment_active_requests,
     decrement_active_requests,
     update_context_utilization,
+    update_module_counts,
     RequestMetrics,
     ToolMetrics,
     ProviderMetrics,
     LIDMMetrics,
     DecisionPipelineMetrics,
+    ModuleMetrics,
     MemoryReporter,
 )
 from shared.observability.grpc_interceptor import ObservabilityServerInterceptor
@@ -77,7 +80,6 @@ from tools.builtin.module_manager import (
     set_module_loader, set_module_registry, set_credential_store,
 )
 from shared.modules.registry import ModuleRegistry
-from shared.modules.credentials import CredentialStore
 from tools.builtin.module_installer import (
     install_module, uninstall_module, set_installer_deps,
 )
@@ -796,6 +798,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.provider_metrics: Optional[ProviderMetrics] = None
         self.lidm_metrics: Optional[LIDMMetrics] = None
         self.pipeline_metrics: Optional[DecisionPipelineMetrics] = None
+        self.module_metrics: Optional[ModuleMetrics] = None
         self._memory_reporter: Optional[MemoryReporter] = None
 
         if self.observability_enabled:
@@ -811,11 +814,12 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             self.provider_metrics = create_provider_metrics()
             self.lidm_metrics = create_lidm_metrics()
             self.pipeline_metrics = create_decision_pipeline_metrics()
+            self.module_metrics = create_module_metrics()
 
             # Start background memory reporter (snapshots RSS every 15s)
             self._memory_reporter = MemoryReporter(interval_seconds=15.0)
             self._memory_reporter.start()
-            logger.info("Observability initialized with metrics (incl. LIDM + pipeline + memory)")
+            logger.info("Observability initialized with metrics (incl. LIDM + pipeline + module + memory)")
         else:
             logger.info("Observability disabled (set ENABLE_OBSERVABILITY=true to enable)")
 
@@ -945,7 +949,6 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Register module installer tools
         self.tool_registry.register(install_module)
         self.tool_registry.register(uninstall_module)
-        set_installer_deps(self.module_loader, self.module_registry, self.credential_store)
 
         # NOTE: delegate_to_worker removed - worker mesh disabled
 
@@ -955,24 +958,28 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.module_registry = ModuleRegistry(
             db_path=os.getenv("MODULE_REGISTRY_DB", "data/module_registry.db")
         )
-        self.credential_store = CredentialStore(
-            db_path=os.getenv("MODULE_CREDENTIALS_DB", "data/module_credentials.db")
-        )
+        # Credentials now managed by dashboard service (unified store)
+        # Keep reference for backward compat with admin_api fallback
+        self.credential_store = None
 
-        # Wire module infrastructure into manager tools
+        # Wire module infrastructure into manager and installer tools
         set_module_loader(self.module_loader)
         set_module_registry(self.module_registry)
-        set_credential_store(self.credential_store)
+        set_credential_store(None)
+        set_installer_deps(self.module_loader, self.module_registry, None)
 
         try:
             loaded = self.module_loader.load_all_modules()
             loaded_count = sum(1 for h in loaded if h.is_loaded)
+            failed_count = sum(1 for h in loaded if not h.is_loaded)
             if loaded_count > 0:
                 logger.info(f"Dynamic modules loaded: {loaded_count}")
-                # Record installed modules in persistent registry
                 for h in loaded:
                     if h.is_loaded:
                         self.module_registry.install(h.manifest)
+            # Update module status gauge
+            if self.observability_enabled and self.module_metrics:
+                update_module_counts(loaded=loaded_count, failed=failed_count, disabled=0)
         except Exception as e:
             logger.warning(f"Module loader initialization failed: {e}")
 
@@ -1564,10 +1571,16 @@ def serve(config: Optional[OrchestratorConfig] = None):
     server.start()
     logger.info(f"Orchestrator server started on {config.host}:{config.port}")
 
-    # Start admin API for dynamic routing config (daemon thread)
+    # Start admin API for dynamic routing config + module management (daemon thread)
     from .admin_api import start_admin_server
     admin_port = int(os.getenv("ADMIN_API_PORT", "8003"))
-    start_admin_server(orchestrator_service.config_manager, port=admin_port)
+    start_admin_server(
+        config_manager=orchestrator_service.config_manager,
+        port=admin_port,
+        module_loader=orchestrator_service.module_loader,
+        module_registry=orchestrator_service.module_registry,
+        credential_store=orchestrator_service.credential_store,
+    )
 
     try:
         server.wait_for_termination()
