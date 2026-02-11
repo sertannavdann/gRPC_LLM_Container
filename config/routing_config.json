@@ -73,5 +73,37 @@
     "self_consistency_threshold": 0.6,
     "delegation_latency_threshold_ms": 5000,
     "max_sub_tasks": 5
+  },
+  "providers": {
+    "local": {
+      "models": [
+        "qwen2.5-3b-instruct-q5_k_m",
+        "Qwen2.5-14B-Instruct-Q4_K",
+        "Mistral-Small-24B-Instruct-2501.Q8_0",
+        "qwen2.5-0.5b-instruct-q5_k_m"
+      ],
+      "default": "qwen2.5-3b-instruct-q5_k_m"
+    },
+    "perplexity": {
+      "models": ["sonar-pro", "sonar", "sonar-deep-research"],
+      "default": "sonar-pro"
+    },
+    "openai": {
+      "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+      "default": "gpt-4o-mini"
+    },
+    "anthropic": {
+      "models": ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"],
+      "default": "claude-3-5-sonnet-20241022"
+    }
+  },
+  "lidm_tier_models": {
+    "heavy": [
+      "Qwen2.5-14B-Instruct-Q4_K.gguf",
+      "Mistral-Small-24B-Instruct-2501.Q8_0.gguf"
+    ],
+    "standard": [
+      "qwen2.5-0.5b-instruct-q5_k_m.gguf"
+    ]
   }
 }
