@@ -103,38 +103,14 @@ export default function SettingsPage() {
     }
   };
 
-  const waitForOrchestrator = async (maxAttempts = 30): Promise<boolean> => {
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: 'ping', threadId: 'health-check' }),
-        });
-        if (res.ok) return true;
-      } catch { /* keep waiting */ }
-      await new Promise(r => setTimeout(r, 1000));
-    }
-    return false;
-  };
-
-  const restartOrchestrator = async () => {
+  const reloadOrchestrator = async (): Promise<boolean> => {
     setRestartStatus('restarting');
     try {
-      const res = await fetch('/api/orchestrator', { method: 'POST' });
+      const res = await fetch('/api/settings/reload', { method: 'POST' });
       const data = await res.json();
-      if (data.manualRequired) {
-        setRestartStatus('error');
-        setError('Auto-restart not available. Run: docker compose restart orchestrator');
-        return false;
-      }
-      if (!res.ok) throw new Error(data.error || 'Failed to restart');
-      setRestartStatus('waiting');
-      await new Promise(r => setTimeout(r, 2000));
-      const ready = await waitForOrchestrator();
-      setRestartStatus(ready ? 'ready' : 'error');
-      if (!ready) setError('Orchestrator did not respond. Check logs.');
-      return ready;
+      if (!res.ok) throw new Error(data.error || 'Reload failed');
+      setRestartStatus('ready');
+      return true;
     } catch (err: any) {
       setRestartStatus('error');
       setError(err.message);
@@ -169,9 +145,9 @@ export default function SettingsPage() {
       setShowApiKeys(false);
       setSaving(false);
 
-      const restarted = await restartOrchestrator();
-      if (restarted) {
-        setSuccess('Settings applied! Orchestrator restarted.');
+      const reloaded = await reloadOrchestrator();
+      if (reloaded) {
+        setSuccess('Settings applied! Config reloaded.');
         await loadSettings();
       }
     } catch (err: any) {
@@ -452,9 +428,9 @@ export default function SettingsPage() {
           {isBusy && <RefreshCw className="h-4 w-4 animate-spin" />}
           {restartStatus === 'ready' && <Check className="h-4 w-4" />}
           {restartStatus === 'error' && <AlertCircle className="h-4 w-4" />}
-          {restartStatus === 'restarting' && 'Restarting orchestrator...'}
-          {restartStatus === 'waiting' && 'Waiting for orchestrator...'}
-          {restartStatus === 'ready' && 'Orchestrator is ready!'}
+          {restartStatus === 'restarting' && 'Reloading config...'}
+          {restartStatus === 'waiting' && 'Applying changes...'}
+          {restartStatus === 'ready' && 'Config reloaded!'}
           {restartStatus === 'error' && (error || 'Restart failed')}
         </div>
       )}

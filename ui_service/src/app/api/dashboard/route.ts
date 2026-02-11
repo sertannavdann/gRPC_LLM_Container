@@ -12,42 +12,13 @@ const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard
 // ---------- Real finance data fetcher ----------
 async function fetchRealFinance(): Promise<any> {
   try {
-    const [summaryRes, txnRes] = await Promise.all([
-      fetch(`${DASHBOARD_SERVICE}/bank/summary?group_by=category`, { next: { revalidate: 60 } }),
-      fetch(`${DASHBOARD_SERVICE}/bank/transactions?per_page=20&sort=timestamp&sort_dir=desc`, { next: { revalidate: 60 } }),
-    ]);
-
-    if (!summaryRes.ok || !txnRes.ok) throw new Error('Bank API unavailable');
-
-    const summary = await summaryRes.json();
-    const txnData = await txnRes.json();
-
-    const totalExpenses = summary.groups
-      .filter((g: any) => g.debits > 0)
-      .reduce((s: number, g: any) => s + g.debits, 0);
-    const totalIncome = summary.groups.reduce((s: number, g: any) => s + g.credits, 0);
-
-    // Map transactions to canonical FinancialTransaction schema
-    const transactions = txnData.transactions.map((t: any) => ({
-      id: t.id || `bank:${t.timestamp}:${t.merchant}`,
-      timestamp: t.timestamp,
-      amount: t.metadata?.is_debit === false ? t.amount : -t.amount,
-      currency: 'CAD',
-      category: t.metadata?.spending_category || t.category || 'Other',
-      merchant: t.merchant || 'Unknown',
-      account_id: t.metadata?.account_type || 'unknown',
-      pending: false,
-      platform: 'cibc',
-    }));
-
-    return {
-      transactions,
-      recent_count: txnData.total || transactions.length,
-      total_expenses_period: totalExpenses,
-      total_income_period: totalIncome,
-      net_cashflow: totalIncome - totalExpenses,
-      platforms: ['cibc'],
-    };
+    // Use canonical format — dashboard does sign-flipping and category extraction
+    const res = await fetch(
+      `${DASHBOARD_SERVICE}/bank/transactions?format=canonical&per_page=20`,
+      { next: { revalidate: 60 } },
+    );
+    if (!res.ok) throw new Error('Bank API unavailable');
+    return await res.json();
   } catch (err) {
     console.warn('[Dashboard API] Bank fetch failed, using fallback:', (err as Error).message);
     return null;
@@ -272,78 +243,28 @@ export async function GET(request: NextRequest) {
       fetchRealNavigation().then(d => d || mockNavigationData),
     ]);
 
-    // Ensure calendar data has next_3 / imminent populated
-    if (calendarData.events) {
-      calendarData.next_3 = calendarData.next_3 || calendarData.events.slice(0, 3);
-      calendarData.imminent = calendarData.imminent || calendarData.events.filter((e: any) => e.urgency === 'HIGH');
+    // Defensive fallback: dashboard aggregator populates these server-side,
+    // but mock data may not have them, so fill in if missing.
+    if (calendarData.events && !calendarData.next_3) {
+      calendarData.next_3 = calendarData.events.slice(0, 3);
+    }
+    if (calendarData.events && !calendarData.imminent) {
+      calendarData.imminent = calendarData.events.filter((e: any) => e.urgency === 'HIGH');
     }
     if (navigationData.routes && !navigationData.primary_route) {
       navigationData.primary_route = navigationData.routes[0] || null;
     }
 
-    // Build relevance classification
-    const relevance = {
-      high: [] as any[],
-      medium: [] as any[],
-      low: [] as any[],
-    };
-
-    // Calendar high priority (imminent events)
-    (calendarData.imminent || []).forEach((event: any) => {
-      relevance.high.push({
-        type: 'calendar',
-        subtype: 'event',
-        title: event.title,
-        alert: 'Starting soon',
-        priority: 100,
-        data: event,
-      });
-    });
-
-    // Health alerts
-    if (healthData.hrv && healthData.hrv < 40) {
-      relevance.high.push({
-        type: 'health',
-        subtype: 'hrv_alert',
-        title: 'Low HRV',
-        alert: `HRV is ${healthData.hrv}ms`,
-        priority: 75,
-      });
-    }
-
-    // Traffic alerts
-    if (navigationData.primary_route?.traffic_level === 'heavy') {
-      relevance.high.push({
-        type: 'navigation',
-        subtype: 'traffic',
-        title: 'Heavy Traffic',
-        alert: `${navigationData.primary_route.duration_minutes} min to work`,
-        priority: 65,
-      });
-    }
-
-    // Weather alerts
-    if (weatherData.current) {
-      const temp = weatherData.current.temperature_celsius;
-      if (temp < -15 || temp > 35) {
-        relevance.high.push({
-          type: 'weather',
-          subtype: 'extreme_temp',
-          title: `Extreme Temperature: ${Math.round(temp)}°C`,
-          alert: temp < -15 ? 'Extreme cold warning' : 'Extreme heat warning',
-          priority: 70,
-        });
+    // Fetch relevance classification from dashboard service (single source of truth)
+    let relevance = { high: [] as any[], medium: [] as any[], low: [] as any[] };
+    try {
+      const relRes = await fetch(`${DASHBOARD_SERVICE}/context/relevance?user_id=demo_user`, { next: { revalidate: 60 } });
+      if (relRes.ok) {
+        const relData = await relRes.json();
+        relevance = { high: relData.high || [], medium: relData.medium || [], low: relData.low || [] };
       }
-    }
-
-    // Medium priority items
-    if (healthData.steps_progress) {
-      relevance.medium.push({
-        type: 'health',
-        subtype: 'steps',
-        title: `Steps: ${Math.round(healthData.steps_progress * 100)}% of goal`,
-        priority: 35,
-      });
+    } catch (err) {
+      console.warn('[Dashboard API] Relevance fetch failed, using empty:', (err as Error).message);
     }
 
     // If specific category requested

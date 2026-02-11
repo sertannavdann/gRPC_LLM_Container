@@ -27,41 +27,26 @@ interface EnvConfig {
   CLASH_ROYALE_PLAYER_TAG?: string;
 }
 
-// LIDM: Available models per tier (must exist in llm_service/models/)
-const LIDM_TIER_MODELS: Record<string, string[]> = {
-  heavy: [
-    'Qwen2.5-14B-Instruct-Q4_K.gguf',
-    'Mistral-Small-24B-Instruct-2501.Q8_0.gguf',
-  ],
-  standard: [
-    'qwen2.5-0.5b-instruct-q5_k_m.gguf',
-  ],
-};
+// Admin API for provider/model config (single source of truth)
+const ADMIN_API = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
 
-// Provider model defaults
-const PROVIDER_DEFAULTS: Record<string, { models: string[]; default: string }> = {
-  local: {
-    models: [
-      'qwen2.5-3b-instruct-q5_k_m',
-      'Qwen2.5-14B-Instruct-Q4_K',
-      'Mistral-Small-24B-Instruct-2501.Q8_0',
-      'qwen2.5-0.5b-instruct-q5_k_m',
-    ],
-    default: 'qwen2.5-3b-instruct-q5_k_m',
-  },
-  perplexity: {
-    models: ['sonar-pro', 'sonar', 'sonar-deep-research'],
-    default: 'sonar-pro',
-  },
-  openai: {
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-    default: 'gpt-4o-mini',
-  },
-  anthropic: {
-    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-    default: 'claude-3-5-sonnet-20241022',
-  },
-};
+async function fetchProviderConfig(): Promise<{
+  providers: Record<string, { models: string[]; default: string }>;
+  lidmTierModels: Record<string, string[]>;
+}> {
+  try {
+    const res = await fetch(`${ADMIN_API}/admin/providers`, { next: { revalidate: 30 } });
+    if (!res.ok) throw new Error(`Admin API returned ${res.status}`);
+    const data = await res.json();
+    return {
+      providers: data.providers || {},
+      lidmTierModels: data.lidm_tier_models || {},
+    };
+  } catch (err) {
+    console.warn('[Settings API] Admin API unreachable, using empty defaults:', (err as Error).message);
+    return { providers: { local: { models: [], default: '' } }, lidmTierModels: {} };
+  }
+}
 
 function parseEnvFile(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -102,14 +87,17 @@ function serializeEnvFile(config: Record<string, string>): string {
 export async function GET() {
   try {
     let envConfig: Record<string, string> = {};
-    
+
     if (existsSync(ENV_PATH)) {
       const content = readFileSync(ENV_PATH, 'utf-8');
       envConfig = parseEnvFile(content);
     }
-    
+
+    // Fetch provider/model config from admin API (single source of truth)
+    const { providers: allProviders, lidmTierModels } = await fetchProviderConfig();
+
     const currentProvider = envConfig.LLM_PROVIDER || 'local';
-    
+
     // Filter providers: always include 'local', only include cloud providers with API keys
     const providerKeyMap: Record<string, string> = {
       perplexity: 'PERPLEXITY_API_KEY',
@@ -118,7 +106,7 @@ export async function GET() {
     };
 
     const availableProviders: Record<string, { models: string[]; default: string }> = {};
-    for (const [name, info] of Object.entries(PROVIDER_DEFAULTS)) {
+    for (const [name, info] of Object.entries(allProviders)) {
       if (name === 'local' || envConfig[providerKeyMap[name]]) {
         availableProviders[name] = info;
       }
@@ -127,8 +115,8 @@ export async function GET() {
     // If current provider is not in available list, fall back to 'local'
     const effectiveProvider = availableProviders[currentProvider] ? currentProvider : 'local';
     const effectiveModel = effectiveProvider === currentProvider
-      ? envConfig.LLM_PROVIDER_MODEL || PROVIDER_DEFAULTS[currentProvider]?.default || ''
-      : PROVIDER_DEFAULTS.local.default;
+      ? envConfig.LLM_PROVIDER_MODEL || allProviders[currentProvider]?.default || ''
+      : allProviders.local?.default || '';
 
     return NextResponse.json({
       config: {
@@ -143,7 +131,7 @@ export async function GET() {
         lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K.gguf',
         lidmStandardModel: envConfig.LIDM_STANDARD_MODEL || 'qwen2.5-0.5b-instruct-q5_k_m.gguf',
       },
-      lidmTierModels: LIDM_TIER_MODELS,
+      lidmTierModels,
       adapters: {
         openweather: {
           hasApiKey: !!envConfig.OPENWEATHER_API_KEY,
