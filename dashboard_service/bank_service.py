@@ -65,6 +65,49 @@ class BankService:
         await self._ensure_loaded()
         return len(self._transactions)
 
+    def _to_canonical(self, txn: Dict[str, Any]) -> Dict[str, Any]:
+        """Map a raw transaction to the canonical shape expected by the UI."""
+        is_debit = txn.get("is_debit", True)
+        return {
+            "id": txn.get("id", f"bank:{txn.get('timestamp', '')}:{txn.get('merchant', '')}"),
+            "timestamp": txn.get("timestamp", ""),
+            "amount": -txn["amount"] if is_debit else txn["amount"],
+            "currency": "CAD",
+            "category": txn.get("spending_category", txn.get("category", "Other")),
+            "merchant": txn.get("merchant") or "Unknown",
+            "account_id": txn.get("account_type", "unknown"),
+            "pending": False,
+            "platform": "cibc",
+        }
+
+    async def get_canonical_transactions(
+        self,
+        per_page: int = 20,
+        sort_dir: str = "desc",
+    ) -> Dict[str, Any]:
+        """Return transactions in canonical UI shape with sign-flipped amounts."""
+        await self._ensure_loaded()
+
+        sorted_txns = sorted(
+            self._transactions,
+            key=lambda t: t.get("timestamp", ""),
+            reverse=(sort_dir == "desc"),
+        )
+
+        canonical = [self._to_canonical(t) for t in sorted_txns[:per_page]]
+
+        total_expenses = sum(abs(t["amount"]) for t in canonical if t["amount"] < 0)
+        total_income = sum(t["amount"] for t in canonical if t["amount"] > 0)
+
+        return {
+            "transactions": canonical,
+            "recent_count": len(self._transactions),
+            "total_expenses_period": round(total_expenses, 2),
+            "total_income_period": round(total_income, 2),
+            "net_cashflow": round(total_income - total_expenses, 2),
+            "platforms": ["cibc"],
+        }
+
     async def get_transactions(
         self,
         category: Optional[str] = None,
