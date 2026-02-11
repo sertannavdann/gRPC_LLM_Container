@@ -1,8 +1,8 @@
 # User Testing Guide - gRPC LLM Agent Framework
 
 > **Purpose**: This document is a comprehensive guide for understanding, testing, and operating the gRPC LLM Agent Framework. It includes architecture details, port mappings, functionality overview, and testing procedures.
-> **Date**: February 9, 2026
-> **Version**: Cohesion Branch (LIDM + Hot-Reload)
+> **Date**: February 11, 2026
+> **Version**: Cohesion Branch (LIDM + Hot-Reload + NEXUS Module System)
 > **Tester Name**: _________________________
 
 ---
@@ -32,6 +32,10 @@
    - [6.14 Context Compaction](#614-context-compaction)
    - [6.15 Finance Widget Filtering (Dashboard)](#615-finance-widget-filtering-dashboard)
    - [6.16 Credential Hot-Reload](#616-credential-hot-reload)
+   - [6.17 Pipeline UI (React Flow)](#617-pipeline-ui-react-flow)
+   - [6.18 NEXUS Module System](#618-nexus-module-system)
+   - [6.19 Admin API Module Management](#619-admin-api-module-management)
+   - [6.20 Showroom Demo](#620-showroom-demo)
 7. [Observability & Monitoring](#7-observability--monitoring)
 8. [Error Handling Tests](#8-error-handling-tests)
 9. [Refactoring Changelog](#9-refactoring-changelog)
@@ -225,6 +229,7 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 | **UI Service** | `ui_service` | 5001 | Next.js web interface (Chat, Dashboard, Finance, Integrations, Settings) |
 | **Dashboard** | `dashboard_service` | 8001, 8002 | FastAPI context aggregation + Finance UI |
 | **MCP Bridge** | `bridge_service` | 8100 | Model Context Protocol server |
+| **Admin API** | `orchestrator` | 8003 | NEXUS module management + routing config |
 
 ### Observability Stack
 
@@ -234,6 +239,7 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 | **Prometheus** | `prometheus` | 9090 | Metrics storage & queries |
 | **Grafana** | `grafana` | 3001 | Visualization dashboards |
 | **Tempo** | `tempo` | 3200, 4319 | Distributed tracing backend |
+| **cAdvisor** | `cadvisor` | 8080 | Container resource monitoring |
 
 ### Quick Access URLs
 
@@ -245,6 +251,7 @@ The gRPC LLM Agent Framework is a distributed microservices architecture designe
 | Finance (embedded) | http://localhost:5001/finance | — |
 | Integrations | http://localhost:5001/integrations | — |
 | Settings | http://localhost:5001/settings | — |
+| Pipeline (React Flow) | http://localhost:5001/pipeline | — |
 | Monitoring (Grafana embed) | http://localhost:5001/monitoring | — |
 | Dashboard API | http://localhost:8001/docs | — |
 | Credential Hot-Reload API | http://localhost:8001/admin/credentials | POST |
@@ -1098,6 +1105,155 @@ curl -X POST http://localhost:8001/admin/credentials?user_id=default \
 
 ---
 
+### 6.17 Pipeline UI (React Flow)
+
+**URL**: http://localhost:5001/pipeline
+
+> Real-time visualization of the NEXUS decision pipeline using React Flow.
+> SSE-driven live state from `dashboard_service/stream/pipeline-state`.
+
+#### Test 17.1: Page Load
+| Field | Value |
+|-------|-------|
+| **Pipeline page loads?** | Yes / No |
+| **React Flow canvas renders?** | Yes / No |
+| **4 pipeline stages visible (Intent, Routing, Tools, Synthesis)?** | Yes / No |
+| **Animated orange edges between stages?** | Yes / No |
+| **Navbar shows "Pipeline" with Zap icon?** | Yes / No |
+
+#### Test 17.2: Live SSE Connection
+| Field | Value |
+|-------|-------|
+| **"Live" indicator (green Wifi icon) visible?** | Yes / No |
+| **Service nodes appear above pipeline?** | Yes / No |
+| **Service health color-coded (green/red/grey)?** | Yes / No |
+| **Latency displayed on service nodes?** | Yes / No |
+| **Updates every ~2 seconds?** | Yes / No |
+
+#### Test 17.3: Module Nodes
+| Field | Value |
+|-------|-------|
+| **Module nodes appear below pipeline?** | Yes / No |
+| **Category badges shown on each module?** | Yes / No |
+| **Enable/disable toggle buttons work?** | Yes / No |
+| **Module state updates after toggle?** | Yes / No |
+
+#### Test 17.4: Controls
+| Field | Value |
+|-------|-------|
+| **MiniMap visible in corner?** | Yes / No |
+| **Zoom controls work?** | Yes / No |
+| **Pan/drag canvas works?** | Yes / No |
+| **Refresh button fetches latest modules?** | Yes / No |
+
+---
+
+### 6.18 NEXUS Module System
+
+> NEXUS allows dynamic module loading — adapters placed in `modules/{category}/{platform}/` are auto-discovered and loaded at runtime.
+
+#### Test 18.1: Module Discovery
+| Field | Value |
+|-------|-------|
+| **`curl http://localhost:8001/modules`** | |
+| **Returns module list with `total` count?** | Yes / No |
+| **`test/hello` module present?** | Yes / No |
+| **`showroom/metrics_demo` module present?** | Yes / No |
+
+#### Test 18.2: Module Lifecycle
+| Field | Value |
+|-------|-------|
+| **Module auto-loaded on service start?** | Yes / No |
+| **Check orchestrator logs for "Dynamic modules loaded"** | Yes / No |
+| **Adapter registry includes dynamic modules?** | Yes / No |
+
+---
+
+### 6.19 Admin API Module Management
+
+**URL**: http://localhost:8003
+
+#### Test 19.1: Module CRUD
+```bash
+# List all modules
+curl http://localhost:8003/admin/modules | jq
+
+# Get specific module
+curl http://localhost:8003/admin/modules/test/hello | jq
+
+# Enable/disable cycle
+curl -X POST http://localhost:8003/admin/modules/test/hello/disable
+curl -X POST http://localhost:8003/admin/modules/test/hello/enable
+
+# Reload module
+curl -X POST http://localhost:8003/admin/modules/test/hello/reload
+```
+| Field | Value |
+|-------|-------|
+| **List returns enriched module data?** | Yes / No |
+| **Get returns module detail with `module_id`?** | Yes / No |
+| **Disable/enable cycle succeeds?** | Yes / No |
+| **Reload returns `success: true`?** | Yes / No |
+
+#### Test 19.2: Credential Management
+```bash
+# Store credentials
+curl -X POST http://localhost:8003/admin/modules/test/hello/credentials \
+  -H 'Content-Type: application/json' \
+  -d '{"credentials": {"api_key": "test-key-123"}}'
+
+# Check credential status
+curl http://localhost:8003/admin/modules/test/hello | jq '.has_credentials'
+
+# Delete credentials
+curl -X DELETE http://localhost:8003/admin/modules/test/hello/credentials
+```
+| Field | Value |
+|-------|-------|
+| **Store credentials returns success?** | Yes / No |
+| **`has_credentials` shows `true` after store?** | Yes / No |
+| **Delete credentials returns success?** | Yes / No |
+
+#### Test 19.3: System Info
+```bash
+curl http://localhost:8003/admin/system-info | jq
+```
+| Field | Value |
+|-------|-------|
+| **Returns routing categories?** | Yes / No |
+| **Returns tier configuration?** | Yes / No |
+| **Shows module counts?** | Yes / No |
+
+---
+
+### 6.20 Showroom Demo
+
+> The showroom test exercises the full NEXUS pipeline end-to-end.
+
+#### Test 20.1: Run Showroom
+```bash
+make showroom
+```
+| Field | Value |
+|-------|-------|
+| **All dashboard checks pass?** | Yes / No |
+| **All admin API checks pass?** | Yes / No |
+| **Module operations pass?** | Yes / No |
+| **Adapter data flow checks pass?** | Yes / No |
+| **Total passed / total tests** | ___ / ___ |
+
+#### Test 20.2: Full Demo
+```bash
+make nexus-demo
+```
+| Field | Value |
+|-------|-------|
+| **Tests run and pass?** | Yes / No |
+| **Pipeline UI opens in browser?** | Yes / No |
+| **NEXUS Grafana dashboard opens?** | Yes / No |
+
+---
+
 ## 7. Observability & Monitoring
 
 ### 7.1 Grafana Setup & Dashboards
@@ -1111,6 +1267,7 @@ Grafana is **auto-provisioned** — when the container starts, four JSON dashboa
 | Dashboard | UID | What it shows |
 |-----------|-----|---------------|
 | **gRPC LLM Overview** | `grpc-llm-overview` | Request rate, latency, error rate across all services |
+| **NEXUS Module System** | `nexus-modules` | Module status, builds, validations, container resources, LIDM routing |
 | **Service Health** | `service-health` | Per-container CPU / memory, up/down status |
 | **Provider Comparison** | `provider-comparison` | Latency & token usage per LLM provider |
 | **Tool Execution** | `tool-execution` | Tool call counts, durations, circuit breaker state |
@@ -1148,8 +1305,8 @@ Prometheus is configured in `config/prometheus.yaml` with these jobs:
 |-----|--------|-----------------|
 | `otel-collector` | `otel-collector:8889` | Collected OTLP metrics (namespace `grpc_llm_`) |
 | `orchestrator` | `orchestrator:8888` | Request latency, tool calls, guard trips |
-| `llm_service` | `llm_service:8888` | Token usage, provider latency |
 | `dashboard_service` | `dashboard_service:8001` | Bank API hits, cache stats |
+| `cadvisor` | `cadvisor:8080` | Container CPU, memory, network metrics |
 | `prometheus` | `localhost:9090` | Self-monitoring |
 
 #### Useful PromQL queries
@@ -1330,6 +1487,10 @@ Rate each feature's importance (1=Low, 5=Critical):
 | Settings / provider mgmt | Yes / No | | Yes / No |
 | LIDM multi-model routing | Yes / No | | Yes / No |
 | Context compaction | Yes / No | | Yes / No |
+| Pipeline UI (React Flow) | Yes / No | | Yes / No |
+| NEXUS module system | Yes / No | | Yes / No |
+| Admin API module mgmt | Yes / No | | Yes / No |
+| Showroom demo | Yes / No | | Yes / No |
 | Monitoring | Yes / No | | Yes / No |
 
 ### 10.2 Critical Issues Found
@@ -1431,9 +1592,15 @@ make down
 # Run tests
 make test-integration
 
+# NEXUS Showroom
+make showroom                 # Run integration tests
+make nexus-demo               # Full demo (rebuild + test + open dashboards)
+make open-pipeline            # Open Pipeline UI
+
 # Health check via terminal
 curl http://localhost:8001/health
 curl http://localhost:8100/health
+curl http://localhost:8003/admin/health
 ```
 
 ---

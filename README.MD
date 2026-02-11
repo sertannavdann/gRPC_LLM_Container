@@ -25,11 +25,19 @@ A self-evolving local LLM agent framework featuring intelligent tool orchestrati
 - **gRPC Service Mesh**: Type-safe communication across 7 microservices
 - **Circuit Breakers**: Fault-tolerant tool execution
 
+### 🔌 NEXUS Module System
+- **Dynamic Module Loading**: Drop adapters in `modules/{category}/{platform}/` — auto-discovered at runtime
+- **Admin API**: REST API on port 8003 for module CRUD, credentials, routing config hot-reload
+- **Pipeline UI**: React Flow visualization with SSE-driven live state
+- **Showroom Demo**: `make showroom` exercises the full pipeline and reports results
+- **Encrypted Credentials**: Fernet-encrypted credential store per module
+- **Grafana Dashboard**: Module status, builds, validations, container resources
+
 ### 🛠️ Built-in Tools
 - **web_search**: Real-time web search via Serper API
 - **math_solver**: Mathematical expression evaluation
 - **load_web_page**: Web content extraction and analysis
-- **execute_code**: Sandboxed Python code execution (NEW)
+- **execute_code**: Sandboxed Python code execution
 
 ---
 
@@ -81,6 +89,9 @@ graph TB
 | **Registry Service** | 50055 | Worker discovery and registration |
 | **Worker Service** | 50056 | Specialized task execution |
 | **Sandbox Service** | 50057 | Secure Python code execution |
+| **Dashboard Service** | 8001 | Context aggregation + SSE pipeline stream |
+| **Admin API** | 8003 | Module management + routing config |
+| **cAdvisor** | 8080 | Container resource monitoring |
 
 ---
 
@@ -201,9 +212,21 @@ gRPC_llm/
 ├── chroma_service/         # Vector database
 ├── ui_service/             # Next.js frontend
 ├── shared/                 # Shared code
+│   ├── adapters/           # Adapter pattern (base, registry, finance, weather, gaming)
+│   ├── modules/            # NEXUS module system (loader, registry, credentials)
+│   ├── schemas/            # Canonical data schemas
+│   ├── observability/      # Metrics, logging, OTel setup
 │   ├── clients/            # gRPC clients
 │   ├── generated/          # Protobuf code
 │   └── proto/              # Protobuf definitions
+├── modules/                # Dynamic modules directory
+│   ├── test/hello/         # Smoke test module
+│   └── showroom/metrics_demo/  # Showroom demo module
+├── dashboard_service/      # FastAPI context aggregation + SSE + bank data
+├── config/                 # Prometheus, Grafana, routing config
+│   ├── grafana/provisioning/dashboards/json/  # Grafana dashboard JSONs
+│   ├── prometheus/rules/   # Alert rules
+│   └── routing_config.json # Dynamic routing configuration
 └── tests/                  # Test suite
     ├── unit/               # Unit tests (104 tests)
     ├── integration/        # E2E tests
@@ -301,11 +324,18 @@ grpc_health_probe -addr=localhost:50057  # Sandbox
 - ✅ Crash recovery with checkpointing
 - ✅ 104 unit tests passing
 
+### v3.0 - NEXUS Module System
+- Dynamic module loading with manifest-driven discovery
+- Admin API (port 8003) for module CRUD, credentials, routing config
+- React Flow pipeline visualization with SSE live state
+- cAdvisor container monitoring + Grafana dashboards
+- Showroom integration tests (`make showroom`)
+- Encrypted credential store per module
+
 ### Planned Features
-- [ ] Streaming responses
+- [ ] Module auto-builder via LLM (self-evolution loop)
+- [ ] Approval gates for module installation
 - [ ] Multi-modal support (images)
-- [ ] OpenTelemetry observability
-- [ ] RAG integration with Chroma
 - [ ] Worker auto-scaling
 
 ---

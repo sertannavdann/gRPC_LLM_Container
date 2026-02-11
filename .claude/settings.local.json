@@ -26,7 +26,10 @@
       "Bash(git log:*)",
       "Bash(python -c:*)",
       "Bash(curl:*)",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(MODULES_DIR=modules python:*)",
+      "WebSearch",
+      "WebFetch(domain:deepwiki.com)"
     ]
   }
 }

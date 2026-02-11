@@ -22,7 +22,9 @@ Plan: Self-Evolving Modular Service Architecture
  - Core modules (orchestrator, LLM interface, sandbox, observability) remain stable
  - Peripheral modules (adapters, tools) are independently pluggable with zero core changes
  - The LLM orchestrator can BUILD new modules itself - user says "build me a ClashRoyale stats
- tracker" and the system generates code, tests it in sandbox, deploys it, and makes it available
+ tracker" and the system generates code, tests it in sandbox, deploys it, and makes it available.
+ - Orchestration layer LIDM should offload easy tasks to the LLM Standard and keep coding tasks with online provider. 
+ - Provider switch should be modular,
 
  The existing architecture is ~80% ready: @register_adapter decorator, BaseAdapter[T] protocol,
  LocalToolRegistry with auto-schema, LangGraph state machine, sandbox service. The gaps are: no
@@ -381,3 +383,240 @@ Plan: Self-Evolving Modular Service Architecture
  ├──────┼────────────────────────────────┼────────────────────────────────┤
  │ 5    │ product_manager.md             │ integration_expert.md          │
  └──────┴────────────────────────────────┴────────────────────────────────┘
+
+ Part 1: Backend Instrumentation (orchestrator_observability_and_control_plan.md)
+Decision Pipeline Metrics:
+
+Query classification tracking (category, tier, complexity)
+
+Tier routing decisions (standard → heavy → ultra)
+
+Model selection per category (provider, model, tier)
+
+Tool execution timing and success rates
+
+LIDM delegation events (fallback/escalation)
+
+Inference duration histograms with p50/p95/p99
+
+Token generation rates
+
+Context window utilization
+
+Resource Visibility:
+
+Memory usage per component (RSS, VMS, shared)
+
+Model memory allocation per tier
+
+Connection pool status
+
+Adapter health monitoring (local vs external)
+
+Configuration System:
+
+Pydantic schemas for type-safe routing config
+
+Hot-reload support (no service restarts)
+
+Per-category model/provider assignment
+
+Performance constraints (max latency, max memory)
+
+Tier-level configuration (concurrent requests, priorities)
+
+Part 2: Observability Stack (grafana_dashboards_and_prometheus_config.md)
+Grafana Dashboards:
+
+Query Classification pie chart showing category distribution
+
+Tier Routing bar gauge for category → tier mapping
+
+Model Selection Heatmap showing model × category patterns
+
+Inference Latency time series (p50, p95, p99 by model)
+
+Token Generation Rate performance tracking
+
+Tool Execution Breakdown with success rates
+
+LIDM Routing Flow Sankey diagram for tier transitions
+
+Memory Usage time series by component
+
+Adapter Health Matrix status grid
+
+Context Window Utilization approaching limit warnings
+
+Prometheus Alerts:
+
+High classification latency (>100ms)
+
+High inference latency (>5s for non-ultra)
+
+Excessive LIDM delegation (routing issues)
+
+Tool execution failures (>10% error rate)
+
+Memory pressure warnings
+
+Adapter health failures
+
+Low token generation rates
+
+🎯 Key Design Decisions
+1. SOLID Architecture
+SRP: metrics.py owns all metric definitions
+
+DIP: Orchestrator depends on RoutingConfig abstraction, not .env
+
+Surgical changes to existing code (instrumentation only, no logic rewrites)
+
+2. Hot-Reload Configuration
+text
+UI Settings Page → POST /admin/routing-config → Dashboard Service
+                                                        ↓
+                                         Saves to routing_config.json
+                                                        ↓
+                                         POST to Orchestrator:8002
+                                                        ↓
+                                         ConfigManager reloads
+                                                        ↓
+                                         LLMClientPool reconfigures
+                                                        ↓
+                                         ✅ Live without restart
+3. React Flow Pipeline UI
+typescript
+ClassifierNode → TierRouterNode → ModelSelectorNode (per category)
+                                          ↓
+                                   ToolPickerNode
+                                          ↓
+                                   Live metrics badges
+Each node shows:
+
+Configuration controls (dropdowns, sliders)
+
+Live metrics (latency, throughput, memory)
+
+Performance constraints (max latency/memory)
+
+Enable/disable toggles
+
+🚀 Implementation Timeline
+Phase 1: Metrics Instrumentation (3-4 hours)
+Create metrics.py with all metric definitions
+
+Add metrics_server.py for HTTP endpoint on port 9100
+
+Instrument orchestrator_service.py with timing decorators
+
+Add memory reporter background thread
+
+Phase 2: Configuration System (2-3 hours)
+Create Pydantic RoutingConfig schema
+
+Build ConfigManager with hot-reload
+
+Add admin endpoints to orchestrator (port 8002)
+
+Implement config persistence and validation
+
+Phase 3: Prometheus & Grafana (2-3 hours)
+Update prometheus.yml with orchestrator scrape target
+
+Add alert rules for decision pipeline
+
+Create Grafana dashboard JSON
+
+Set up dashboard provisioning
+
+Phase 4: React Flow UI (4-6 hours)
+Install @xyflow/react (~45kb)
+
+Create /settings/routing page
+
+Build custom node components (Classifier, TierRouter, ModelSelector, ToolPicker)
+
+Integrate live metrics polling (5-second intervals)
+
+Implement save/load functionality
+
+Phase 5: Testing & Tuning (2-3 hours)
+Generate load to populate metrics
+
+Verify dashboard panels render correctly
+
+Test alert triggers
+
+Tune thresholds based on baseline metrics
+
+Total Estimated Time: 13-19 hours
+
+💡 Critical Features Implemented
+1. Granular Category Control
+json
+{
+  "categories": {
+    "chat": { "provider": "local", "model": "qwen-2.5-14b", "tier": "standard" },
+    "code": { "provider": "local", "model": "mistral-small-24b", "tier": "heavy" },
+    "research": { "provider": "openai", "model": "gpt-4o", "tier": "ultra" }
+  }
+}
+2. Performance Constraints
+json
+{
+  "maxLatencyMs": 3000,
+  "maxMemoryMb": 8192,
+  "delegationLatencyThresholdMs": 5000
+}
+3. LIDM Network Visibility
+Tracks every delegation event:
+
+Standard → Heavy: Complexity threshold exceeded
+
+Heavy → Ultra: Latency constraint violated
+
+Local → External: Memory pressure escalation
+
+4. Memory Breakdown
+Process RSS: Orchestrator service memory
+
+Model Memory: Per-model allocation (Qwen 14B, Mistral 24B, Llama 70B)
+
+Shared Memory: mmap'd model files
+
+Context Buffers: Active KV cache size
+
+🎨 HMI Design Philosophy
+Your UI provides categorical control with:
+
+Visual Pipeline: See query flow from input → classifier → tier router → model → tool → output
+
+Live Metrics: Each node shows real-time latency/throughput/memory
+
+Drag-and-Drop Config: Intuitive node-based editing
+
+Immediate Feedback: Save button applies changes instantly
+
+Performance Indicators: Color-coded badges (green/yellow/red) for health
+
+This gives operators a mental model of the system while providing fine-grained control over routing decisions.
+
+📈 What You Can Now Monitor
+Which categories use which models (heatmap)
+
+Tier distribution per category (bar gauge)
+
+Inference latency by tier (time series with percentiles)
+
+LIDM delegation patterns (Sankey diagram)
+
+Memory pressure per tier (gauge with thresholds)
+
+Tool usage and success rates (pie chart + stat panel)
+
+Adapter health (status matrix)
+
+Context window saturation (approaching limit warnings)
+
+Start with Phase 1 (metrics instrumentation) and you'll immediately see data flowing into Prometheus. Then add the Grafana dashboards for visualization, and finally build the React Flow UI for interactive control. The system is designed to be deployed incrementally—each phase adds value independently.
