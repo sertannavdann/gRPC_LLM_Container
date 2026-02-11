@@ -262,10 +262,25 @@ def get_aggregator(user_id: str) -> DashboardAggregator:
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Dashboard Service starting up...")
-    
+
     # Initialize observability
     setup_observability()
-    
+
+    # Load dynamic modules from modules/ directory
+    from pathlib import Path
+    from shared.modules.loader import ModuleLoader
+    modules_dir = Path(os.getenv("MODULES_DIR", "/app/modules"))
+    try:
+        module_loader = ModuleLoader(modules_dir)
+        loaded = module_loader.load_all_modules()
+        loaded_count = sum(1 for h in loaded if h.is_loaded)
+        if loaded_count > 0:
+            logger.info(f"Dynamic modules loaded: {loaded_count}")
+        app.state.module_loader = module_loader
+    except Exception as e:
+        logger.warning(f"Module loader initialization failed: {e}")
+        app.state.module_loader = None
+
     logger.info(f"Registered adapters: {adapter_registry.to_dict()}")
     yield
     logger.info("Dashboard Service shutting down...")
@@ -478,6 +493,26 @@ async def list_adapters():
         categories=registry_data.get("categories", []),
         adapters=adapters,
     )
+
+
+@app.get("/modules", tags=["Modules"])
+async def list_modules(request: Request):
+    """
+    List all dynamic modules with their status and health.
+
+    Returns modules loaded from the modules/ directory, including
+    both active and disabled modules.
+    """
+    loader = getattr(request.app.state, "module_loader", None)
+    if loader is None:
+        return {"modules": [], "total": 0}
+
+    modules = loader.list_modules()
+    return {
+        "modules": modules,
+        "total": len(modules),
+        "loaded": sum(1 for m in modules if m.get("is_loaded")),
+    }
 
 
 @app.get("/relevance/{user_id}", tags=["Context"])

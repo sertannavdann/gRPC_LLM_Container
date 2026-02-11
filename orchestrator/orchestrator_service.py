@@ -69,6 +69,21 @@ from tools.builtin.code_executor import execute_code, set_sandbox_client
 from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
 from tools.builtin.knowledge_search import search_knowledge, store_knowledge
 from tools.builtin.finance_query import query_finance
+from tools.builtin.module_builder import build_module, write_module_code
+from tools.builtin.module_validator import validate_module
+from tools.builtin.module_validator import set_sandbox_client as set_validator_sandbox
+from tools.builtin.module_manager import (
+    list_modules, enable_module, disable_module, store_module_credentials,
+    set_module_loader, set_module_registry, set_credential_store,
+)
+from shared.modules.registry import ModuleRegistry
+from shared.modules.credentials import CredentialStore
+from tools.builtin.module_installer import (
+    install_module, uninstall_module, set_installer_deps,
+)
+
+# Module system for dynamic adapter loading
+from shared.modules.loader import ModuleLoader
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -88,6 +103,7 @@ from shared.providers import (
 )
 
 import os
+from pathlib import Path
 import asyncio
 import threading
 
@@ -912,9 +928,54 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
 
         # Register finance query tool (bank transaction access)
         self.tool_registry.register(query_finance)
-        
+
+        # Register module building tools (NEXUS self-evolution)
+        self.tool_registry.register(build_module)
+        self.tool_registry.register(write_module_code)
+        self.tool_registry.register(validate_module)
+        if self.sandbox_client:
+            set_validator_sandbox(self.sandbox_client)
+
+        # Register module management tools
+        self.tool_registry.register(list_modules)
+        self.tool_registry.register(enable_module)
+        self.tool_registry.register(disable_module)
+        self.tool_registry.register(store_module_credentials)
+
+        # Register module installer tools
+        self.tool_registry.register(install_module)
+        self.tool_registry.register(uninstall_module)
+        set_installer_deps(self.module_loader, self.module_registry, self.credential_store)
+
         # NOTE: delegate_to_worker removed - worker mesh disabled
-        
+
+        # Dynamic module loading from modules/ directory
+        modules_dir = Path(os.getenv("MODULES_DIR", "/app/modules"))
+        self.module_loader = ModuleLoader(modules_dir)
+        self.module_registry = ModuleRegistry(
+            db_path=os.getenv("MODULE_REGISTRY_DB", "data/module_registry.db")
+        )
+        self.credential_store = CredentialStore(
+            db_path=os.getenv("MODULE_CREDENTIALS_DB", "data/module_credentials.db")
+        )
+
+        # Wire module infrastructure into manager tools
+        set_module_loader(self.module_loader)
+        set_module_registry(self.module_registry)
+        set_credential_store(self.credential_store)
+
+        try:
+            loaded = self.module_loader.load_all_modules()
+            loaded_count = sum(1 for h in loaded if h.is_loaded)
+            if loaded_count > 0:
+                logger.info(f"Dynamic modules loaded: {loaded_count}")
+                # Record installed modules in persistent registry
+                for h in loaded:
+                    if h.is_loaded:
+                        self.module_registry.install(h.manifest)
+        except Exception as e:
+            logger.warning(f"Module loader initialization failed: {e}")
+
         logger.info(f"Total tools registered: {len(self.tool_registry.tools)}")
     
         # Initialize Checkpoint Manager

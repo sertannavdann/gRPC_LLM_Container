@@ -120,6 +120,11 @@ class AgentWorkflow:
             # Knowledge base / RAG indicators
             'knowledge', 'notes', 'documents', 'remember', 'saved',
             'stored', 'recall', 'learned', 'previous',
+
+            # Module building / management indicators
+            'build me', 'create a', 'add integration', 'connect to',
+            'track my', 'set up', 'module', 'modules', 'integration',
+            'adapter', 'install', 'uninstall', 'enable', 'disable',
         }
         
         # Check for tool keywords

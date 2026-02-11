@@ -141,6 +141,29 @@ MULTI_TOOL_INTENTS: Dict[str, IntentPattern] = {
         required_tools=["get_user_context"],
         missing_prompt_template="I need to call {missing} to get your complete status."
     ),
+    "build_module": IntentPattern(
+        name="build_module",
+        keywords=[
+            "build me", "create a", "add integration", "connect to",
+            "track my", "set up", "build a", "create an adapter",
+            "add a module", "integrate with", "build an integration",
+            "make a tracker", "create a tracker",
+        ],
+        required_tools=["build_module", "validate_module"],
+        missing_prompt_template=(
+            "Building module: {completed} steps done. "
+            "Now calling {missing} to continue the build pipeline."
+        ),
+    ),
+    "manage_modules": IntentPattern(
+        name="manage_modules",
+        keywords=[
+            "my modules", "list modules", "show integrations",
+            "what modules", "installed modules", "available modules",
+        ],
+        required_tools=["list_modules"],
+        missing_prompt_template="I need to call {missing} to show your modules."
+    ),
 }
 
 

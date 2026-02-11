@@ -119,10 +119,12 @@ services:
       # Dynamic routing config
       - ROUTING_CONFIG_PATH=/app/config/routing_config.json
       - ADMIN_API_PORT=8003
+      - MODULES_DIR=/app/modules
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./config:/app/config:rw
+      - ./modules:/app/modules:rw
     networks:
       - rag_net
     healthcheck:
@@ -157,10 +159,12 @@ services:
       - GOOGLE_CALENDAR_REFRESH_TOKEN=${GOOGLE_CALENDAR_REFRESH_TOKEN:-}
       - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
       - CLASH_ROYALE_PLAYER_TAG=${CLASH_ROYALE_PLAYER_TAG:-}
+      - MODULES_DIR=/app/modules
     volumes:
       - ./dashboard_service/data:/app/data
       - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
       - ./logs:/app/logs
+      - ./modules:/app/modules:rw
     networks:
       - rag_net
     depends_on:

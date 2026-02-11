@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import (
-    Dict, Any, List, Optional, TypeVar, Generic, 
+    Dict, Any, List, Optional, TypeVar, Generic, Union,
     Protocol, runtime_checkable
 )
 from enum import Enum
@@ -40,8 +40,11 @@ class AdapterConfig:
     """
     Configuration for a platform adapter.
     Credentials and settings passed to adapter on instantiation.
+
+    Category accepts both AdapterCategory enum values and plain strings
+    to support dynamically loaded modules with custom categories.
     """
-    category: AdapterCategory
+    category: Union[AdapterCategory, str]
     platform: str  # e.g., "wealthsimple", "google_calendar"
     credentials: Dict[str, Any] = field(default_factory=dict)
     settings: Dict[str, Any] = field(default_factory=dict)
@@ -134,10 +137,15 @@ class BaseAdapter(ABC, Generic[T]):
     platform: str = "unknown"
     
     def __init__(self, config: Optional[AdapterConfig] = None):
-        self.config = config or AdapterConfig(
-            category=AdapterCategory(self.category),
-            platform=self.platform
-        )
+        # Support both enum and string categories for dynamic modules
+        if config is not None:
+            self.config = config
+        else:
+            try:
+                cat = AdapterCategory(self.category)
+            except ValueError:
+                cat = self.category  # Dynamic category as plain string
+            self.config = AdapterConfig(category=cat, platform=self.platform)
         self._last_fetch: Optional[datetime] = None
         self._request_count: int = 0
     
