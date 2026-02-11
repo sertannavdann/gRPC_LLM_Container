@@ -17,6 +17,7 @@ import {
   Home,
   Plug,
   Settings,
+  Zap,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/finance', label: 'Finance', icon: DollarSign },
   { href: '/integrations', label: 'Integrations', icon: Plug },
+  { href: '/pipeline', label: 'Pipeline', icon: Zap },
   { href: '/monitoring', label: 'Monitoring', icon: Activity },
   { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
