@@ -22,7 +22,6 @@ class LocalToolRegistry:
     
     Supports:
     - Python function tools (ADK-style) with @tool decorator
-    - Legacy gRPC client tools (backward compatibility)
     - LangChain tool wrappers
     - MCP toolsets (Phase 1C)
     
@@ -131,66 +130,6 @@ class LocalToolRegistry:
             return decorator
         else:
             return decorator(func)
-    
-    def register_gRPC_tool(
-        self,
-        name: str,
-        client_method: Callable,
-        description: str,
-        parameters: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Register a legacy gRPC client tool for backward compatibility.
-        
-        Wraps gRPC client methods to work with the new registry system.
-        
-        Args:
-            name: Tool name
-            client_method: gRPC client method (e.g., tool_client.call_tool)
-            description: Tool description
-            parameters: Optional parameter schema override
-        
-        Example:
-            >>> def grpc_method(**kwargs):
-            ...     return client.call_tool("web_search", **kwargs)
-            >>> 
-            >>> registry.register_gRPC_tool(
-            ...     name="web_search",
-            ...     client_method=grpc_method,
-            ...     description="Search the web via gRPC service"
-            ... )
-        """
-        # Wrap gRPC method
-        def gRPC_wrapper(**kwargs) -> Dict[str, Any]:
-            try:
-                result = client_method(**kwargs)
-                # Ensure standardized format
-                if isinstance(result, dict) and "status" in result:
-                    return result
-                return {"status": "success", "data": result}
-            except Exception as e:
-                return {"status": "error", "error": str(e), "tool": name}
-        
-        # Create schema
-        schema = {
-            "name": name,
-            "description": description,
-            "parameters": parameters or {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-        
-        self.tools[name] = gRPC_wrapper
-        self.schemas[name] = schema
-        self.circuit_breakers[name] = CircuitBreaker(max_failures=self.max_failures)
-        self.tool_metadata[name] = {
-            "type": "grpc",
-            "registered_at": datetime.now().isoformat()
-        }
-        
-        logger.info(f"Registered gRPC tool '{name}'")
     
     def call_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
         """

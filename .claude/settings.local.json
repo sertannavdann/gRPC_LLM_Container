@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git rebase:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(xargs:*)",
+      "Bash(make status:*)",
+      "Bash(grpcurl:*)",
+      "Bash(make restart-all:*)",
+      "mcp__perplexity__reason",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(git checkout:*)",
+      "Bash(make:*)",
+      "Bash(python3:*)",
+      "mcp__perplexity__deep_research",
+      "Bash(npx tsc:*)",
+      "Bash(grpc_health_probe:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(git log:*)",
+      "Bash(python -c:*)",
+      "Bash(curl:*)",
+      "Bash(python -m py_compile:*)"
+    ]
+  }
+}

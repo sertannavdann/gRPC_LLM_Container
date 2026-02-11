@@ -18,6 +18,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY ui_service/ .
 
+# Copy shared proto to ensure single source of truth
+RUN mkdir -p proto
+COPY shared/proto/agent.proto ./proto/agent.proto
+
 # Build Next.js
 RUN npm run build
 
@@ -28,20 +32,26 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Install docker-cli for orchestrator restart capability
+RUN apk add --no-cache docker-cli
+
+# Security Note: Running as root to access Docker socket
+# This is acceptable for development but poses security risks in production.
+# Production recommendations:
+# 1. Use a dedicated Docker socket proxy (e.g., tecnativa/docker-socket-proxy)
+# 2. Implement proper socket permission restrictions with user namespaces
+# 3. Consider using Docker API with proper authentication instead of socket mounting
+# 4. Use least-privilege principles with specific socket access controls
 
 # Copy necessary files
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 # Copy proto files for runtime gRPC
-COPY --from=builder --chown=nextjs:nodejs /app/proto ./proto
+COPY --from=builder /app/proto ./proto
 # Copy startup script
 COPY ui_service/start.sh ./start.sh
 RUN chmod +x ./start.sh
-
-USER nextjs
 
 EXPOSE 5000
 

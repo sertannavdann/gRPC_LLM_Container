@@ -53,6 +53,11 @@ def web_search(query: str, num_results: int = 10, search_type: str = "search") -
         }
     
     # Validate parameters
+    try:
+        num_results = int(num_results)
+    except (ValueError, TypeError):
+        num_results = 10
+        
     num_results = max(1, min(100, num_results))
     if search_type not in ["search", "news", "images", "places"]:
         search_type = "search"

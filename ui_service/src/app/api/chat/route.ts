@@ -27,7 +27,11 @@ export async function POST(request: NextRequest) {
       if (response.sources) {
         const sources = JSON.parse(response.sources);
         if (Array.isArray(sources?.tools_used)) {
-          toolsUsed = sources.tools_used;
+          // tools_used can be array of strings or objects {tool, status}
+          // Normalize to array of tool name strings
+          toolsUsed = sources.tools_used.map((t: string | { tool: string }) =>
+            typeof t === 'string' ? t : t.tool || 'unknown'
+          );
         }
         if (typeof sources?.thread_id === 'string') {
           nextThreadId = sources.thread_id;

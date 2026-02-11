@@ -7,10 +7,39 @@ services:
     container_name: llm_service
     ports:
       - "50051:50051"
+    environment:
+      - LLM_MODEL_PATH=./models/qwen2.5-3b-instruct-q5_k_m.gguf
+      - LLM_CTX_SIZE=4096
+      # 3B model: fast inference (~2-3s) within 7.6GiB Docker RAM
     volumes:
       - ./llm_service/models:/app/models
     networks:
       - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # LIDM: Standard-tier LLM instance (Qwen-0.5B ultra-light for simple queries)
+  # Start with: docker compose --profile lidm up -d  (or: make lidm-up)
+  llm_service_standard:
+    build:
+      context: .
+      dockerfile: llm_service/Dockerfile
+    container_name: llm_service_standard
+    ports:
+      - "50061:50051"
+    environment:
+      - LLM_MODEL_PATH=./models/qwen2.5-0.5b-instruct-q5_k_m.gguf
+      - N_CTX=4096
+    volumes:
+      - ./llm_service/models:/app/models
+      - ./logs:/app/logs
+    networks:
+      - rag_net
+    profiles:
+      - lidm
     healthcheck:
       test: ["CMD", "grpc_health_probe", "-addr=:50051"]
       interval: 10s
@@ -41,9 +70,13 @@ services:
     container_name: orchestrator
     ports:
       - "50054:50054"
+      - "8003:8003"   # Admin API for dynamic routing config
+      - "8890:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8890)
     depends_on:
       - llm_service
       - chroma_service
+      - sandbox_service
+      - otel-collector
     env_file:
       - .env
     environment:
@@ -51,13 +84,45 @@ services:
       - ORCHESTRATOR_PORT=50054
       - LLM_HOST=llm_service
       - LLM_PORT=50051
+      # LIDM: Multi-instance LLM routing
+      - ENABLE_DELEGATION=${ENABLE_DELEGATION:-false}
+      - LLM_HEAVY_HOST=llm_service:50051
+      - LLM_STANDARD_HOST=llm_service_standard:50051
+      - LLM_ULTRA_HOST=${LLM_ULTRA_HOST:-}
       - CHROMA_HOST=chroma_service
       - CHROMA_PORT=50052
+      - DASHBOARD_URL=http://dashboard:8001
+      - SANDBOX_HOST=sandbox_service
+      - SANDBOX_PORT=50057
       - AGENT_MAX_ITERATIONS=5
-      - AGENT_TEMPERATURE=0.7
+      - AGENT_CONTEXT_WINDOW=12
+      - AGENT_TEMPERATURE=0.15
+      - AGENT_MODEL_NAME=qwen2.5-3b-instruct-q5_k_m.gguf
+      - ENABLE_SELF_CONSISTENCY=false
+      - SELF_CONSISTENCY_SAMPLES=5
+      - SELF_CONSISTENCY_THRESHOLD=0.6
       - SERPER_API_KEY=${SERPER_API_KEY:-}
+      # LLM Provider settings - switch providers via .env file
+      - LLM_PROVIDER=${LLM_PROVIDER:-local}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LLM_PROVIDER_MODEL=${LLM_PROVIDER_MODEL:-}
+      - LLM_PROVIDER_TIMEOUT=${LLM_PROVIDER_TIMEOUT:-60}
+      # OpenTelemetry settings
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=orchestrator
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
+      # Dynamic routing config
+      - ROUTING_CONFIG_PATH=/app/config/routing_config.json
+      - ADMIN_API_PORT=8003
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config:rw
     networks:
       - rag_net
     healthcheck:
@@ -65,6 +130,108 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard_service/Dockerfile
+    container_name: dashboard_service
+    ports:
+      - "8001:8001"
+      - "8002:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8002)
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8001
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=dashboard-service
+      - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
+      - CACHE_TTL_SECONDS=300
+      # Real adapter API keys
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
+      - OPENWEATHER_CITY=${OPENWEATHER_CITY:-Toronto,CA}
+      - GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CALENDAR_CLIENT_ID:-}
+      - GOOGLE_CALENDAR_CLIENT_SECRET=${GOOGLE_CALENDAR_CLIENT_SECRET:-}
+      - GOOGLE_CALENDAR_ACCESS_TOKEN=${GOOGLE_CALENDAR_ACCESS_TOKEN:-}
+      - GOOGLE_CALENDAR_REFRESH_TOKEN=${GOOGLE_CALENDAR_REFRESH_TOKEN:-}
+      - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
+      - CLASH_ROYALE_PLAYER_TAG=${CLASH_ROYALE_PLAYER_TAG:-}
+    volumes:
+      - ./dashboard_service/data:/app/data
+      - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
+      - ./logs:/app/logs
+    networks:
+      - rag_net
+    depends_on:
+      - otel-collector
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # =============================================================================
+  # BRIDGE SERVICE - MCP Server for OpenClaw ↔ gRPC bidirectional communication
+  # =============================================================================
+  bridge_service:
+    build:
+      context: .
+      dockerfile: bridge_service/Dockerfile
+    container_name: bridge_service
+    ports:
+      - "8100:8100"   # MCP/HTTP endpoint
+    environment:
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8100
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=50054
+      - CHROMA_HOST=chroma_service
+      - CHROMA_PORT=50052
+      - SANDBOX_HOST=sandbox_service
+      - SANDBOX_PORT=50057
+      - DASHBOARD_URL=http://dashboard:8001
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - rag_net
+    depends_on:
+      - orchestrator
+      - chroma_service
+      - sandbox_service
+      - dashboard
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # NOTE: clawdbot service removed - use external OpenClaw installation instead
+  # Configure OpenClaw to connect to bridge_service:8100 for MCP tools
+
+  sandbox_service:
+    build:
+      context: .
+      dockerfile: sandbox_service/Dockerfile
+    container_name: sandbox_service
+    ports:
+      - "50057:50057"
+    environment:
+      - SANDBOX_PORT=50057
+      - SANDBOX_TIMEOUT=30
+      - SANDBOX_MEMORY_MB=256
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50057"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # NOTE: worker_coding service removed - worker mesh architecture not actively used
+  # Can be re-added when distributed worker delegation is needed
 
   ui_service:
     build:
@@ -77,8 +244,149 @@ services:
       - orchestrator
     environment:
       - AGENT_SERVICE_ADDRESS=orchestrator:50054
+      - ENV_FILE_PATH=/app/config/.env
+      - CONVERSATIONS_DIR=/app/data/conversations
+      - DASHBOARD_SERVICE_URL=http://dashboard:8001
+    volumes:
+      - ./.env:/app/config/.env:rw
+      - ./data/conversations:/app/data/conversations:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - rag_net
 
+  # =============================================================================
+  # OBSERVABILITY STACK (Week 1 of Architecture Roadmap)
+  # =============================================================================
+
+  # OpenTelemetry Collector - Central telemetry hub
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Metrics endpoint
+      - "8889:8889"   # Prometheus exporter
+      - "13133:13133" # Health check
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Prometheus - Metrics storage and querying
+  prometheus:
+    image: prom/prometheus:v2.50.1
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - otel-collector
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - rag_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Tempo - Distributed tracing backend (optional but recommended)
+  tempo:
+    image: grafana/tempo:2.4.0
+    container_name: tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4319:4317"   # OTLP gRPC (internal, different external port)
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - rag_net
+    restart: unless-stopped
+
+  # LIDM: Ultra-tier AirLLM instance (70B+ layer-streaming)
+  # DISABLED: Requires NVIDIA GPU + CUDA — not compatible with macOS / Apple Silicon.
+  # Re-enable on a Linux GPU host with: docker compose --profile airllm up -d
+  # llm_service_airllm:
+  #   build:
+  #     context: .
+  #     dockerfile: llm_service/Dockerfile.airllm
+  #   container_name: llm_service_airllm
+  #   ports:
+  #     - "50062:50051"
+  #   environment:
+  #     - MODEL_REPO=meta-llama/Llama-3.1-70B-Instruct
+  #     - COMPRESSION=4bit
+  #     - BACKEND=airllm
+  #   volumes:
+  #     - ~/.cache/huggingface:/root/.cache/huggingface
+  #     - ./logs:/app/logs
+  #   networks:
+  #     - rag_net
+  #   profiles:
+  #     - airllm
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
 networks:
   rag_net:
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  tempo-data:

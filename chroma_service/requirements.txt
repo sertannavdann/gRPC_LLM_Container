@@ -1,8 +1,12 @@
+# ChromaDB vector store
 chromadb>=0.4.15
-grpcio>=1.62.0
-grpcio-tools>=1.62.0
-grpcio-reflection
-grpcio-health-checking
+
+# gRPC - pinned versions for consistency
+grpcio==1.67.1
+grpcio-tools==1.67.1
+grpcio-reflection==1.67.1
+grpcio-health-checking==1.67.1
+protobuf==5.28.3
+
+# Embeddings
 sentence-transformers>=2.2.2
-protobuf>=3.20.3
-hf_xet

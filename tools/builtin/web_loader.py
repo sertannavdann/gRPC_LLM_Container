@@ -99,6 +99,12 @@ def load_web_page(
         text_content = re.sub(r'\s+', ' ', text_content)
         text_content = text_content.strip()
         
+        # Ensure max_length is an integer
+        try:
+            max_length = int(max_length)
+        except (ValueError, TypeError):
+            max_length = 5000
+            
         # Truncate to max length
         if len(text_content) > max_length:
             text_content = text_content[:max_length] + "..."

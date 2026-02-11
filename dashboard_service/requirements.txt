@@ -1,0 +1,22 @@
+# FastAPI and ASGI server
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.2
+
+# HTTP client for adapters (standardized on aiohttp)
+aiohttp==3.10.10
+
+# Utilities
+python-multipart==0.0.12
+
+# OpenTelemetry - Observability (versions compatible with protobuf 5.x)
+# NOTE: 1.29.0+ fixes KeyError: 2 bug in gRPC status code mapping
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-grpc>=1.29.0
+opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-exporter-prometheus>=0.50b0
+
+# Prometheus metrics endpoint
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.0

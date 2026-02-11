@@ -1,0 +1,174 @@
+# Tool Selection Eval Cases
+#
+# Each case specifies:
+#   - query: User input
+#   - expected_tools: List of tools that should be selected
+#   - expected_arguments: Required arguments for each tool
+#   - difficulty: easy/medium/hard
+
+cases:
+  # === Easy Cases: Single tool, clear intent ===
+  - id: ts_001
+    query: "What is 42 * 17?"
+    expected_tools: ["math_solver"]
+    expected_arguments:
+      math_solver:
+        expression: "42 * 17"
+    difficulty: easy
+    
+  - id: ts_002
+    query: "Search Google for Python 3.12 features"
+    expected_tools: ["web_search"]
+    expected_arguments:
+      web_search:
+        query: "*python*3.12*"
+    difficulty: easy
+    
+  - id: ts_003
+    query: "Execute print('hello world') in Python"
+    expected_tools: ["execute_code"]
+    expected_arguments:
+      execute_code:
+        code: "print('hello world')"
+        language: "python"
+    difficulty: easy
+    
+  - id: ts_004
+    query: "Load the webpage https://example.com"
+    expected_tools: ["load_web_page"]
+    expected_arguments:
+      load_web_page:
+        url: "https://example.com"
+    difficulty: easy
+
+  # === Medium Cases: Tool selection with ambiguity ===
+  - id: ts_010
+    query: "Calculate the factorial of 10"
+    expected_tools: ["math_solver", "execute_code"]  # Either acceptable
+    expected_arguments:
+      math_solver:
+        expression: "*factorial*10*"
+      execute_code:
+        code: "*factorial*"
+    difficulty: medium
+    
+  - id: ts_011
+    query: "Find articles about climate change"
+    expected_tools: ["web_search"]
+    expected_arguments:
+      web_search:
+        query: "*climate*change*"
+    difficulty: medium
+    
+  - id: ts_012
+    query: "What's the square root of 256?"
+    expected_tools: ["math_solver"]
+    expected_arguments:
+      math_solver:
+        expression: "*sqrt*256*"
+    difficulty: medium
+
+  # === Hard Cases: Multi-tool sequences ===
+  - id: ts_020
+    query: "Search for Python typing best practices and summarize the first result"
+    expected_tools: ["web_search", "load_web_page"]
+    expected_arguments:
+      web_search:
+        query: "*python*typing*"
+    difficulty: hard
+    multi_step: true
+    
+  - id: ts_021
+    query: "What time should I leave for work?"
+    expected_tools: ["get_calendar_events", "get_commute_time"]
+    expected_arguments:
+      get_calendar_events: {}
+      get_commute_time: {}
+    difficulty: hard
+    multi_step: true
+    requires_clarification: ["destination"]
+    
+  - id: ts_022
+    query: "Give me my daily briefing including commute"
+    expected_tools: ["get_daily_briefing", "get_commute_time"]
+    expected_arguments:
+      get_daily_briefing: {}
+      get_commute_time: {}
+    difficulty: hard
+    multi_step: true
+
+  # === Argument Extraction Cases ===
+  - id: ae_001
+    query: "Search the web for 'machine learning tutorials'"
+    expected_tools: ["web_search"]
+    expected_arguments:
+      web_search:
+        query: "machine learning tutorials"
+    difficulty: easy
+    focus: argument_extraction
+    
+  - id: ae_002
+    query: "Calculate (5 + 3) * 2 - 7 / 2"
+    expected_tools: ["math_solver"]
+    expected_arguments:
+      math_solver:
+        expression: "(5 + 3) * 2 - 7 / 2"
+    difficulty: medium
+    focus: argument_extraction
+    
+  - id: ae_003
+    query: "Run this code: x = [1,2,3]; print(sum(x))"
+    expected_tools: ["execute_code"]
+    expected_arguments:
+      execute_code:
+        code: "x = [1,2,3]; print(sum(x))"
+        language: "python"
+    difficulty: medium
+    focus: argument_extraction
+
+  # === Negative Cases: Should NOT use tools ===
+  - id: neg_001
+    query: "What is the capital of France?"
+    expected_tools: []
+    expected_arguments: {}
+    difficulty: easy
+    should_use_tool: false
+    
+  - id: neg_002
+    query: "Hello, how are you?"
+    expected_tools: []
+    expected_arguments: {}
+    difficulty: easy
+    should_use_tool: false
+    
+  - id: neg_003
+    query: "Explain what machine learning is"
+    expected_tools: []
+    expected_arguments: {}
+    difficulty: easy
+    should_use_tool: false
+
+  # === Edge Cases: Tricky inputs ===
+  - id: edge_001
+    query: "Search for 'how to calculate 2+2'"
+    expected_tools: ["web_search"]  # Should search, not calculate
+    expected_arguments:
+      web_search:
+        query: "*how*calculate*"
+    difficulty: hard
+    note: "Quoted search query containing math"
+    
+  - id: edge_002
+    query: "Load example.com and find their contact page"
+    expected_tools: ["load_web_page"]
+    expected_arguments:
+      load_web_page:
+        url: "*example.com*"
+    difficulty: hard
+    note: "May need multiple page loads"
+
+# Thresholds for pass/fail
+thresholds:
+  tool_selection_accuracy: 0.85  # 85% tools correctly selected
+  argument_correctness: 0.80      # 80% arguments correct
+  overall_pass: 0.80              # Overall pass rate

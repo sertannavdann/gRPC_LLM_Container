@@ -2,6 +2,16 @@
 .DS_Store
 Thumbs.db
 
+# Session logs
+session.txt
+
+# Old plan versions
+Plan_v2.md
+
+# Root package files (ui_service has its own)
+/package-lock.json
+/package.json
+
 # Python artifacts
 __pycache__/
 *.py[cod]
@@ -11,6 +21,14 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Python cache (recursive)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# macOS (recursive)
+**/.DS_Store
 
 # Virtual environments and local env files
 .venv/
@@ -63,3 +81,32 @@ llm_service/models/
 # SQLite databases
 *.sqlite
 *.sqlite3
+
+# Ignore UI service build outputs
+ui_service/.next/
+ui_service/node_modules/
+ui_service/build/
+ui_service/.env.local
+
+# Ignore dashboard service data
+dashboard_service/data/
+dashboard_service/logs/
+# Ignore orchestrator service data
+orchestrator_service/data/
+orchestrator_service/logs/
+# Ignore docker-compose override files
+docker-compose.override.yaml
+# Ignore local configuration files
+config/local_settings.yaml
+config/.env
+# Ignore conversation data
+ui_servicedata/conversations/
+data/logs/
+
+# Bank data (real financial data - local only)
+dashboard_service/Bank/*.csv
+
+**.csv
+**.ipynb
+
+data/conversations/**

@@ -1,0 +1,18 @@
+# OpenTelemetry Core (versions compatible with protobuf 5.x)
+# NOTE: 1.29.0+ fixes KeyError: 2 bug in gRPC status code mapping
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+
+# Exporters
+opentelemetry-exporter-otlp-proto-grpc>=1.29.0
+opentelemetry-exporter-prometheus>=0.50b0
+
+# Auto-instrumentation
+opentelemetry-instrumentation-grpc>=0.50b0
+opentelemetry-instrumentation-aiohttp-client>=0.50b0
+
+# Structured logging
+structlog>=24.1.0
+
+# Prometheus client (for custom metrics if needed)
+prometheus-client>=0.21.0

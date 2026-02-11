@@ -6,13 +6,27 @@ a single, streamlined service.
 """
 
 from .config import OrchestratorConfig
-from .simple_router import SimpleRouter, Route
 from .orchestrator_service import OrchestratorService, serve
+from .provider_router import (
+    ProviderRouter,
+    RouterConfig,
+    ComplexityLevel,
+    ProviderHealth,
+    get_router,
+    select_provider,
+    get_fallback,
+)
 
 __all__ = [
     "OrchestratorConfig",
-    "SimpleRouter",
-    "Route",
     "OrchestratorService",
     "serve",
+    # Provider Router (Week 3)
+    "ProviderRouter",
+    "RouterConfig",
+    "ComplexityLevel",
+    "ProviderHealth",
+    "get_router",
+    "select_provider",
+    "get_fallback",
 ]

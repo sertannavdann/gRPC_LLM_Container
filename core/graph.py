@@ -16,6 +16,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 
 from .state import AgentState, WorkflowConfig, ToolExecutionResult
+from .context_compactor import compact_context
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class AgentWorkflow:
         tool_registry,  # LocalToolRegistry
         llm_engine,  # LlamaEngine
         config: WorkflowConfig,
+        chroma_client=None,  # Optional ChromaClient for context archival
     ):
         """
         Initialize workflow with tool registry and LLM engine.
@@ -52,10 +54,12 @@ class AgentWorkflow:
             tool_registry: LocalToolRegistry instance with registered tools
             llm_engine: LlamaEngine for local inference
             config: WorkflowConfig with iteration limits and LLM params
+            chroma_client: Optional ChromaClient for context compaction archival
         """
         self.registry = tool_registry
         self.llm = llm_engine
         self.config = config
+        self.chroma_client = chroma_client
         
         # Build graph structure
         self.graph = self._build_graph()
@@ -99,37 +103,64 @@ class AgentWorkflow:
             # Web loading indicators
             'load', 'fetch', 'get', 'download', 'scrape',
             'website', 'url', 'page', 'link',
+            
+            # User context indicators (personal data)
+            'commute', 'drive', 'driving', 'traffic', 'eta', 'route',
+            'schedule', 'calendar', 'meeting', 'appointment', 'event',
+            'budget', 'spending', 'finance', 'money', 'balance', 'account',
+            'health', 'steps', 'sleep', 'heart rate', 'fitness', 'wellness',
+            'briefing', 'summary', 'day', 'my', 'mine',
+
+            # Finance / bank indicators
+            'transaction', 'transactions', 'purchase', 'purchases',
+            'bank', 'debit', 'credit', 'merchant', 'expense', 'expenses',
+            'income', 'payment', 'payments', 'cost', 'costs',
+            'spent', 'bought', 'paid', 'subscription',
+
+            # Knowledge base / RAG indicators
+            'knowledge', 'notes', 'documents', 'remember', 'saved',
+            'stored', 'recall', 'learned', 'previous',
         }
         
         # Check for tool keywords
         if any(keyword in query_lower for keyword in tool_keywords):
-            logger.info(f"Tool usage detected via keywords")
+            logger.debug("Tool usage detected via keywords")
             return True
         
         # Check for mathematical expressions (e.g., "2+2", "15*23")
         if re.search(r'\d+\s*[\+\-\*/\^]\s*\d+', query):
-            logger.info(f"Tool usage detected via math expression")
+            logger.debug("Tool usage detected via math expression")
             return True
         
         # Check for URLs
         if re.search(r'https?://', query_lower):
-            logger.info(f"Tool usage detected via URL")
+            logger.debug("Tool usage detected via URL")
             return True
         
-        # Broader factual question detection: question words + entities
-        question_words = ['what', 'when', 'where', 'who', 'why', 'how', 'which']
-        has_question_word = any(w in query_lower for w in question_words)
-        has_question_mark = '?' in query
-
-        # Detect proper nouns (simple heuristic: capitalized tokens not at start of sentence)
-        proper_noun_match = re.search(r'\b[A-Z][a-z]+\b', query)
-
-        # If it's a factual question about specific entities, prefer using tools
-        if (has_question_word or has_question_mark) and proper_noun_match:
-            logger.info(f"Tool usage detected via question+proper noun pattern")
-            return True
+        # Conversational greetings/small talk - NEVER need tools
+        greeting_patterns = [
+            'hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon',
+            'good evening', 'how are you', 'how do you do', 'whats up', "what's up",
+            'nice to meet', 'thanks', 'thank you', 'bye', 'goodbye', 'see you'
+        ]
+        if any(pattern in query_lower for pattern in greeting_patterns):
+            logger.debug("Conversational greeting detected - no tools needed")
+            return False
         
-        logger.info(f"No tool usage needed for query")
+        # Factual question detection: question words about specific topics
+        # Only trigger if it's clearly asking for external information
+        factual_keywords = ['what is', 'who is', 'when did', 'where is', 'why did', 
+                           'how does', 'how did', 'tell me about', 'explain']
+        
+        # Questions that clearly need external data
+        if any(kw in query_lower for kw in factual_keywords):
+            # But exclude simple opinion questions
+            opinion_words = ['think', 'feel', 'opinion', 'prefer', 'like', 'favorite']
+            if not any(w in query_lower for w in opinion_words):
+                logger.debug("Factual question detected - tools may be needed")
+                return True
+        
+        logger.debug("No tool usage needed for query")
         return False
     
     def _build_graph(self) -> StateGraph:
@@ -196,8 +227,17 @@ class AgentWorkflow:
         """
         messages = state["messages"]
         
-        # Apply context window to prevent token overflow
-        recent_messages = messages[-self.config.context_window:]
+        # Compact context: summarise + archive evicted turns instead of
+        # silently dropping them.  Falls back to a simple slice when the
+        # LLM summariser or ChromaDB is unavailable.
+        conversation_id = state.get("conversation_id", "unknown")
+        recent_messages = compact_context(
+            messages=messages,
+            max_messages=self.config.context_window,
+            llm_engine=self.llm,
+            chroma_client=self.chroma_client,
+            conversation_id=conversation_id,
+        )
         
         # Extract last user query to determine if tools are needed
         last_user_message = next(
@@ -269,10 +309,14 @@ class AgentWorkflow:
     
     def _tools_node(self, state: AgentState) -> AgentState:
         """
-        Tool execution node with parallel calls and error handling.
+        Tool execution node with parallel calls, error handling, and multi-turn support.
         
         Extracts tool calls from last AI message, executes them in parallel
         (up to max_tool_calls_per_turn), and creates ToolMessage responses.
+        
+        For multi-turn rollouts (Agent0 style), this node can be invoked multiple
+        times within a single query, with each invocation adding tool results
+        to the conversation context.
         
         Args:
             state: Current state with tool_calls in last message
@@ -289,12 +333,17 @@ class AgentWorkflow:
         results = []
         tool_messages = []
         
-        logger.info(f"Executing {len(tool_calls)} tool calls")
+        # Track cumulative tool usage for multi-turn metrics
+        total_tool_calls = state.get("total_tool_calls", 0)
+        
+        logger.info(f"Executing {len(tool_calls)} tool calls (cumulative: {total_tool_calls})")
         
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
             tool_args = tool_call["function"]["arguments"]
             tool_call_id = tool_call.get("id", f"call_{tool_name}")
+            
+            logger.debug("Tool %s called with args: %r", tool_name, tool_args)
             
             start_time = datetime.now()
             
@@ -331,19 +380,71 @@ class AgentWorkflow:
             results.append(execution_result.to_dict())
             
             # Create tool message for LLM context
+            # Format result for better LLM comprehension
+            result_content = self._format_tool_result(tool_name, result)
             tool_messages.append(
                 ToolMessage(
-                    content=str(result),
+                    content=result_content,
                     tool_call_id=tool_call_id,
+                    name=tool_name,  # Include tool name for multi-turn context
                 )
             )
+            
+            total_tool_calls += 1
         
         return {
             **state,
             "messages": tool_messages,
             "tool_results": state.get("tool_results", []) + results,
+            "total_tool_calls": total_tool_calls,
             "next_action": "validate",
         }
+    
+    def _format_tool_result(self, tool_name: str, result: dict) -> str:
+        """
+        Format tool result for LLM comprehension.
+        
+        Converts raw dict results into a readable string format that
+        helps the LLM understand and reason about the tool output.
+        
+        Args:
+            tool_name: Name of the tool that was executed
+            result: Raw result dictionary from tool execution
+        
+        Returns:
+            str: Formatted result string
+        """
+        status = result.get("status", "unknown")
+        
+        if status == "error":
+            error_msg = result.get("error", "Unknown error")
+            return f"[{tool_name} ERROR]: {error_msg}"
+        
+        # Extract meaningful data from result
+        if "result" in result:
+            data = result["result"]
+        elif "data" in result:
+            data = result["data"]
+        elif "formatted" in result:
+            data = result["formatted"]
+        else:
+            # Remove metadata fields for cleaner output
+            data = {k: v for k, v in result.items() 
+                   if k not in ("status", "_metadata", "latency_ms")}
+        
+        # Format based on data type
+        if isinstance(data, (int, float)):
+            return f"[{tool_name} RESULT]: {data}"
+        elif isinstance(data, str):
+            return f"[{tool_name} RESULT]: {data}"
+        elif isinstance(data, dict):
+            import json
+            return f"[{tool_name} RESULT]: {json.dumps(data, indent=2)}"
+        elif isinstance(data, list):
+            import json
+            return f"[{tool_name} RESULT]: {json.dumps(data, indent=2)}"
+        else:
+            return f"[{tool_name} RESULT]: {str(result)}"
     
     def _validate_node(self, state: AgentState) -> AgentState:
         """

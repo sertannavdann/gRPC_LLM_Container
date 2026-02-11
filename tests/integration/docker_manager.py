@@ -380,3 +380,100 @@ class DockerComposeManager:
         except Exception as e:
             logger.error(f"Failed to restart {service}: {e}")
             raise
+    
+    def start_services(self, services: Optional[List[str]] = None):
+        """
+        Start services (alias for up).
+        
+        Args:
+            services: List of service names to start (None = all)
+        """
+        return self.up(services=services, detach=True)
+    
+    def stop_services(self, services: Optional[List[str]] = None):
+        """
+        Stop services without removing containers.
+        
+        Args:
+            services: List of service names to stop (None = all)
+        """
+        cmd = [
+            self.docker_cmd,
+            "compose",
+            "-f", str(self.compose_file),
+            "-p", self.project_name,
+            "stop",
+        ]
+        
+        if services:
+            cmd.extend(services)
+        
+        logger.info(f"Stopping services: {services or 'all'}")
+        
+        try:
+            subprocess.run(cmd, check=True, timeout=60)
+            logger.info("Services stopped")
+        except Exception as e:
+            logger.error(f"Failed to stop services: {e}")
+            raise
+    
+    def kill_service(self, service: str, signal: str = "SIGKILL"):
+        """
+        Kill a specific service (simulates crash).
+        
+        Args:
+            service: Service name to kill
+            signal: Signal to send (default: SIGKILL)
+        """
+        cmd = [
+            self.docker_cmd,
+            "compose",
+            "-f", str(self.compose_file),
+            "-p", self.project_name,
+            "kill",
+            "-s", signal,
+            service,
+        ]
+        
+        logger.info(f"Killing service: {service} with {signal}")
+        
+        try:
+            subprocess.run(cmd, check=True, timeout=10)
+            logger.info(f"{service} killed")
+        except Exception as e:
+            logger.error(f"Failed to kill {service}: {e}")
+            raise
+    
+    def get_service_logs(self, service: str, tail: int = 100) -> str:
+        """
+        Get service logs (using actual container name).
+        
+        Args:
+            service: Service name
+            tail: Number of lines to retrieve
+        
+        Returns:
+            str: Service logs
+        """
+        # Try to get logs directly using container name (without project prefix)
+        cmd = [
+            self.docker_cmd,
+            "logs",
+            "--tail", str(tail),
+            service,  # Use service name directly as container name
+        ]
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.stdout or result.stderr:
+                return result.stdout + result.stderr
+        except Exception as e:
+            logger.debug(f"Direct container logs failed: {e}")
+        
+        # Fallback to compose logs
+        return self.get_logs(service=service, tail=tail)
