@@ -340,6 +340,20 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # cAdvisor - Container resource usage monitoring (CPU, memory, network)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - rag_net
+    restart: unless-stopped
+
   # Tempo - Distributed tracing backend (optional but recommended)
   tempo:
     image: grafana/tempo:2.4.0

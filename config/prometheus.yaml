@@ -1,5 +1,5 @@
 # Prometheus Configuration
-# Scrapes metrics from OpenTelemetry Collector and services
+# Scrapes metrics from OpenTelemetry Collector, services, and cAdvisor
 
 global:
   scrape_interval: 15s
@@ -7,7 +7,7 @@ global:
   external_labels:
     monitor: 'grpc-llm-monitor'
 
-# Alerting configuration (future)
+# Alerting configuration
 alerting:
   alertmanagers: []
 
@@ -17,31 +17,34 @@ rule_files:
 
 # Scrape configurations
 scrape_configs:
-  # OpenTelemetry Collector metrics
+  # OpenTelemetry Collector metrics (all OTel-instrumented services export here)
   - job_name: 'otel-collector'
     static_configs:
       - targets: ['otel-collector:8889']
     metrics_path: /metrics
 
-  # Orchestrator service metrics (if exposing Prometheus endpoint)
+  # Orchestrator metrics via OTel collector Prometheus exporter
+  # OTel metrics (grpc_*, tool_*, llm_*, lidm_*, pipeline_*, nexus_*) are
+  # exported through otel-collector:8889 above. The orchestrator exposes
+  # its own Prometheus endpoint on port 8888 for direct scraping.
   - job_name: 'orchestrator'
     static_configs:
       - targets: ['orchestrator:8888']
     metrics_path: /metrics
     scrape_interval: 10s
 
-  # LLM service metrics
-  - job_name: 'llm-service'
-    static_configs:
-      - targets: ['llm_service:8888']
-    metrics_path: /metrics
-    scrape_interval: 30s
-
-  # Dashboard service metrics
+  # Dashboard service metrics (prometheus_client direct)
   - job_name: 'dashboard-service'
     static_configs:
       - targets: ['dashboard_service:8001']
     metrics_path: /metrics
+    scrape_interval: 15s
+
+  # cAdvisor - Container resource usage (CPU, memory, network, disk)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metrics_path: /metrics/prometheus
     scrape_interval: 15s
 
   # Prometheus self-monitoring
