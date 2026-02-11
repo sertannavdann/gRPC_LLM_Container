@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from .aggregator import DashboardAggregator, UserConfig
 from .bank_service import BankService
+from .pipeline_stream import router as pipeline_router
 from shared.adapters import adapter_registry
 
 # OpenTelemetry imports
@@ -199,46 +200,59 @@ _bank_service = BankService(
 )
 
 
+# Settings fields that go into settings dict (not credentials)
+_SETTINGS_FIELDS = {
+    ("openweather", "city"),
+    ("clashroyale", "player_tag"),
+}
+
+# Platform → category mapping for enabling platforms
+_PLATFORM_CATEGORY = {
+    "openweather": "weather",
+    "google_calendar": "calendar",
+    "clashroyale": "gaming",
+}
+
+# Minimum required credential field to consider a platform "connected"
+_PLATFORM_CONNECT_FIELD = {
+    "openweather": "api_key",
+    "google_calendar": "access_token",
+    "clashroyale": "api_key",
+}
+
+
 def get_aggregator(user_id: str) -> DashboardAggregator:
     """Get or create an aggregator for a user."""
     if user_id not in _aggregators:
-        # Build credentials from environment
+        # Build credentials and settings from _CREDENTIAL_ENV_MAP (single source)
         credentials: dict[str, dict[str, str]] = {}
         settings: dict[str, dict[str, str]] = {}
 
-        # OpenWeather
-        ow_key = os.getenv("OPENWEATHER_API_KEY", "")
-        if ow_key:
-            credentials["openweather"] = {"api_key": ow_key}
-            settings["openweather"] = {
-                "city": os.getenv("OPENWEATHER_CITY", "Toronto,CA"),
-            }
+        for (platform, field), env_var in _CREDENTIAL_ENV_MAP.items():
+            value = os.getenv(env_var, "")
+            if not value:
+                continue
+            if (platform, field) in _SETTINGS_FIELDS:
+                settings.setdefault(platform, {})[field] = value
+            else:
+                credentials.setdefault(platform, {})[field] = value
 
-        # Google Calendar
-        gcal_token = os.getenv("GOOGLE_CALENDAR_ACCESS_TOKEN", "")
-        gcal_refresh = os.getenv("GOOGLE_CALENDAR_REFRESH_TOKEN", "")
-        if gcal_token or gcal_refresh:
-            credentials["google_calendar"] = {
-                "access_token": gcal_token,
-                "refresh_token": gcal_refresh,
-                "client_id": os.getenv("GOOGLE_CALENDAR_CLIENT_ID", ""),
-                "client_secret": os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", ""),
-            }
+        # Determine which platforms to enable based on connection fields
+        connected_platforms: dict[str, bool] = {}
+        for platform, field in _PLATFORM_CONNECT_FIELD.items():
+            connected_platforms[platform] = bool(
+                credentials.get(platform, {}).get(field)
+            )
 
-        # Clash Royale
-        cr_key = os.getenv("CLASH_ROYALE_API_KEY", "")
-        cr_tag = os.getenv("CLASH_ROYALE_PLAYER_TAG", "")
-        if cr_key:
-            credentials["clashroyale"] = {"api_key": cr_key}
-            if cr_tag:
-                settings["clashroyale"] = {"player_tag": cr_tag}
+        # Clash Royale also needs player_tag
+        if connected_platforms.get("clashroyale") and not settings.get("clashroyale", {}).get("player_tag"):
+            connected_platforms["clashroyale"] = False
 
-        # Determine which platforms to enable
-        weather_platforms = ["openweather"] if ow_key else []
+        weather_platforms = ["openweather"] if connected_platforms.get("openweather") else []
         calendar_platforms = ["mock"]
-        if gcal_token or gcal_refresh:
+        if connected_platforms.get("google_calendar"):
             calendar_platforms.append("google_calendar")
-        gaming_platforms = ["clashroyale"] if cr_key and cr_tag else []
+        gaming_platforms = ["clashroyale"] if connected_platforms.get("clashroyale") else []
 
         config = UserConfig(
             user_id=user_id,
@@ -307,6 +321,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Include pipeline SSE stream router
+app.include_router(pipeline_router)
 
 # Mount static files for dashboard frontend
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -515,6 +532,84 @@ async def list_modules(request: Request):
     }
 
 
+@app.get("/context/summary/{user_id}", tags=["Context"])
+async def get_context_summary(
+    user_id: str,
+    destination: Optional[str] = Query(None, description="Specific destination for navigation"),
+    force_refresh: bool = Query(default=False, description="Bypass cache"),
+):
+    """
+    Get a natural language summary of all user context data.
+
+    Used by orchestrator tools as the single source of formatted summaries.
+    """
+    from .formatters import build_full_summary
+
+    try:
+        aggregator = get_aggregator(user_id)
+        context = await aggregator.get_unified_context(force_refresh=force_refresh)
+        ctx_dict = context.to_dict().get("context", context.to_dict())
+        result = build_full_summary(ctx_dict, destination=destination)
+        result["user_id"] = user_id
+        result["timestamp"] = __import__("datetime").datetime.now().isoformat()
+        return result
+    except Exception as e:
+        logger.error(f"Error building context summary for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/context/briefing/{user_id}", tags=["Context"])
+async def get_context_briefing(
+    user_id: str,
+    force_refresh: bool = Query(default=False, description="Bypass cache"),
+):
+    """
+    Get a daily briefing — summary of all categories with alerts.
+
+    Convenience alias for /context/summary with all categories.
+    """
+    from .formatters import build_full_summary
+
+    try:
+        aggregator = get_aggregator(user_id)
+        context = await aggregator.get_unified_context(force_refresh=force_refresh)
+        ctx_dict = context.to_dict().get("context", context.to_dict())
+        result = build_full_summary(ctx_dict)
+        result["user_id"] = user_id
+        result["timestamp"] = __import__("datetime").datetime.now().isoformat()
+        return result
+    except Exception as e:
+        logger.error(f"Error building briefing for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/context/relevance", tags=["Context"])
+async def get_context_relevance(
+    user_id: str = Query(default="default", description="User identifier"),
+    force_refresh: bool = Query(default=False, description="Bypass cache"),
+):
+    """
+    Get relevance-classified context data.
+
+    Returns items classified as high, medium, or low relevance.
+    This is the canonical relevance endpoint — UI should delegate here
+    instead of reimplementing classification logic.
+    """
+    try:
+        aggregator = get_aggregator(user_id)
+        context = await aggregator.get_unified_context(force_refresh=force_refresh)
+
+        return {
+            "user_id": user_id,
+            "high": context.relevance.get("high", []),
+            "medium": context.relevance.get("medium", []),
+            "low": context.relevance.get("low", []),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching context relevance for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/relevance/{user_id}", tags=["Context"])
 async def get_relevance_summary(
     user_id: str,
@@ -583,6 +678,60 @@ _CREDENTIAL_ENV_MAP: dict[tuple[str, str], str] = {
     ("clashroyale", "api_key"): "CLASH_ROYALE_API_KEY",
     ("clashroyale", "player_tag"): "CLASH_ROYALE_PLAYER_TAG",
 }
+
+
+# =============================================================================
+# MODULE CREDENTIALS (unified store — dashboard is the single authority)
+# =============================================================================
+
+# Lazy-init CredentialStore for NEXUS module credentials
+_module_credential_store = None
+
+
+def _get_credential_store():
+    global _module_credential_store
+    if _module_credential_store is None:
+        from shared.modules.credentials import CredentialStore
+        _module_credential_store = CredentialStore(
+            db_path=os.getenv("MODULE_CREDENTIALS_DB", "data/module_credentials.db")
+        )
+    return _module_credential_store
+
+
+class ModuleCredentialRequest(BaseModel):
+    credentials: dict
+
+
+@app.post("/admin/module-credentials/{category}/{platform}", tags=["Admin"])
+async def store_module_credentials(category: str, platform: str, request: ModuleCredentialRequest):
+    """Store credentials for a NEXUS module."""
+    module_id = f"{category}/{platform}"
+    try:
+        store = _get_credential_store()
+        store.store(module_id, request.credentials)
+        return {"success": True, "module_id": module_id, "message": f"Credentials stored for {module_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/admin/module-credentials/{category}/{platform}", tags=["Admin"])
+async def delete_module_credentials(category: str, platform: str):
+    """Remove credentials for a NEXUS module."""
+    module_id = f"{category}/{platform}"
+    try:
+        store = _get_credential_store()
+        store.delete(module_id)
+        return {"success": True, "module_id": module_id, "message": f"Credentials removed for {module_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/module-credentials/{category}/{platform}/status", tags=["Admin"])
+async def check_module_credentials(category: str, platform: str):
+    """Check if credentials exist for a NEXUS module."""
+    module_id = f"{category}/{platform}"
+    store = _get_credential_store()
+    return {"module_id": module_id, "has_credentials": store.has_credentials(module_id)}
 
 
 @app.post("/admin/credentials", tags=["Admin"])
@@ -676,6 +825,7 @@ async def root_redirect():
 
 @app.get("/bank/transactions", tags=["Bank"])
 async def bank_transactions(
+    format: Optional[str] = Query(None, description="Response format: 'canonical' for UI-ready shape"),
     category: Optional[str] = Query(None, description="Spending category filter"),
     account: Optional[str] = Query(None, description="Account type filter (credit/chequing)"),
     date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
@@ -690,6 +840,12 @@ async def bank_transactions(
 ):
     """Get paginated bank transactions with optional filters."""
     try:
+        # Canonical format: pre-shaped for UI with sign-flipped amounts
+        if format == "canonical":
+            return await _bank_service.get_canonical_transactions(
+                per_page=per_page, sort_dir=sort_dir,
+            )
+
         return await _bank_service.get_transactions(
             category=category,
             account=account,
