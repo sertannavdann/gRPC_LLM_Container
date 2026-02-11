@@ -60,7 +60,8 @@ BOLD := \033[1m
         logs-errors logs-debug logs-core logs-adapters \
         fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
         open-all open-settings open-integrations \
-        lidm-up lidm-status lidm-list-models airllm-up airllm-logs test-lidm
+        lidm-up lidm-status lidm-list-models airllm-up airllm-logs test-lidm \
+        showroom showroom-fresh open-pipeline open-nexus-dashboard nexus-demo
 
 # ============================================================================
 # HELP
@@ -173,6 +174,13 @@ help:
 	@printf '  $(CYAN)make test-lidm$(RESET)            - Run LIDM unit + integration tests\n'
 	@printf '  $(CYAN)make airllm-up$(RESET)            - Start AirLLM service (optional/batch)\n'
 	@printf '  $(CYAN)make airllm-logs$(RESET)          - Tail AirLLM service logs\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN)🎪 NEXUS Showroom:$(RESET)\n'
+	@printf '  $(CYAN)make showroom$(RESET)             - Run NEXUS integration tests\n'
+	@printf '  $(CYAN)make showroom-fresh$(RESET)       - Rebuild + run tests\n'
+	@printf '  $(CYAN)make nexus-demo$(RESET)           - Full demo: rebuild, test, open dashboards\n'
+	@printf '  $(CYAN)make open-pipeline$(RESET)        - Open Pipeline UI in browser\n'
+	@printf '  $(CYAN)make open-nexus-dashboard$(RESET) - Open NEXUS Grafana dashboard\n'
 	@echo ""
 	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, llm_service_standard, chroma_service, sandbox_service, ui_service, bridge_service\n'
 	@echo ""
@@ -1179,6 +1187,36 @@ test-lidm:
 	@printf '$(CYAN)Running LIDM unit + integration tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_model_registry.py -v --tb=short 2>/dev/null || true
 	@printf '$(GREEN)✓ LIDM tests complete$(RESET)\n'
+
+# ============================================================================
+# NEXUS Showroom
+# ============================================================================
+
+# Run the full showroom integration test
+showroom:
+	@printf '$(BOLD)$(CYAN)Running NEXUS Showroom tests...$(RESET)\n'
+	@bash scripts/showroom_test.sh
+
+# Run showroom with rebuild (ensures latest code)
+showroom-fresh: rebuild-no-llm
+	@sleep 5
+	@$(MAKE) showroom
+
+# Open the pipeline UI
+open-pipeline:
+	@open http://localhost:3000/pipeline 2>/dev/null || xdg-open http://localhost:3000/pipeline 2>/dev/null || printf '$(YELLOW)Open http://localhost:3000/pipeline$(RESET)\n'
+
+# Open NEXUS Grafana dashboard
+open-nexus-dashboard:
+	@open "http://localhost:3001/d/nexus-modules/nexus-module-system-resources?orgId=1" 2>/dev/null || \
+	 xdg-open "http://localhost:3001/d/nexus-modules/nexus-module-system-resources?orgId=1" 2>/dev/null || \
+	 printf '$(YELLOW)Open http://localhost:3001/d/nexus-modules$(RESET)\n'
+
+# Full NEXUS demo: rebuild, run tests, open dashboards
+nexus-demo: showroom-fresh
+	@$(MAKE) open-pipeline
+	@$(MAKE) open-nexus-dashboard
+	@printf '$(GREEN)✓ NEXUS demo launched — pipeline UI + Grafana dashboards opened$(RESET)\n'
 
 # ============================================================================
 # Docker Troubleshooting Guide

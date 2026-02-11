@@ -56,3 +56,45 @@ groups:
           severity: warning
         annotations:
           summary: "Context window utilization above 90%"
+
+  - name: nexus_modules
+    rules:
+      # Module validation failure spike
+      - alert: ModuleValidationFailures
+        expr: rate(nexus_module_validations_total{result="fail"}[10m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High module validation failure rate"
+          description: "Module validations are failing at {{ $value | humanize }}/s"
+
+      # Modules in failed state
+      - alert: ModulesInFailedState
+        expr: nexus_module_status{status="failed"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} module(s) in failed state"
+
+  - name: container_resources
+    rules:
+      # Container high CPU usage (>80% of a core for 5 min)
+      - alert: ContainerHighCPU
+        expr: rate(container_cpu_usage_seconds_total{name=~"orchestrator|llm_service|dashboard_service"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} CPU usage above 80%"
+
+      # Container high memory (>2GB)
+      - alert: ContainerHighMemory
+        expr: container_memory_usage_bytes{name=~"orchestrator|llm_service|dashboard_service"} > 2147483648
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} memory above 2GB"
+          description: "Current: {{ $value | humanize }}B"

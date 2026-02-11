@@ -1,0 +1,293 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "panels": [],
+      "title": "NEXUS Module System",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 10}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 2,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Modules Loaded",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "nexus_module_status{status=\"loaded\"}",
+          "legendFormat": "Loaded"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 3,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Modules Failed",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "nexus_module_status{status=\"failed\"}",
+          "legendFormat": "Failed"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "blue", "mode": "fixed"}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 4,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Total Builds",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "nexus_module_builds_total",
+          "legendFormat": "Builds"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "purple", "mode": "fixed"}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 5,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Total Installs",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "nexus_module_installs_total",
+          "legendFormat": "Installs"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 6,
+      "panels": [],
+      "title": "Module Build & Validation",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "id": 7,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "title": "Module Builds Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(nexus_module_builds_total[5m])",
+          "legendFormat": "builds/s"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "bars", "fillOpacity": 50}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "id": 8,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "title": "Validation Results",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(nexus_module_validations_total{result=\"pass\"}[5m])",
+          "legendFormat": "Pass"
+        },
+        {
+          "expr": "rate(nexus_module_validations_total{result=\"fail\"}[5m])",
+          "legendFormat": "Fail"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14},
+      "id": 9,
+      "panels": [],
+      "title": "Container Resources (cAdvisor)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 1},
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "id": 10,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "sortBy": "Last *", "sortDesc": true}},
+      "title": "Container CPU Usage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"orchestrator|llm_service|dashboard_service|chroma_service|sandbox_service|bridge_service\"}[1m])",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 1},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "id": 11,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "sortBy": "Last *", "sortDesc": true}},
+      "title": "Container Memory Usage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "container_memory_usage_bytes{name=~\"orchestrator|llm_service|dashboard_service|chroma_service|sandbox_service|bridge_service\"}",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23},
+      "id": 12,
+      "panels": [],
+      "title": "LLM Provider & LIDM Routing",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "id": 13,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "title": "LIDM Delegation by Tier",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(lidm_delegation_requests_total[5m])",
+          "legendFormat": "{{strategy}}/{{tier}}"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10},
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "id": 14,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "title": "Provider Latency (p95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(llm_provider_latency_ms_bucket[5m]))",
+          "legendFormat": "{{provider}} p95"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 15,
+      "title": "Orchestrator Process Memory (RSS)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "process_memory_rss_bytes",
+          "legendFormat": "RSS"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 16,
+      "title": "Context Window Utilization",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "pipeline_context_utilization",
+          "legendFormat": "utilization"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["nexus", "modules", "cadvisor", "lidm"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "title": "NEXUS Module System & Resources",
+  "uid": "nexus-modules",
+  "version": 1
+}
