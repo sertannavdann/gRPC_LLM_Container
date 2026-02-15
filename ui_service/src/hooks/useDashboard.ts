@@ -17,6 +17,12 @@ import {
   GamingContext,
 } from '@/types/dashboard';
 
+interface ConnectAdapterResult {
+  credentialsRequired: boolean;
+  auth_fields?: Array<{ key: string; label: string; type: string }>;
+  platform?: string;
+}
+
 interface UseDashboardOptions {
   refreshInterval?: number; // Auto-refresh interval in ms
   autoRefresh?: boolean;
@@ -43,7 +49,7 @@ interface UseDashboardReturn {
   // Actions
   refresh: () => Promise<void>;
   refreshCategory: (category: string) => Promise<void>;
-  connectAdapter: (category: string, platform: string) => Promise<void>;
+  connectAdapter: (category: string, platform: string) => Promise<ConnectAdapterResult>;
   disconnectAdapter: (category: string, platform: string) => Promise<void>;
 }
 
@@ -125,10 +131,15 @@ export function useDashboard(options: UseDashboardOptions = {}): UseDashboardRet
       
       const data = await res.json();
       
+      // If credentials are required, signal caller to redirect
+      if (data.success === false && data.auth_fields) {
+        return { credentialsRequired: true, auth_fields: data.auth_fields, platform };
+      }
+      
       // If OAuth needed, redirect
       if (data.oauth_url) {
         window.location.href = data.oauth_url;
-        return;
+        return { credentialsRequired: false };
       }
       
       // Refresh adapters list
@@ -136,6 +147,7 @@ export function useDashboard(options: UseDashboardOptions = {}): UseDashboardRet
       if (adaptersRes.ok) {
         setAdapters(await adaptersRes.json());
       }
+      return { credentialsRequired: false };
     } catch (err: any) {
       console.error('[useDashboard] Connect error:', err);
       throw err;

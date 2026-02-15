@@ -7,6 +7,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AdaptersResponse, Adapter, AdapterCategory } from '@/types/dashboard';
 import { useDashboard } from '@/hooks/useDashboard';
 import { 
@@ -26,6 +27,7 @@ interface AdaptersPanelProps {
 }
 
 export function AdaptersPanel({ adapters, onClose }: AdaptersPanelProps) {
+  const router = useRouter();
   const { connectAdapter, disconnectAdapter } = useDashboard();
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(adapters.categories.map(c => c.category))
@@ -51,7 +53,13 @@ export function AdaptersPanel({ adapters, onClose }: AdaptersPanelProps) {
     setError(null);
     
     try {
-      await connectAdapter(category, platform);
+      const result = await connectAdapter(category, platform);
+      if (result?.credentialsRequired) {
+        // Redirect to the full Integrations page where credentials can be entered
+        onClose();
+        router.push(`/integrations?highlight=${platform}`);
+        return;
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to connect adapter');
     } finally {
@@ -204,10 +212,17 @@ export function AdaptersPanel({ adapters, onClose }: AdaptersPanelProps) {
         </div>
         
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-gray-800 bg-gray-800/50">
-          <p className="text-xs text-gray-500 text-center">
-            Mock adapters are for development. Connect real platforms to see your actual data.
+        <div className="px-4 py-3 border-t border-gray-800 bg-gray-800/50 flex items-center justify-between">
+          <p className="text-xs text-gray-500">
+            Mock adapters are for development. Click Connect to set up real platforms.
           </p>
+          <button
+            onClick={() => { onClose(); router.push('/integrations'); }}
+            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Manage All
+          </button>
         </div>
       </div>
     </div>
