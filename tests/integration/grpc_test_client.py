@@ -31,7 +31,7 @@ class AgentTestClient:
         self,
         host: str = "localhost",
         port: int = 50054,
-        timeout: int = 30,
+        timeout: int = 60,
     ):
         """
         Initialize test client.

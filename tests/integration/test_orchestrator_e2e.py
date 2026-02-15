@@ -67,7 +67,7 @@ def agent_client(docker_manager):
     
     Creates fresh client per test, closes after test.
     """
-    with AgentTestClient(host="localhost", port=50054, timeout=30) as client:
+    with AgentTestClient(host="localhost", port=50054, timeout=60) as client:
         yield client
 
 

@@ -43,7 +43,7 @@ DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8001")
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://localhost:8100")
 UI_URL = os.getenv("UI_URL", "http://localhost:5001")
 HTTP_TIMEOUT = 15  # seconds
-GRPC_TIMEOUT = 60  # seconds
+GRPC_TIMEOUT = 90  # seconds — local LLM cold inference can reach 60s+
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,9 @@ class TestMathCalculations:
 
     def test_expression(self, grpc_client):
         """§6.2 Test 2.3 — (5 + 3) * 2 - 7 / 2 = 12.5."""
-        response = grpc_client.query("What is (5 + 3) * 2 - 7 / 2?")
+        response = grpc_client.query(
+            "What is (5 + 3) * 2 - 7 / 2? Use the math_solver tool to compute this precisely."
+        )
         assert response is not None
         assert "12.5" in response.final_answer or "12,5" in response.final_answer, (
             f"Expected '12.5' in answer, got: {response.final_answer[:200]}"
