@@ -53,11 +53,18 @@ class ModuleRegistry:
                     last_used TEXT
                 )
             """)
+            # Migration: add org_id column if not exists
+            try:
+                conn.execute(
+                    "ALTER TABLE modules ADD COLUMN org_id TEXT DEFAULT 'default'"
+                )
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     def _connect(self):
         return sqlite3.connect(str(self.db_path))
 
-    def install(self, manifest: ModuleManifest) -> None:
+    def install(self, manifest: ModuleManifest, org_id: str = "default") -> None:
         """Record a module installation."""
         now = datetime.utcnow().isoformat()
         manifest.status = ModuleStatus.INSTALLED
@@ -67,37 +74,43 @@ class ModuleRegistry:
                 INSERT OR REPLACE INTO modules
                     (module_id, name, category, platform, status, health_status,
                      manifest_json, installed_at, updated_at, failure_count,
-                     success_count, last_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     success_count, last_used, org_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     manifest.module_id, manifest.name, manifest.category,
                     manifest.platform, manifest.status, manifest.health_status,
                     json.dumps(manifest.to_dict()), now, now,
                     manifest.failure_count, manifest.success_count,
-                    manifest.last_used,
+                    manifest.last_used, org_id,
                 ),
             )
         logger.info(f"Module installed in registry: {manifest.module_id}")
 
-    def uninstall(self, module_id: str) -> bool:
+    def uninstall(self, module_id: str, org_id: Optional[str] = None) -> bool:
         """Remove a module from the registry."""
         with self._connect() as conn:
-            cursor = conn.execute(
-                "DELETE FROM modules WHERE module_id = ?", (module_id,)
-            )
+            if org_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM modules WHERE module_id = ? AND org_id = ?",
+                    (module_id, org_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM modules WHERE module_id = ?", (module_id,)
+                )
             removed = cursor.rowcount > 0
         if removed:
             logger.info(f"Module uninstalled from registry: {module_id}")
         return removed
 
-    def enable(self, module_id: str) -> bool:
+    def enable(self, module_id: str, org_id: Optional[str] = None) -> bool:
         """Mark a module as installed (enabled)."""
-        return self._update_status(module_id, ModuleStatus.INSTALLED)
+        return self._update_status(module_id, ModuleStatus.INSTALLED, org_id=org_id)
 
-    def disable(self, module_id: str) -> bool:
+    def disable(self, module_id: str, org_id: Optional[str] = None) -> bool:
         """Mark a module as disabled."""
-        return self._update_status(module_id, ModuleStatus.DISABLED)
+        return self._update_status(module_id, ModuleStatus.DISABLED, org_id=org_id)
 
     def update_health(self, module_id: str, health: str, increment_failure: bool = False) -> None:
         """Update module health status and optionally increment failure count."""
@@ -126,30 +139,40 @@ class ModuleRegistry:
                 (now, now, module_id),
             )
 
-    def get_module(self, module_id: str) -> Optional[Dict[str, Any]]:
+    def get_module(self, module_id: str, org_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a module's registry entry."""
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM modules WHERE module_id = ?", (module_id,)
-            ).fetchone()
+            if org_id is not None:
+                row = conn.execute(
+                    "SELECT * FROM modules WHERE module_id = ? AND org_id = ?",
+                    (module_id, org_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM modules WHERE module_id = ?", (module_id,)
+                ).fetchone()
         if row is None:
             return None
         return dict(row)
 
-    def list_modules(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """List all modules, optionally filtered by status."""
+    def list_modules(self, status: Optional[str] = None, org_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List all modules, optionally filtered by status and/or org_id."""
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
+            conditions = []
+            params: list = []
             if status:
-                rows = conn.execute(
-                    "SELECT * FROM modules WHERE status = ? ORDER BY category, name",
-                    (status,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM modules ORDER BY category, name"
-                ).fetchall()
+                conditions.append("status = ?")
+                params.append(status)
+            if org_id is not None:
+                conditions.append("org_id = ?")
+                params.append(org_id)
+            where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+            rows = conn.execute(
+                f"SELECT * FROM modules{where} ORDER BY category, name",
+                params,
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def list_installed(self) -> List[Dict[str, Any]]:
@@ -166,12 +189,18 @@ class ModuleRegistry:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def _update_status(self, module_id: str, status: str) -> bool:
+    def _update_status(self, module_id: str, status: str, org_id: Optional[str] = None) -> bool:
         """Update a module's status."""
         now = datetime.utcnow().isoformat()
         with self._connect() as conn:
-            cursor = conn.execute(
-                "UPDATE modules SET status = ?, updated_at = ? WHERE module_id = ?",
-                (status, now, module_id),
-            )
+            if org_id is not None:
+                cursor = conn.execute(
+                    "UPDATE modules SET status = ?, updated_at = ? WHERE module_id = ? AND org_id = ?",
+                    (status, now, module_id, org_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "UPDATE modules SET status = ?, updated_at = ? WHERE module_id = ?",
+                    (status, now, module_id),
+                )
             return cursor.rowcount > 0

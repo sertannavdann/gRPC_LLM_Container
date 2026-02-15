@@ -7,15 +7,21 @@ and managing NEXUS dynamic modules without container restarts.
 """
 
 import logging
+import os
 import threading
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from typing import Optional, Dict, Any, List
+
+from shared.auth.api_keys import APIKeyStore
+from shared.auth.middleware import APIKeyAuthMiddleware
+from shared.auth.models import User
+from shared.auth.rbac import Permission, get_current_user, require_permission
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
@@ -29,6 +35,9 @@ _config_manager: Optional[ConfigManager] = None
 _module_loader = None
 _module_registry = None
 _credential_store = None
+
+# Auth (set by start_admin_server)
+_api_key_store: Optional[APIKeyStore] = None
 
 # CORS for UI access
 _app.add_middleware(
@@ -86,20 +95,27 @@ def health():
 
 
 @_app.get("/admin/routing-config")
-def get_routing_config():
+def get_routing_config(user: User = Depends(get_current_user)):
     mgr = _get_mgr()
     return mgr.get_config().model_dump()
 
 
 @_app.put("/admin/routing-config")
-def put_routing_config(payload: RoutingConfig):
+def put_routing_config(
+    payload: RoutingConfig,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
+):
     mgr = _get_mgr()
     mgr.update_config(payload)
     return {"status": "updated", "version": payload.version}
 
 
 @_app.patch("/admin/routing-config/category/{name}")
-def patch_category(name: str, payload: CategoryRouting):
+def patch_category(
+    name: str,
+    payload: CategoryRouting,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
+):
     mgr = _get_mgr()
     config = mgr.get_config().model_copy(deep=True)
     config.categories[name] = payload
@@ -108,7 +124,10 @@ def patch_category(name: str, payload: CategoryRouting):
 
 
 @_app.delete("/admin/routing-config/category/{name}")
-def delete_category(name: str):
+def delete_category(
+    name: str,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
+):
     mgr = _get_mgr()
     config = mgr.get_config().model_copy(deep=True)
     if name not in config.categories:
@@ -119,7 +138,7 @@ def delete_category(name: str):
 
 
 @_app.post("/admin/routing-config/reload")
-def reload_config():
+def reload_config(user: User = Depends(require_permission(Permission.WRITE_CONFIG))):
     mgr = _get_mgr()
     config = mgr.reload()
     return {"status": "reloaded", "categories": len(config.categories)}
@@ -143,7 +162,7 @@ class ModuleActionResponse(BaseModel):
 
 
 @_app.get("/admin/modules")
-def list_modules():
+def list_modules(user: User = Depends(get_current_user)):
     """List all modules with status, health, and credential info."""
     if _module_loader is None:
         return {"modules": [], "total": 0}
@@ -178,7 +197,7 @@ def list_modules():
 
 
 @_app.get("/admin/modules/{category}/{platform}")
-def get_module(category: str, platform: str):
+def get_module(category: str, platform: str, user: User = Depends(get_current_user)):
     """Get detailed information about a specific module."""
     module_id = f"{category}/{platform}"
 
@@ -207,7 +226,11 @@ def get_module(category: str, platform: str):
 
 
 @_app.post("/admin/modules/{category}/{platform}/enable")
-def enable_module(category: str, platform: str):
+def enable_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
     """Enable a disabled module."""
     module_id = f"{category}/{platform}"
 
@@ -228,7 +251,11 @@ def enable_module(category: str, platform: str):
 
 
 @_app.post("/admin/modules/{category}/{platform}/disable")
-def disable_module(category: str, platform: str):
+def disable_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
     """Disable an active module."""
     module_id = f"{category}/{platform}"
 
@@ -249,7 +276,11 @@ def disable_module(category: str, platform: str):
 
 
 @_app.post("/admin/modules/{category}/{platform}/reload")
-def reload_module(category: str, platform: str):
+def reload_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
     """Reload a module (unload + load)."""
     module_id = f"{category}/{platform}"
 
@@ -268,7 +299,11 @@ def reload_module(category: str, platform: str):
 
 
 @_app.delete("/admin/modules/{category}/{platform}")
-def uninstall_module(category: str, platform: str):
+def uninstall_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
     """Uninstall a module (unload + remove from registry)."""
     module_id = f"{category}/{platform}"
 
@@ -299,7 +334,12 @@ def uninstall_module(category: str, platform: str):
 
 
 @_app.post("/admin/modules/{category}/{platform}/credentials")
-def store_credentials(category: str, platform: str, request: ModuleCredentialRequest):
+def store_credentials(
+    category: str,
+    platform: str,
+    request: ModuleCredentialRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
+):
     """Store API credentials for a module — proxies to dashboard credential store."""
     import requests as http_req
     dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
@@ -326,7 +366,11 @@ def store_credentials(category: str, platform: str, request: ModuleCredentialReq
 
 
 @_app.delete("/admin/modules/{category}/{platform}/credentials")
-def delete_credentials(category: str, platform: str):
+def delete_credentials(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
+):
     """Remove stored credentials for a module — proxies to dashboard credential store."""
     import requests as http_req
     dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
@@ -348,7 +392,7 @@ def delete_credentials(category: str, platform: str):
 
 
 @_app.get("/admin/system-info")
-def system_info():
+def system_info(user: User = Depends(get_current_user)):
     """Return system configuration for the settings UI."""
     mgr = _get_mgr()
     config = mgr.get_config()
@@ -375,7 +419,7 @@ def system_info():
 
 
 @_app.get("/admin/providers")
-def get_providers():
+def get_providers(user: User = Depends(get_current_user)):
     """Return provider/model lists and LIDM tier models from routing config."""
     mgr = _get_mgr()
     config = mgr.get_config()
@@ -407,7 +451,7 @@ def get_providers():
 
 
 @_app.post("/admin/reload")
-def reload_system():
+def reload_system(user: User = Depends(require_permission(Permission.WRITE_CONFIG))):
     """Reload routing config and signal LLM clients to reconnect."""
     mgr = _get_mgr()
     config = mgr.reload()
@@ -426,19 +470,131 @@ def reload_system():
 # ── Server launcher ──────────────────────────────────────────────────────────
 
 
+# =============================================================================
+# AUTH BOOTSTRAP & API KEY MANAGEMENT
+# =============================================================================
+
+
+class CreateKeyRequest(BaseModel):
+    """Request to create a new API key."""
+    org_id: str
+    role: str = "viewer"
+
+
+@_app.post("/admin/bootstrap")
+def bootstrap_admin_key():
+    """Create initial admin key. Only works when no keys exist."""
+    if _api_key_store is None:
+        raise HTTPException(503, "Auth not initialized")
+    with _api_key_store._connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
+    if count > 0:
+        raise HTTPException(
+            403,
+            "Bootstrap already complete. Use existing admin key to create new keys.",
+        )
+    org = _api_key_store.create_organization("default", "Default Organization")
+    key, key_id = _api_key_store.create_key("default", "owner")
+    return {
+        "api_key": key,
+        "key_id": key_id,
+        "org_id": "default",
+        "role": "owner",
+        "warning": "Store this key securely. It will not be shown again.",
+    }
+
+
+@_app.post("/admin/api-keys")
+def create_api_key(
+    request: CreateKeyRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
+):
+    """Create a new API key for an organization."""
+    if _api_key_store is None:
+        raise HTTPException(503, "Auth not initialized")
+    key, key_id = _api_key_store.create_key(request.org_id, request.role)
+    return {
+        "api_key": key,
+        "key_id": key_id,
+        "org_id": request.org_id,
+        "role": request.role,
+        "warning": "Store this key securely. It will not be shown again.",
+    }
+
+
+@_app.get("/admin/api-keys")
+def list_api_keys(user: User = Depends(require_permission(Permission.MANAGE_KEYS))):
+    """List all API keys for the authenticated user's organization."""
+    if _api_key_store is None:
+        raise HTTPException(503, "Auth not initialized")
+    keys = _api_key_store.list_keys(user.org_id)
+    return {"keys": [k.model_dump() for k in keys], "total": len(keys)}
+
+
+@_app.delete("/admin/api-keys/{key_id}")
+def revoke_api_key(
+    key_id: str,
+    user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
+):
+    """Revoke an API key."""
+    if _api_key_store is None:
+        raise HTTPException(503, "Auth not initialized")
+    revoked = _api_key_store.revoke_key(key_id)
+    if not revoked:
+        raise HTTPException(404, f"Key {key_id} not found")
+    return {"success": True, "key_id": key_id, "message": "Key revoked"}
+
+
+@_app.post("/admin/api-keys/{key_id}/rotate")
+def rotate_api_key(
+    key_id: str,
+    user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
+):
+    """Rotate an API key with dual-key overlap."""
+    if _api_key_store is None:
+        raise HTTPException(503, "Auth not initialized")
+    try:
+        new_key, new_key_id = _api_key_store.rotate_key(user.org_id, key_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {
+        "new_api_key": new_key,
+        "new_key_id": new_key_id,
+        "old_key_id": key_id,
+        "warning": "Store the new key securely. Old key valid during grace period.",
+    }
+
+
 def start_admin_server(
     config_manager: ConfigManager,
     port: int = 8003,
     module_loader=None,
     module_registry=None,
     credential_store=None,
+    api_key_store: Optional[APIKeyStore] = None,
 ) -> None:
     """Start admin API in a daemon thread. Safe to call from gRPC serve()."""
-    global _config_manager, _module_loader, _module_registry, _credential_store
+    global _config_manager, _module_loader, _module_registry, _credential_store, _api_key_store
     _config_manager = config_manager
     _module_loader = module_loader
     _module_registry = module_registry
     _credential_store = credential_store
+
+    # Initialize auth
+    _api_key_store = api_key_store or APIKeyStore(
+        db_path=os.getenv("AUTH_DB_PATH", "data/api_keys.db")
+    )
+    _app.add_middleware(
+        APIKeyAuthMiddleware,
+        api_key_store=_api_key_store,
+        public_paths=[
+            "/admin/health",
+            "/admin/bootstrap",
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+        ],
+    )
 
     def _run():
         # Use Config + Server so we can disable signal handlers

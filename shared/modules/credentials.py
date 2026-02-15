@@ -68,19 +68,47 @@ class CredentialStore:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS credentials (
-                    module_id TEXT PRIMARY KEY,
-                    encrypted_data TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-            """)
+            # Check if we need to migrate from old schema (module_id PK only)
+            existing_cols = [
+                row[1] for row in conn.execute("PRAGMA table_info(credentials)").fetchall()
+            ]
+
+            if not existing_cols:
+                # Fresh install: create with composite key
+                conn.execute("""
+                    CREATE TABLE credentials (
+                        module_id TEXT NOT NULL,
+                        encrypted_data TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        org_id TEXT NOT NULL DEFAULT 'default',
+                        PRIMARY KEY (module_id, org_id)
+                    )
+                """)
+            elif "org_id" not in existing_cols:
+                # Migration: old table with module_id-only PK -> composite PK
+                conn.execute("""
+                    CREATE TABLE credentials_new (
+                        module_id TEXT NOT NULL,
+                        encrypted_data TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        org_id TEXT NOT NULL DEFAULT 'default',
+                        PRIMARY KEY (module_id, org_id)
+                    )
+                """)
+                conn.execute("""
+                    INSERT INTO credentials_new (module_id, encrypted_data, created_at, updated_at, org_id)
+                    SELECT module_id, encrypted_data, created_at, updated_at, 'default'
+                    FROM credentials
+                """)
+                conn.execute("DROP TABLE credentials")
+                conn.execute("ALTER TABLE credentials_new RENAME TO credentials")
 
     def _connect(self):
         return sqlite3.connect(str(self.db_path))
 
-    def store(self, module_id: str, credentials: Dict[str, Any]) -> None:
+    def store(self, module_id: str, credentials: Dict[str, Any], org_id: str = "default") -> None:
         """
         Store credentials for a module (encrypted at rest).
 
@@ -88,6 +116,7 @@ class CredentialStore:
             module_id: "category/platform" identifier
             credentials: Dict of credential key-value pairs
                          (e.g., {"api_key": "abc123"})
+            org_id: Organization identifier for multi-tenant isolation
         """
         plaintext = json.dumps(credentials).encode()
         fernet = _get_fernet()
@@ -101,23 +130,29 @@ class CredentialStore:
         with self._connect() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO credentials
-                   (module_id, encrypted_data, created_at, updated_at)
-                   VALUES (?, ?, ?, ?)""",
-                (module_id, encrypted, now, now),
+                   (module_id, encrypted_data, created_at, updated_at, org_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (module_id, encrypted, now, now, org_id),
             )
         logger.info(f"Credentials stored for module: {module_id}")
 
-    def retrieve(self, module_id: str) -> Optional[Dict[str, Any]]:
+    def retrieve(self, module_id: str, org_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Retrieve decrypted credentials for a module.
 
         Returns None if no credentials are stored.
         """
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT encrypted_data FROM credentials WHERE module_id = ?",
-                (module_id,),
-            ).fetchone()
+            if org_id is not None:
+                row = conn.execute(
+                    "SELECT encrypted_data FROM credentials WHERE module_id = ? AND org_id = ?",
+                    (module_id, org_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT encrypted_data FROM credentials WHERE module_id = ?",
+                    (module_id,),
+                ).fetchone()
 
         if row is None:
             return None
@@ -136,27 +171,45 @@ class CredentialStore:
             logger.error(f"Failed to decrypt credentials for {module_id}: {e}")
             return None
 
-    def delete(self, module_id: str) -> bool:
+    def delete(self, module_id: str, org_id: Optional[str] = None) -> bool:
         """Delete credentials for a module."""
         with self._connect() as conn:
-            cursor = conn.execute(
-                "DELETE FROM credentials WHERE module_id = ?", (module_id,)
-            )
+            if org_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM credentials WHERE module_id = ? AND org_id = ?",
+                    (module_id, org_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM credentials WHERE module_id = ?", (module_id,)
+                )
             removed = cursor.rowcount > 0
         if removed:
             logger.info(f"Credentials deleted for module: {module_id}")
         return removed
 
-    def has_credentials(self, module_id: str) -> bool:
+    def has_credentials(self, module_id: str, org_id: Optional[str] = None) -> bool:
         """Check if credentials exist for a module."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM credentials WHERE module_id = ?", (module_id,)
-            ).fetchone()
+            if org_id is not None:
+                row = conn.execute(
+                    "SELECT 1 FROM credentials WHERE module_id = ? AND org_id = ?",
+                    (module_id, org_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT 1 FROM credentials WHERE module_id = ?", (module_id,)
+                ).fetchone()
         return row is not None
 
-    def list_modules_with_credentials(self) -> list:
+    def list_modules_with_credentials(self, org_id: Optional[str] = None) -> list:
         """List module IDs that have stored credentials."""
         with self._connect() as conn:
-            rows = conn.execute("SELECT module_id FROM credentials").fetchall()
+            if org_id is not None:
+                rows = conn.execute(
+                    "SELECT module_id FROM credentials WHERE org_id = ?",
+                    (org_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT module_id FROM credentials").fetchall()
         return [r[0] for r in rows]

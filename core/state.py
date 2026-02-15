@@ -53,6 +53,9 @@ class AgentState(TypedDict):
     user_id: Optional[str]
     metadata: dict
 
+    # Organization scoping for multi-tenant isolation
+    org_id: Optional[str]
+
 
 class WorkflowConfig(BaseModel):
     """
@@ -154,20 +157,22 @@ def create_initial_state(
     conversation_id: str,
     user_id: Optional[str] = None,
     metadata: Optional[dict] = None,
+    org_id: Optional[str] = None,
 ) -> AgentState:
     """
     Factory function for creating initial agent state.
-    
+
     Args:
         conversation_id: Unique conversation identifier (UUID recommended)
         user_id: Optional user identifier for multi-tenant deployments
         metadata: Additional context (e.g., {"source": "web", "locale": "en-US"})
-    
+        org_id: Optional organization identifier for multi-tenant isolation
+
     Returns:
         AgentState: Initialized state ready for workflow execution
-    
+
     Example:
-        >>> state = create_initial_state("conv-123", user_id="user-456")
+        >>> state = create_initial_state("conv-123", user_id="user-456", org_id="org-1")
         >>> workflow.run(state, input_message="Hello!")
     """
     return AgentState(
@@ -180,4 +185,5 @@ def create_initial_state(
         conversation_id=conversation_id,
         user_id=user_id,
         metadata=metadata or {},
+        org_id=org_id,
     )

@@ -21,6 +21,9 @@ from fastapi.responses import Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from shared.auth.api_keys import APIKeyStore
+from shared.auth.middleware import APIKeyAuthMiddleware
+
 from .aggregator import DashboardAggregator, UserConfig
 from .bank_service import BankService
 from .pipeline_stream import router as pipeline_router
@@ -296,6 +299,26 @@ async def lifespan(app: FastAPI):
         app.state.module_loader = None
 
     logger.info(f"Registered adapters: {adapter_registry.to_dict()}")
+
+    # Initialize auth middleware
+    auth_db_path = os.getenv("AUTH_DB_PATH", "data/api_keys.db")
+    api_key_store = APIKeyStore(db_path=auth_db_path)
+    app.add_middleware(
+        APIKeyAuthMiddleware,
+        api_key_store=api_key_store,
+        public_paths=[
+            "/health",
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+            "/metrics",
+            "/stream/pipeline-state",
+            "/static",
+            "/",
+        ],
+    )
+    app.state.api_key_store = api_key_store
+
     yield
     logger.info("Dashboard Service shutting down...")
     _aggregators.clear()
