@@ -26,6 +26,7 @@ from shared.observability import (
     create_lidm_metrics,
     create_decision_pipeline_metrics,
     create_module_metrics,
+    create_run_unit_metrics,
     create_span,
     get_correlation_id,
     set_correlation_id,
@@ -39,6 +40,7 @@ from shared.observability import (
     LIDMMetrics,
     DecisionPipelineMetrics,
     ModuleMetrics,
+    RunUnitMetrics,
     MemoryReporter,
 )
 from shared.observability.grpc_interceptor import ObservabilityServerInterceptor
@@ -118,6 +120,9 @@ from .routing_config import RoutingConfig
 # Protobuf imports
 from shared.generated import agent_pb2
 from shared.generated import agent_pb2_grpc
+
+# Billing / metering
+from shared.billing import QuotaManager, UsageStore
 
 
 logging.basicConfig(
@@ -799,6 +804,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.lidm_metrics: Optional[LIDMMetrics] = None
         self.pipeline_metrics: Optional[DecisionPipelineMetrics] = None
         self.module_metrics: Optional[ModuleMetrics] = None
+        self.run_unit_metrics: Optional[RunUnitMetrics] = None
         self._memory_reporter: Optional[MemoryReporter] = None
 
         if self.observability_enabled:
@@ -815,6 +821,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             self.lidm_metrics = create_lidm_metrics()
             self.pipeline_metrics = create_decision_pipeline_metrics()
             self.module_metrics = create_module_metrics()
+            self.run_unit_metrics = create_run_unit_metrics()
 
             # Start background memory reporter (snapshots RSS every 15s)
             self._memory_reporter = MemoryReporter(interval_seconds=15.0)
@@ -1014,7 +1021,14 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # Initialize recovery manager
         self.recovery_manager = RecoveryManager(self.checkpoint_manager)
-        
+
+        # ── Billing / quota ─────────────────────────────────────────
+        self._usage_store = UsageStore(
+            db_path=os.getenv("BILLING_DB_PATH", "data/billing.db")
+        )
+        self._quota_manager = QuotaManager(usage_store=self._usage_store)
+        logger.info("Billing subsystem initialized")
+
         # Run startup recovery
         self._run_startup_recovery()
         
@@ -1242,6 +1256,10 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                     thread_id=thread_id
                 )
 
+            if result.get("quota_exceeded"):
+                context.set_code(grpc.StatusCode.RESOURCE_EXHAUSTED)
+                context.set_details(result.get("content", "Usage quota exceeded"))
+
             # Mark thread as complete
             self.checkpoint_manager.mark_thread_complete(thread_id)
 
@@ -1304,7 +1322,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         thread_id: str
     ) -> Dict[str, Any]:
         """Process query through agent workflow with intent-based guardrails."""
-        
+
+        org_id = "default"  # resolved from auth context in production
+
         # Analyze intent for multi-tool queries
         intent_analysis = analyze_intent(query)
 
@@ -1324,6 +1344,28 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                 "iteration": 0,
                 "needs_clarification": True
             }
+
+        # ── Quota pre-check ──────────────────────────────────────────
+        try:
+            quota_result = self._quota_manager.check_quota(org_id)
+            if not quota_result.allowed:
+                logger.warning(
+                    f"Quota exceeded for org={org_id}: "
+                    f"{quota_result.current_usage}/{quota_result.limit}"
+                )
+                return {
+                    "content": (
+                        f"Usage quota exceeded for this billing period "
+                        f"({quota_result.current_usage:.1f}/{quota_result.limit:.1f} run-units). "
+                        f"Please upgrade your plan or wait for the next billing cycle."
+                    ),
+                    "messages": [],
+                    "tool_results": [],
+                    "iteration": 0,
+                    "quota_exceeded": True,
+                }
+        except Exception as quota_err:
+            logger.warning(f"Quota check failed (fail-open): {quota_err}")
         
         # LIDM: If delegation is enabled, try routing through DelegationManager
         if self.delegation_enabled and self.delegation_manager:
@@ -1498,6 +1540,16 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                         self.tool_metrics.tool_errors_total.add(
                             1, {"tool": tool_name}
                         )
+
+        # ── Run-unit metrics emission ────────────────────────────────
+        request_run_units = final_state.get("request_run_units", 0.0)
+        if self.observability_enabled and self.run_unit_metrics and request_run_units > 0:
+            self.run_unit_metrics.run_units_total.add(
+                request_run_units, {"org_id": org_id, "tier": "standard"}
+            )
+            self.run_unit_metrics.run_units_per_request.record(
+                request_run_units, {"org_id": org_id}
+            )
 
         return {
             "content": content,

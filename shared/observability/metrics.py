@@ -539,3 +539,40 @@ def create_module_metrics(meter: Optional[Meter] = None) -> ModuleMetrics:
         module_status=module_status,
         module_credential_ops_total=module_credential_ops_total,
     )
+
+
+# =============================================================================
+# RUN-UNIT METERING METRICS
+# =============================================================================
+
+@dataclass
+class RunUnitMetrics:
+    """Metrics for run-unit metering."""
+
+    # Total run units consumed by org, tier, and tool
+    run_units_total: Counter
+
+    # Run units per request histogram
+    run_units_per_request: Histogram
+
+
+def create_run_unit_metrics(meter: Optional[Meter] = None) -> RunUnitMetrics:
+    """Create metrics for run-unit metering."""
+    m = meter or get_meter()
+
+    run_units_total = m.create_counter(
+        name="nexus_run_units_total",
+        description="Total run units consumed",
+        unit="1",
+    )
+
+    run_units_per_request = m.create_histogram(
+        name="nexus_run_units_per_request",
+        description="Run units consumed per request",
+        unit="1",
+    )
+
+    return RunUnitMetrics(
+        run_units_total=run_units_total,
+        run_units_per_request=run_units_per_request,
+    )

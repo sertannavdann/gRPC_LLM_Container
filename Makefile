@@ -51,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-        test test-unit test-integration test-e2e test-monkey auth-test \
+		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -117,6 +117,8 @@ help:
 	@printf '  $(CYAN)make test-integration$(RESET)   - Run integration tests\n'
 	@printf '  $(CYAN)make test-e2e$(RESET)           - Run end-to-end tests\n'
 	@printf '  $(CYAN)make test-monkey$(RESET)        - Run monkey runner (requires services up)\n'
+	@printf '  $(CYAN)make test-metering$(RESET)      - Run run-unit metering unit + integration tests\n'
+	@printf '  $(CYAN)make make-test-metering$(RESET) - Alias for test-metering\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)📦 Proto Generation:$(RESET)\n'
 	@printf '  $(CYAN)make proto-gen$(RESET)          - Generate all protobuf stubs\n'
@@ -778,6 +780,16 @@ auth-test:
 	@printf '$(CYAN)Running auth unit + integration tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_auth.py auth/test_auth_integration.py -v --tb=short
 
+billing-test:
+	@printf '$(CYAN)Running billing unit tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_billing.py -v --tb=short
+
+test-metering:
+	@printf '$(CYAN)Running metering unit + integration tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_billing.py auth/test_billing_integration.py -v --tb=short
+
+make-test-metering: test-metering
+
 # ============================================================================
 # HEALTH CHECKS (used internally, prefer `make status` for user-facing)
 # ============================================================================
@@ -1248,15 +1260,15 @@ gsd-validate:
 gsd-progress:
 	@printf '$(BOLD)$(CYAN)GSD Progress Report$(RESET)\n'
 	@printf '$(BOLD)────────────────────────────────────────────────$(RESET)\n'
-	@printf '$(CYAN)Phase 1: Auth Boundary          $(YELLOW)not-started$(RESET)  REQ-001..003\n'
-	@printf '$(CYAN)Phase 2: Run-Unit Metering       $(YELLOW)not-started$(RESET)  REQ-006..009\n'
+	@printf '$(GREEN)Phase 1: Auth Boundary          complete$(RESET)      REQ-001..003\n'
+	@printf '$(GREEN)Phase 2: Run-Unit Metering       complete$(RESET)      REQ-006..009\n'
 	@printf '$(CYAN)Phase 3: Self-Evolution Engine    $(YELLOW)not-started$(RESET)  REQ-013,016\n'
 	@printf '$(CYAN)Phase 4: Release-Quality          $(YELLOW)not-started$(RESET)  REQ-019,028\n'
 	@printf '$(CYAN)Phase 5: Audit Trail             $(YELLOW)not-started$(RESET)  REQ-010..012\n'
 	@printf '$(CYAN)Phase 6: Co-Evolution            $(YELLOW)not-started$(RESET)  REQ-014..020\n'
 	@printf '$(CYAN)Phase 7: Enterprise & Market     $(YELLOW)not-started$(RESET)  REQ-004..030\n'
 	@printf '$(BOLD)────────────────────────────────────────────────$(RESET)\n'
-	@printf '$(CYAN)Total Requirements: 30   Done: 0   Remaining: 30$(RESET)\n'
+	@printf '$(CYAN)Total Requirements: 30   Done: 7   Remaining: 23$(RESET)\n'
 
 # ============================================================================
 # Docker Troubleshooting Guide

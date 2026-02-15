@@ -7,6 +7,7 @@ for state management and graph construction.
 """
 
 import logging
+import os
 import re
 from typing import Literal, Optional
 from datetime import datetime
@@ -17,6 +18,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, System
 
 from .state import AgentState, WorkflowConfig, ToolExecutionResult
 from .context_compactor import compact_context
+from shared.billing.run_units import RunUnitCalculator
+from shared.billing.usage_store import UsageStore
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +94,13 @@ class AgentWorkflow:
         self.llm = llm_engine
         self.config = config
         self.chroma_client = chroma_client
-        
+
+        # Billing / metering
+        self._run_unit_calculator = RunUnitCalculator()
+        self._usage_store = UsageStore(
+            db_path=os.getenv("BILLING_DB_PATH", "data/billing.db")
+        )
+
         # Build graph structure
         self.graph = self._build_graph()
         
@@ -464,12 +473,38 @@ class AgentWorkflow:
             )
             
             total_tool_calls += 1
-        
+
+        # ── Run-unit metering ────────────────────────────────────────
+        org_id = state.get("org_id") or "default"
+        tier = state.get("tier", "standard")
+        request_run_units = 0.0
+
+        for r in results:
+            ru = self._run_unit_calculator.calculate_from_latency(
+                latency_ms=r.get("latency_ms", 0.0),
+                tier=tier,
+                tool_name=r.get("tool_name", "default"),
+            )
+            request_run_units += ru
+            try:
+                self._usage_store.record(
+                    org_id=org_id,
+                    tool_name=r.get("tool_name", "unknown"),
+                    run_units=ru,
+                    tier=tier,
+                    user_id=state.get("user_id"),
+                    thread_id=state.get("conversation_id"),
+                    latency_ms=r.get("latency_ms", 0.0),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record usage for {r.get('tool_name')}: {e}")
+
         return {
             **state,
             "messages": tool_messages,
             "tool_results": state.get("tool_results", []) + results,
             "total_tool_calls": total_tool_calls,
+            "request_run_units": state.get("request_run_units", 0.0) + request_run_units,
             "next_action": "validate",
         }
     

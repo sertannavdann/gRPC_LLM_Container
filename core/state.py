@@ -56,6 +56,10 @@ class AgentState(TypedDict):
     # Organization scoping for multi-tenant isolation
     org_id: Optional[str]
 
+    # Metering / execution counters
+    total_tool_calls: int
+    request_run_units: float
+
 
 class WorkflowConfig(BaseModel):
     """
@@ -186,4 +190,6 @@ def create_initial_state(
         user_id=user_id,
         metadata=metadata or {},
         org_id=org_id,
+        total_tool_calls=0,
+        request_run_units=0.0,
     )

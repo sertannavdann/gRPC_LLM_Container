@@ -22,6 +22,7 @@ from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
 from shared.auth.models import User
 from shared.auth.rbac import Permission, get_current_user, require_permission
+from shared.billing import UsageStore, QuotaManager
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
@@ -38,6 +39,10 @@ _credential_store = None
 
 # Auth (set by start_admin_server)
 _api_key_store: Optional[APIKeyStore] = None
+
+# Billing (set by start_admin_server)
+_usage_store: Optional[UsageStore] = None
+_quota_manager: Optional[QuotaManager] = None
 
 # CORS for UI access
 _app.add_middleware(
@@ -565,6 +570,50 @@ def rotate_api_key(
     }
 
 
+# =============================================================================
+# BILLING & USAGE ENDPOINTS
+# =============================================================================
+
+
+@_app.get("/admin/billing/usage")
+def get_billing_usage(
+    period: Optional[str] = None,
+    user: User = Depends(get_current_user),
+):
+    """Get usage summary for the authenticated user's organization."""
+    if _usage_store is None:
+        raise HTTPException(503, "Billing not initialized")
+    return _usage_store.get_usage_summary(user.org_id, period)
+
+
+@_app.get("/admin/billing/usage/history")
+def get_billing_history(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+):
+    """Get usage history for the authenticated user's organization."""
+    if _usage_store is None:
+        raise HTTPException(503, "Billing not initialized")
+    records = _usage_store.get_usage_history(
+        user.org_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=min(limit, 1000),
+    )
+    return {"records": records, "count": len(records)}
+
+
+@_app.get("/admin/billing/quota")
+def get_billing_quota(user: User = Depends(get_current_user)):
+    """Get quota status for the authenticated user's organization."""
+    if _quota_manager is None:
+        raise HTTPException(503, "Billing not initialized")
+    result = _quota_manager.check_quota(user.org_id)
+    return result.model_dump()
+
+
 def start_admin_server(
     config_manager: ConfigManager,
     port: int = 8003,
@@ -572,9 +621,12 @@ def start_admin_server(
     module_registry=None,
     credential_store=None,
     api_key_store: Optional[APIKeyStore] = None,
+    usage_store: Optional[UsageStore] = None,
+    quota_manager: Optional[QuotaManager] = None,
 ) -> None:
     """Start admin API in a daemon thread. Safe to call from gRPC serve()."""
     global _config_manager, _module_loader, _module_registry, _credential_store, _api_key_store
+    global _usage_store, _quota_manager
     _config_manager = config_manager
     _module_loader = module_loader
     _module_registry = module_registry
@@ -584,6 +636,16 @@ def start_admin_server(
     _api_key_store = api_key_store or APIKeyStore(
         db_path=os.getenv("AUTH_DB_PATH", "data/api_keys.db")
     )
+
+    # Initialize billing
+    _usage_store = usage_store or UsageStore(
+        db_path=os.getenv("BILLING_DB_PATH", "data/billing.db")
+    )
+    _quota_manager = quota_manager or QuotaManager(
+        usage_store=_usage_store,
+        api_key_store=_api_key_store,
+    )
+
     _app.add_middleware(
         APIKeyAuthMiddleware,
         api_key_store=_api_key_store,
