@@ -61,7 +61,8 @@ BOLD := \033[1m
         fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
         open-all open-settings open-integrations \
         lidm-up lidm-status lidm-list-models airllm-up airllm-logs test-lidm \
-        showroom showroom-fresh open-pipeline open-nexus-dashboard nexus-demo
+        showroom showroom-fresh open-pipeline open-nexus-dashboard nexus-demo \
+        gsd-import gsd-validate gsd-progress
 
 # ============================================================================
 # HELP
@@ -181,6 +182,11 @@ help:
 	@printf '  $(CYAN)make nexus-demo$(RESET)           - Full demo: rebuild, test, open dashboards\n'
 	@printf '  $(CYAN)make open-pipeline$(RESET)        - Open Pipeline UI in browser\n'
 	@printf '  $(CYAN)make open-nexus-dashboard$(RESET) - Open NEXUS Grafana dashboard\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN)📋 GSD Planning:$(RESET)\n'
+	@printf '  $(CYAN)make gsd-import$(RESET)           - Import docs into .planning/ artifacts\n'
+	@printf '  $(CYAN)make gsd-validate$(RESET)         - Validate planning file consistency\n'
+	@printf '  $(CYAN)make gsd-progress$(RESET)         - Show planning progress table\n'
 	@echo ""
 	@printf '$(BOLD)Services:$(RESET) orchestrator, llm_service, llm_service_standard, chroma_service, sandbox_service, ui_service, bridge_service\n'
 	@echo ""
@@ -1217,6 +1223,36 @@ nexus-demo: showroom-fresh
 	@$(MAKE) open-pipeline
 	@$(MAKE) open-nexus-dashboard
 	@printf '$(GREEN)✓ NEXUS demo launched — pipeline UI + Grafana dashboards opened$(RESET)\n'
+
+# ============================================================================
+# GSD Planning
+# ============================================================================
+
+# Run GSD doc import — regenerates docs/_gsd_import/DOC_INDEX.md and validates .planning/*
+gsd-import:
+	@printf '$(BOLD)$(CYAN)Running GSD doc import...$(RESET)\n'
+	@python3 scripts/gsd_import_docs.py
+	@printf '$(GREEN)✓ GSD import complete$(RESET)\n'
+
+# Validate GSD planning consistency (checks all canonical files exist and are non-empty)
+gsd-validate:
+	@printf '$(BOLD)$(CYAN)Validating GSD planning files...$(RESET)\n'
+	@python3 scripts/gsd_import_docs.py --check
+	@printf '$(GREEN)✓ GSD planning files consistent$(RESET)\n'
+
+# Show GSD progress table (summary of planning state)
+gsd-progress:
+	@printf '$(BOLD)$(CYAN)GSD Progress Report$(RESET)\n'
+	@printf '$(BOLD)────────────────────────────────────────────────$(RESET)\n'
+	@printf '$(CYAN)Phase 1: Auth Boundary          $(YELLOW)not-started$(RESET)  REQ-001..003\n'
+	@printf '$(CYAN)Phase 2: Run-Unit Metering       $(YELLOW)not-started$(RESET)  REQ-006..009\n'
+	@printf '$(CYAN)Phase 3: Self-Evolution Engine    $(YELLOW)not-started$(RESET)  REQ-013,016\n'
+	@printf '$(CYAN)Phase 4: Release-Quality          $(YELLOW)not-started$(RESET)  REQ-019,028\n'
+	@printf '$(CYAN)Phase 5: Audit Trail             $(YELLOW)not-started$(RESET)  REQ-010..012\n'
+	@printf '$(CYAN)Phase 6: Co-Evolution            $(YELLOW)not-started$(RESET)  REQ-014..020\n'
+	@printf '$(CYAN)Phase 7: Enterprise & Market     $(YELLOW)not-started$(RESET)  REQ-004..030\n'
+	@printf '$(BOLD)────────────────────────────────────────────────$(RESET)\n'
+	@printf '$(CYAN)Total Requirements: 30   Done: 0   Remaining: 30$(RESET)\n'
 
 # ============================================================================
 # Docker Troubleshooting Guide
