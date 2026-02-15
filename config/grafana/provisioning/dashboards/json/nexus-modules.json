@@ -37,7 +37,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "nexus_module_status{status=\"loaded\"}",
+          "expr": "grpc_llm_nexus_module_status_ratio{status=\"loaded\"}",
           "legendFormat": "Loaded"
         }
       ]
@@ -57,7 +57,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "nexus_module_status{status=\"failed\"}",
+          "expr": "grpc_llm_nexus_module_status_ratio{status=\"failed\"}",
           "legendFormat": "Failed"
         }
       ]
@@ -76,7 +76,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "nexus_module_builds_total",
+          "expr": "grpc_llm_nexus_module_builds_total",
           "legendFormat": "Builds"
         }
       ]
@@ -95,7 +95,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "nexus_module_installs_total",
+          "expr": "grpc_llm_nexus_module_installs_total",
           "legendFormat": "Installs"
         }
       ]
@@ -122,7 +122,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(nexus_module_builds_total[5m])",
+          "expr": "rate(grpc_llm_nexus_module_builds_total[5m])",
           "legendFormat": "builds/s"
         }
       ]
@@ -141,11 +141,11 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(nexus_module_validations_total{result=\"pass\"}[5m])",
+          "expr": "rate(grpc_llm_nexus_module_validations_total{result=\"pass\"}[5m])",
           "legendFormat": "Pass"
         },
         {
-          "expr": "rate(nexus_module_validations_total{result=\"fail\"}[5m])",
+          "expr": "rate(grpc_llm_nexus_module_validations_total{result=\"fail\"}[5m])",
           "legendFormat": "Fail"
         }
       ]
@@ -220,7 +220,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(lidm_delegation_requests_total[5m])",
+          "expr": "rate(grpc_llm_lidm_delegation_requests_total[5m])",
           "legendFormat": "{{strategy}}/{{tier}}"
         }
       ]
@@ -240,7 +240,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(llm_provider_latency_ms_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(grpc_llm_llm_provider_latency_ms_bucket[5m]))",
           "legendFormat": "{{provider}} p95"
         }
       ]
@@ -259,7 +259,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "process_memory_rss_bytes",
+          "expr": "grpc_llm_process_memory_rss_bytes",
           "legendFormat": "RSS"
         }
       ]
@@ -277,7 +277,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "pipeline_context_utilization",
+          "expr": "grpc_llm_pipeline_context_utilization_ratio",
           "legendFormat": "utilization"
         }
       ]

@@ -1247,6 +1247,8 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
 
             # Extract response
             content = result.get("content") or "Sorry, I couldn't generate a response."
+            # Sanitise HTML to prevent XSS when rendered in web UIs
+            content = self._sanitize_html(content)
             sources = self._build_sources_metadata(result, thread_id)
 
             elapsed = time.time() - start_time
@@ -1503,6 +1505,12 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             "tool_results": tool_results,
             "iteration": final_state.get("iteration", 0)
         }
+
+    @staticmethod
+    def _sanitize_html(text: str) -> str:
+        """Escape HTML tags to prevent XSS when rendered in web UIs."""
+        import html
+        return html.escape(text, quote=False)
     
     def _build_sources_metadata(self, result: Dict, thread_id: str) -> Dict:
         """Build sources metadata from result."""

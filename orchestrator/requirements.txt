@@ -17,6 +17,10 @@ tenacity==9.0.0
 requests==2.32.3
 beautifulsoup4==4.12.3
 
+# FastAPI + ASGI server (Admin API on :8003)
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
 # Provider support (for online LLM providers)
 aiohttp==3.10.10
 

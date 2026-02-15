@@ -441,15 +441,18 @@ def start_admin_server(
     _credential_store = credential_store
 
     def _run():
-        uvicorn.run(
+        # Use Config + Server so we can disable signal handlers
+        # (gRPC owns signals; uvicorn.run() no longer accepts that kwarg)
+        config = uvicorn.Config(
             _app,
             host="0.0.0.0",
             port=port,
             log_level="warning",
             access_log=False,
-            # Critical: don't install signal handlers — gRPC owns signals
-            install_signal_handlers=False,
         )
+        server = uvicorn.Server(config)
+        server.install_signal_handlers = False
+        server.run()
 
     thread = threading.Thread(target=_run, name="admin-api", daemon=True)
     thread.start()

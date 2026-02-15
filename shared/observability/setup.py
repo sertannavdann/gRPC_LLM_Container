@@ -135,9 +135,11 @@ def _setup_metrics(
     # Prometheus reader for scraping
     if enable_prometheus:
         try:
+            from prometheus_client import start_http_server as _start_prom_http
             prometheus_reader = PrometheusMetricReader()
             readers.append(prometheus_reader)
-            logger.info(f"Prometheus metrics available on port {prometheus_port}")
+            _start_prom_http(prometheus_port)
+            logger.info(f"Prometheus metrics HTTP server started on port {prometheus_port}")
         except Exception as e:
             logger.warning(f"Failed to configure Prometheus exporter: {e}")
 

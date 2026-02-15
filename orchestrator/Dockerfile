@@ -55,5 +55,6 @@ RUN mkdir -p /app/data
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 EXPOSE 50054
+EXPOSE 8888
 
 CMD ["python", "-m", "orchestrator.orchestrator_service"]

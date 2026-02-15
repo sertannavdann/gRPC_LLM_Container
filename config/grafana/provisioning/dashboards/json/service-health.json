@@ -130,7 +130,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "expr": "up{job=\"dashboard_service\"}",
+          "expr": "up{job=\"dashboard-service\"}",
           "refId": "A"
         }
       ],
