@@ -20,6 +20,37 @@ from .context_compactor import compact_context
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-builder system prompt — injected when the LLM detects a build intent
+# ---------------------------------------------------------------------------
+MODULE_BUILDER_SYSTEM_PROMPT = """\
+You are executing a **module build pipeline**. Follow these steps IN ORDER:
+
+1. **build_module(name, category, ...)** — creates the scaffold (manifest, adapter skeleton, tests).
+2. **Review the returned `adapter_code`** — the skeleton has placeholder `fetch_raw()` and `transform()` methods.
+3. **Customize** `fetch_raw()` and `transform()` for the real API, then call \
+**write_module_code(module_id, adapter_code)** with the complete updated source.
+4. **validate_module(module_id)** — runs syntax, structure, and sandbox tests.
+5. **If validation fails**: read the `errors` and `fix_hints`, fix the code, \
+call `write_module_code()` again, and then `validate_module()` again. Repeat \
+until it passes or you exhaust your retry budget.
+6. **On validation success**: call **install_module(module_id)** to deploy.
+
+RULES:
+- Preserve the class name, `@register_adapter` decorator, and imports from the skeleton.
+- Only replace the method BODIES of `fetch_raw` and `transform`.
+- Every `write_module_code` resets the module to PENDING — you MUST re-validate.
+- If a retry-budget notice appears in tool results, respect it.
+- NEVER call `install_module` before `validate_module` returns `status: success`.
+"""
+
+# Keywords that indicate a module-build intent
+_MODULE_BUILD_KEYWORDS = frozenset([
+    'build me', 'create a module', 'add integration', 'build a module',
+    'build an adapter', 'create an adapter', 'create integration',
+    'new module', 'new adapter', 'set up a module', 'make a module',
+])
+
 
 class AgentWorkflow:
     """
@@ -167,6 +198,26 @@ class AgentWorkflow:
         
         logger.debug("No tool usage needed for query")
         return False
+
+    @staticmethod
+    def _is_module_build_intent(query: str) -> bool:
+        """Detect whether the query is asking to build/create a module."""
+        query_lower = query.lower()
+        return any(kw in query_lower for kw in _MODULE_BUILD_KEYWORDS)
+
+    def _is_module_build_session(self, state: AgentState) -> bool:
+        """Check if this session involves module-build tool calls."""
+        for result in state.get("tool_results", []):
+            name = result.get("tool_name", "")
+            if name in ("build_module", "write_module_code", "validate_module"):
+                return True
+        return False
+
+    def _get_effective_max_iterations(self, state: AgentState) -> int:
+        """Return the iteration limit — higher for module-build sessions."""
+        if self._is_module_build_session(state):
+            return self.config.module_build_max_iterations
+        return self.config.max_iterations
     
     def _build_graph(self) -> StateGraph:
         """
@@ -259,6 +310,14 @@ class AgentWorkflow:
         if self._should_use_tools(last_user_message):
             tools_schema = self.registry.to_openai_tools()
             logger.info(f"Including {len(tools_schema)} tools in prompt")
+
+            # Inject module-builder system prompt for build intents
+            if self._is_module_build_intent(last_user_message):
+                recent_messages = [
+                    SystemMessage(content=MODULE_BUILDER_SYSTEM_PROMPT),
+                    *recent_messages,
+                ]
+                logger.info("Module-build intent detected — system prompt injected")
         else:
             tools_schema = []  # No tools for simple queries
             logger.info("No tools needed - direct answer expected")
@@ -387,6 +446,15 @@ class AgentWorkflow:
             # Create tool message for LLM context
             # Format result for better LLM comprehension
             result_content = self._format_tool_result(tool_name, result)
+
+            # Inject retry budget for module-build tools so the LLM knows
+            # how many fix attempts remain
+            _module_tools = {"build_module", "write_module_code", "validate_module", "install_module"}
+            if tool_name in _module_tools:
+                effective_max = self._get_effective_max_iterations(state)
+                remaining = max(0, effective_max - state.get("retry_count", 0) - 1)
+                result_content += f"\n[Retry budget: {remaining}/{effective_max} iterations remaining]"
+
             tool_messages.append(
                 ToolMessage(
                     content=result_content,
@@ -468,9 +536,12 @@ class AgentWorkflow:
         """
         retry_count = state.get("retry_count", 0)
         
+        # Use module-build budget when applicable
+        effective_max = self._get_effective_max_iterations(state)
+        
         # Check max iterations (prevent infinite loops)
-        if retry_count >= self.config.max_iterations:
-            logger.warning(f"Max iterations ({self.config.max_iterations}) reached")
+        if retry_count >= effective_max:
+            logger.warning(f"Max iterations ({effective_max}) reached")
             return {
                 **state,
                 "next_action": "end",

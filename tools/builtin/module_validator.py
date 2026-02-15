@@ -125,6 +125,7 @@ def validate_module(
     overall_pass = (
         results.syntax_check == "pass"
         and results.unit_tests in ("pass", "skip")
+        and not errors  # structure issues also fail validation
     )
 
     if manifest_file.exists():
@@ -135,11 +136,15 @@ def validate_module(
 
     logger.info(f"Module validation {'PASSED' if overall_pass else 'FAILED'}: {module_id}")
 
+    # Build structured fix hints for LLM self-correction
+    fix_hints = _build_fix_hints(errors, adapter_code) if errors else None
+
     return {
         "status": "success" if overall_pass else "failed",
         "module_id": module_id,
         "validation": results.to_dict(),
         "errors": errors if errors else None,
+        "fix_hints": fix_hints,
         "instructions": (
             f"Module {module_id} validation {'passed' if overall_pass else 'failed'}. "
             + (
@@ -149,6 +154,84 @@ def validate_module(
             )
         ),
     }
+
+
+def _build_fix_hints(errors: List[str], adapter_code: str) -> List[Dict[str, Any]]:
+    """Build structured fix hints from validation errors for LLM self-correction."""
+    hints = []
+    lines = adapter_code.splitlines()
+
+    for error in errors:
+        hint: Dict[str, Any] = {"error": error}
+
+        if error.startswith("Syntax error at line"):
+            # Extract line number and provide surrounding context
+            try:
+                line_no = int(error.split("line ")[1].split(":")[0])
+                start = max(0, line_no - 3)
+                end = min(len(lines), line_no + 2)
+                hint["type"] = "syntax_error"
+                hint["line"] = line_no
+                hint["context"] = "\n".join(
+                    f"{'>>>' if i + 1 == line_no else '   '} {i + 1}: {l}"
+                    for i, l in enumerate(lines[start:end], start=start)
+                )
+            except (ValueError, IndexError):
+                hint["type"] = "syntax_error"
+
+        elif "Missing required method:" in error:
+            method = error.split(": ")[1].strip()
+            hint["type"] = "missing_method"
+            hint["method"] = method
+            if method == "fetch_raw":
+                hint["suggestion"] = (
+                    "async def fetch_raw(self, config: AdapterConfig) -> Dict[str, Any]:\n"
+                    "    async with httpx.AsyncClient(timeout=self._timeout) as client:\n"
+                    "        headers = {'Authorization': f'Bearer {config.credentials.get(\"api_key\", \"\")}'} "
+                    "if config.credentials else {}\n"
+                    "        response = await client.get(self.api_base_url, headers=headers)\n"
+                    "        response.raise_for_status()\n"
+                    "        return response.json()"
+                )
+            elif method == "transform":
+                hint["suggestion"] = (
+                    "def transform(self, raw_data: Dict[str, Any]) -> List[Dict[str, Any]]:\n"
+                    "    items = raw_data.get('items', raw_data.get('data', []))\n"
+                    "    return [{\"id\": str(item.get('id', '')), "
+                    "\"name\": item.get('name', ''), \"value\": item} for item in items]"
+                )
+
+        elif "No class extending BaseAdapter" in error:
+            hint["type"] = "missing_base_class"
+            hint["suggestion"] = (
+                "Ensure your adapter class inherits from BaseAdapter:\n"
+                "  from shared.adapters.base import BaseAdapter\n"
+                "  class MyAdapter(BaseAdapter[Dict[str, Any]]):"
+            )
+
+        elif "Missing @register_adapter" in error:
+            hint["type"] = "missing_decorator"
+            hint["suggestion"] = (
+                "Add @register_adapter before the class definition:\n"
+                "  @register_adapter(category='<cat>', platform='<plat>', "
+                "display_name='<Name>', icon='🔌')"
+            )
+
+        elif error.startswith("Test failures:"):
+            hint["type"] = "test_failure"
+            hint["suggestion"] = (
+                "Review the test output above. Common fixes:\n"
+                "- ImportError → check class name matches test expectations\n"
+                "- AssertionError in transform → ensure transform() returns List[Dict]\n"
+                "- TypeError in fetch_raw → ensure it's async and accepts AdapterConfig"
+            )
+
+        else:
+            hint["type"] = "unknown"
+
+        hints.append(hint)
+
+    return hints
 
 
 def _check_adapter_structure(code: str, module_id: str) -> List[str]:

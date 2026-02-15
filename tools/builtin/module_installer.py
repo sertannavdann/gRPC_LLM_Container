@@ -65,11 +65,20 @@ def install_module(module_id: str) -> Dict[str, Any]:
 
     manifest = ModuleManifest.load(manifest_path)
 
-    # Check validation status
+    # Check validation status — only VALIDATED modules can be installed
     if manifest.status == ModuleStatus.FAILED:
         return {
             "status": "error",
             "error": f"Module {module_id} failed validation. Fix errors and run validate_module() again.",
+        }
+
+    if manifest.status != ModuleStatus.VALIDATED and manifest.status != ModuleStatus.VALIDATED.value:
+        return {
+            "status": "error",
+            "error": (
+                f"Module {module_id} has not been validated (status: {manifest.status}). "
+                f"Call validate_module('{module_id}') first."
+            ),
         }
 
     if not _module_loader:

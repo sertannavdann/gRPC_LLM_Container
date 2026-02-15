@@ -72,6 +72,10 @@ class WorkflowConfig(BaseModel):
     """
     
     max_iterations: int = Field(default=5, ge=1, le=20)
+    module_build_max_iterations: int = Field(
+        default=10, ge=5, le=20,
+        description="Higher iteration budget for module build→validate→fix cycles",
+    )
     context_window: int = Field(default=12, ge=1, le=50)
     temperature: float = Field(default=0.15, ge=0.0, le=2.0)
     model_name: str = Field(default="Mistral-Small-24B-Instruct-2501.Q8_0.gguf")
