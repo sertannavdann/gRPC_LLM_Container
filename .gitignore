@@ -110,3 +110,5 @@ dashboard_service/Bank/*.csv
 **.ipynb
 
 data/conversations/**
+
+/.claude
