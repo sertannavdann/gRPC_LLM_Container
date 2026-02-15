@@ -6,7 +6,7 @@
 
 ## Current Phase
 
-**Phase 0 (Foundation)** — complete. Next up: **Phase 1 — Auth Boundary** then **Phase 3 — Self-Evolution Engine** (the project's core differentiator).
+**Phase 2 (Run-Unit Metering)** — complete. Next up: **Phase 3 — Self-Evolution Engine** (the project's core differentiator).
 
 ---
 
@@ -31,6 +31,23 @@
 - ✅ CIBC CSV files (finance)
 - ✅ Showroom metrics demo (test)
 
+### Phase 1: Auth Boundary ✅
+- ✅ API key authentication (SHA-256 hashed, SQLite-backed `APIKeyStore`)
+- ✅ RBAC enforcement (viewer/operator/admin/owner permission matrix)
+- ✅ Auth middleware wired into Admin API (:8003) and Dashboard API (:8001)
+- ✅ Org-scoped data isolation (`org_id` in AgentState, ModuleRegistry, CredentialStore)
+- ✅ Bootstrap endpoint for initial key creation
+- ✅ API key management endpoints (create/list/revoke/rotate)
+- ✅ Auth test suite (`make auth-test`)
+
+### Phase 2: Run-Unit Metering ✅
+- ✅ `shared/billing/` package (calculator, usage store, quota manager)
+- ✅ Tool-call metering wired into `core/graph.py` with fail-open writes
+- ✅ Quota enforcement wired into orchestrator request processing
+- ✅ Billing admin endpoints (`/admin/billing/usage`, `/admin/billing/usage/history`, `/admin/billing/quota`)
+- ✅ Run-unit metrics exported (`nexus_run_units_total`, `nexus_run_units_per_request`)
+- ✅ Metering test suite target (`make test-metering` / `make make-test-metering`)
+
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
 - ✅ Unified orchestrator (replaced supervisor-worker mesh, Jan 2026)
@@ -47,9 +64,9 @@
 
 | Item | Status | Blocker |
 |------|--------|---------|
+| Phase 3: Self-Evolution Engine | **Next phase** | Phase 2 complete |
 | LLM-driven module builder (Track A4) | Template generation WIP | Need to wire sandbox validation loop |
 | Pipeline UI drag-and-drop | Design phase | — |
-| GSD planning bootstrap | **This milestone** | — |
 
 ---
 
@@ -57,7 +74,7 @@
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| **No auth on Admin API or Dashboard** | HIGH | Phase 1 (REQ-001/002) is first priority; currently any HTTP client can modify config, modules, and credentials |
+| ~~No auth on Admin API or Dashboard~~ | ~~HIGH~~ | ✅ Resolved in Phase 1 — API key auth + RBAC enforced on all endpoints |
 | **No approval gates for module install** | HIGH | Malicious adapter code can be enabled without review; mitigated partially by sandbox validation (once A4 complete) |
 | **No automated tests for Admin API CRUD** | MEDIUM | Regressions from refactoring go undetected; manual curl testing only |
 | **Dashboard SRP violation** | MEDIUM | Single service handles 5+ concerns; harder to scale and test independently |
@@ -68,9 +85,9 @@
 
 ## Known Gaps
 
-1. **Commercial features are 0% implemented** — auth, billing, audit, marketplace documented as ideation only; all current development is open-source first (detailed in `docs/archive/PLAN.md`).
+1. **Auth + metering complete, audit/marketplace pending** — auth implemented in Phase 1; metering implemented in Phase 2; audit (Phase 5) and marketplace (Phase 7) remain.
 2. **Track C (Co-Evolution)** — Curriculum Agent, Executor Agent, approval gates: 0% complete, planned Q2 2026.
-3. **Multi-tenant isolation** not implemented — single-tenant only.
+3. **Multi-tenant isolation** — org_id scoping implemented in Phase 1 (registry, credentials, state); full multi-tenant deployment not yet tested at scale.
 4. **No E2E tests** for Pipeline UI SSE reconnection.
 5. **No centralized logging** — logs are per-container, searched via `docker-compose logs`.
 
@@ -98,13 +115,13 @@
 Phase                          Status        Requirements  Done  Remaining
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
 Phase 0: Foundation            complete      —             —     —
-Phase 1: Auth Boundary         not-started   3             0     3
-Phase 2: Run-Unit Metering     not-started   4             0     4
+Phase 1: Auth Boundary         complete      3             3     0
+Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine not-started   2             0     2
 Phase 4: Release-Quality       not-started   2             0     2
 Phase 5: Audit Trail           not-started   3             0     3
 Phase 6: Co-Evolution          not-started   4             0     4
 Phase 7: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        30            0     30
+TOTAL                                        30            7     23
 ```

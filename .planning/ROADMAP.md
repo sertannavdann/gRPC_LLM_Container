@@ -8,8 +8,8 @@
 
 | # | Phase | Status | Requirements | Target |
 |---|-------|--------|--------------|--------|
-| 1 | Auth Boundary | planned | REQ-001, REQ-002, REQ-003 | Q2 2026 |
-| 2 | Run-Unit Metering | not-started | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
+| 1 | Auth Boundary | **complete** | REQ-001, REQ-002, REQ-003 | Q2 2026 |
+| 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
 | 3 | **Self-Evolution Engine** | not-started | REQ-013, REQ-016 | Q2–Q3 2026 |
 | 4 | Release-Quality Verification | not-started | REQ-019, REQ-028 | Q3 2026 |
 | 5 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
@@ -27,9 +27,9 @@
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Auth foundation: models, API key store, RBAC permission system
-- [ ] 01-02-PLAN.md — Middleware + wiring: auth enforcement on Admin API and Dashboard
-- [ ] 01-03-PLAN.md — Org-scoped data isolation: org_id in AgentState, registry, credentials
+- [x] 01-01-PLAN.md — Auth foundation: models, API key store, RBAC permission system
+- [x] 01-02-PLAN.md — Middleware + wiring: auth enforcement on Admin API and Dashboard
+- [x] 01-03-PLAN.md — Org-scoped data isolation: org_id in AgentState, registry, credentials
 
 ### Deliverables
 
@@ -71,6 +71,13 @@ Plans:
 **Milestone**: "Commercial Hardening — Metering"
 
 **Goal**: Per tool/model/thread usage metering exported to Prometheus and persisted.
+
+**Plans:** 3 plans
+
+Plans:
+- [x] 02-01-PLAN.md — Billing foundation: RunUnitCalculator, UsageStore, QuotaManager
+- [x] 02-02-PLAN.md — Pipeline wiring: instrument _tools_node, quota enforcement in orchestrator
+- [x] 02-03-PLAN.md — Billing API endpoints, tests, Makefile target
 
 ### Deliverables
 
