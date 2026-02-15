@@ -1,14 +1,22 @@
-# High-Level Design (HLD) - gRPC LLM Agent Framework
+# High-Level Design (HLD) - NEXUS Agent Platform
 
-> **Last Updated**: February 2026  
-> **Version**: 2.2 (UI Navigation + Finance Analytics + Observability)  
-> **Branch**: `Agent0`
+> **Last Updated**: February 2026
+> **Version**: 4.0 (Self-Evolution Pipeline + Observability + Module System + Dynamic Config + Admin API)
+> **Branch**: `NEXUS`
 
 ## 1. Executive Summary
 
-The **gRPC LLM Agent Framework** is a distributed, microservices-based architecture designed to orchestrate autonomous AI agents. It follows the **"Swap, Don't Stack"** philosophy, prioritizing modularity, interface-based design, and strict separation of concerns.
+The **NEXUS Agent Platform** is a distributed, microservices-based architecture designed to orchestrate autonomous AI agents. It follows the **"Swap, Don't Stack"** philosophy, prioritizing modularity, interface-based design, and strict separation of concerns.
 
 The system implements a **Supervisor-Worker Mesh** pattern where a central Orchestrator (Supervisor) manages conversation state and high-level reasoning, while specialized Worker nodes perform specific tasks (coding, data analysis, etc.). All components communicate via high-performance gRPC channels.
+
+**Self-Evolution Pipeline** (v3.0+) enables agents to build, validate, and deploy their own modules:
+- LLM-driven `build → write → validate → install` loop with sandbox testing
+- Self-correction with structured fix hints and configurable retry budget (up to 10 iterations)
+- Hot-reload module installation without service restart
+
+**LIDM (Language Intelligence Delegation Manager)** routes queries by complexity:
+- Standard tier (llama.cpp local) → Heavy tier (larger models) → Ultra tier (GPU batch)
 
 **Agent0 Enhancements** (arXiv:2511.16043) provide advanced reasoning capabilities:
 - Multi-turn tool rollouts with stop-and-go execution
@@ -37,53 +45,96 @@ graph TD
     UI <-->|gRPC| Orch[🧠 Orchestrator<br/>Supervisor :50054]
     UI -->|HTTP fetch| Dash[📊 Dashboard Service<br/>FastAPI :8001]
     UI -->|iframe embed| Graf[📈 Grafana :3001]
-    
+
     subgraph "Core Infrastructure"
         Orch <-->|gRPC| LLM[🤖 LLM Service<br/>Llama.cpp :50051]
         Orch <-->|gRPC| Chroma[📚 Chroma Service<br/>Vector DB :50052]
         Orch <-->|gRPC| Sandbox[🔒 Sandbox Service<br/>Code Exec :50057]
-        Orch <-->|gRPC| Reg[📋 Registry Service<br/>:50055]
     end
-    
-    subgraph "Worker Mesh"
-        Reg <-->|Registration| W1[⚙️ Worker: Coding<br/>:50056]
-        Reg <-->|Registration| W2[📊 Worker: Analysis]
-        Orch -.->|Delegation| W1
-        Orch -.->|Delegation| W2
+
+    subgraph "Control Plane"
+        Orch -->|daemon thread| Admin[⚙️ Admin API<br/>FastAPI :8003]
+        Admin -->|hot-reload| CM[📋 Config Manager<br/>routing_config.json]
+        Admin -->|CRUD| MR[(📋 Module Registry<br/>SQLite)]
+        Admin -->|CRUD| Creds[(🔐 Credential Store)]
     end
-    
+
+    subgraph "Self-Evolution Layer"
+        Orch -->|build_module| MB[🔧 Module Builder]
+        MB -->|write_code| MV[✅ Module Validator]
+        MV -->|sandbox test| Sandbox
+        MV -->|pass| MI[📦 Module Installer]
+        MI -->|hot-reload| MR
+        MV -.->|fix_hints| MB
+    end
+
+    subgraph "External Access"
+        Bridge[🌉 Bridge Service<br/>MCP Server :8100] -->|gRPC| Orch
+        Bridge -->|gRPC| Chroma
+        Bridge -->|HTTP| Dash
+    end
+
     subgraph "Data Layer"
         Dash -->|CSV Import| Bank[(🏦 Bank Data<br/>CIBC Transactions)]
         Orch -->|SQLite + WAL| State[(💾 State Store<br/>& Checkpoints)]
     end
-    
+
     subgraph "Observability Stack"
         Orch & LLM & Dash -->|OTLP| OTel[📡 OTel Collector<br/>:4317]
         OTel --> Prom[📉 Prometheus :9090]
         OTel --> Tempo[🔍 Tempo :3200]
         Prom --> Graf
         Tempo --> Graf
+        cAdv[📦 cAdvisor :8080] --> Prom
     end
+```
+
+### 3.2 LIDM Routing Architecture
+
+```mermaid
+flowchart TD
+    Q[Incoming Query] --> IA{Intent Analyzer}
+    
+    IA -->|Simple factual| S[Standard Tier<br/>llama.cpp local<br/>:50051]
+    IA -->|Complex reasoning| H[Heavy Tier<br/>Larger model<br/>:50051-alt]
+    IA -->|Multi-step / batch| U[Ultra Tier<br/>GPU inference<br/>external API]
+    
+    S --> R{Response Quality Check}
+    H --> R
+    U --> R
+    
+    R -->|Confidence ≥ 0.6| A[✅ Return Answer]
+    R -->|Confidence < 0.6| SC[Self-Consistency<br/>GenerateBatch k=5]
+    SC --> MV[Majority Voting]
+    MV -->|p̂ ≥ 0.6| A
+    MV -->|p̂ < 0.6| TV[Tool Verification<br/>Force tool usage]
+    TV --> A
+    
+    style S fill:#2d6a4f,color:#fff
+    style H fill:#e67e22,color:#fff
+    style U fill:#c0392b,color:#fff
 ```
 
 ### 3.2 Service Port Map
 
 | Service | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| UI Service | 5001 | HTTP/gRPC-Web | Multi-page interface (Chat, Dashboard, Finance, Monitoring) |
-| LLM Service | 50051 | gRPC | Text generation |
+| UI Service | 5001 | HTTP/gRPC-Web | Multi-page interface (Chat, Dashboard, Finance, Monitoring, Pipeline, Integrations, Settings) |
+| LLM Service | 50051 | gRPC | Text generation (llama.cpp / Ollama) |
+| LLM Service (Standard) | 50051 | gRPC | Secondary model endpoint |
 | Chroma Service | 50052 | gRPC | Vector embeddings |
-| Orchestrator | 50054 | gRPC | Main coordination |
-| Registry Service | 50055 | gRPC | Worker discovery |
-| Worker: Coding | 50056 | gRPC | Code specialist |
+| Orchestrator | 50054 | gRPC | Main coordination + LIDM routing |
+| Orchestrator Metrics | 8888 | HTTP | Prometheus metrics endpoint |
+| Admin API | 8003 | HTTP | Dynamic config, module CRUD, credentials, system info |
 | Sandbox Service | 50057 | gRPC | Secure code execution |
-| Dashboard Service | 8001 | HTTP | Finance analytics + Context aggregation |
+| Dashboard Service | 8001 | HTTP | Finance analytics + Context aggregation + SSE pipeline state |
 | Dashboard Metrics | 8002 | HTTP | Prometheus metrics |
-| **Bridge Service** | **8100** | **HTTP/MCP** | **OpenClaw bridge** |
-| Grafana | 3001 | HTTP | Observability dashboards |
+| Bridge Service | 8100 | HTTP/MCP | MCP JSON-RPC server for external clients |
+| Grafana | 3001 | HTTP | Observability dashboards (5 provisioned) |
 | Prometheus | 9090 | HTTP | Metrics storage |
 | OTel Collector | 4317/4318 | gRPC/HTTP | Telemetry ingestion |
 | Tempo | 3200 | HTTP | Distributed tracing |
+| cAdvisor | 8080 | HTTP | Container resource monitoring |
 
 ---
 
@@ -92,26 +143,32 @@ graph TD
 ### 4.1 Orchestrator Service (The Supervisor)
 *   **Role**: The central brain of the system. It does not execute heavy tasks itself but coordinates the workflow.
 *   **Core Engine**: Uses **LangGraph** to model the agent loop as a state machine (`llm_node` -> `tools_node` -> `validate_node`).
+*   **LIDM Routing**: Routes queries through Standard/Heavy/Ultra model tiers based on intent complexity analysis (`intent_patterns.py`, `provider_router.py`).
+*   **Self-Evolution**: Detects module-build intent via keyword matching (`_is_module_build_intent`), injects `MODULE_BUILDER_SYSTEM_PROMPT`, and grants extended iteration budgets (10 vs 5 default).
+*   **XSS Sanitization**: All LLM output is HTML-escaped via `_sanitize_html()` before returning to clients.
 *   **Tooling**:
-    *   **LocalToolRegistry**: Manages in-process tools (Math, Search, Code Executor) with **Circuit Breakers** to prevent cascading failures.
+    *   **LocalToolRegistry**: Manages in-process tools (Math, Search, Code Executor, Module Builder/Validator/Installer) with **Circuit Breakers** to prevent cascading failures.
     *   **Delegation**: Can delegate complex tasks to Workers via the Registry.
 *   **Persistence**: Implements a **CheckpointManager** (SQLite + WAL) to save conversation state after every step, enabling **Crash Recovery**.
+*   **Metrics**: Exposes Prometheus metrics on port 8888 with `grpc_llm_` namespace prefix.
 *   **Agent0 Integration**: `LLMEngineWrapper` supports multi-turn rollouts and optional self-consistency verification.
 
-### 4.2 Registry Service (The Phonebook)
-*   **Role**: Dynamic service discovery for the Worker Mesh.
-*   **Function**:
-    *   Workers register their capabilities (e.g., `["coding", "python"]`) and endpoints on startup.
-    *   Orchestrator queries the Registry to find workers matching a specific capability.
-*   **Benefit**: Allows adding new Worker types without restarting the Orchestrator.
+### 4.2 Admin API (The Control Plane)
+*   **Role**: HTTP API for dynamic configuration, module management, and credential operations.
+*   **Tech Stack**: FastAPI running as a daemon thread on port 8003 within the Orchestrator process.
+*   **Capabilities**:
+    *   **Routing Config CRUD**: Hot-reload `routing_config.json` — change model tiers, categories, and performance thresholds without restart.
+    *   **Module Management**: List, get, enable, disable, reload, uninstall dynamic modules.
+    *   **Credential CRUD**: Manage encrypted credentials per module via the Fernet-backed credential store.
+    *   **System Info**: Expose runtime state for dashboards and monitoring.
+*   **CORS**: Enabled for UI access from any origin.
+*   **Config Manager**: `ConfigManager` with observer pattern — registered observers (e.g., `DelegationManager`, `LLMClientPool`) are notified on config changes via `on_config_changed()`.
 
-### 4.3 Worker Services (The Specialists)
-*   **Role**: Stateless execution units for specific domains.
-*   **Implementation**:
-    *   Lightweight gRPC servers.
-    *   Register with `RegistryService` upon boot.
-    *   Execute tasks defined by the `WorkerService` protobuf contract.
-*   **Examples**: Coding Agent, Data Analysis Agent, Scraper Agent.
+### 4.3 Dynamic Configuration System
+*   **Schema**: `RoutingConfig`, `CategoryRouting`, `TierConfig`, `PerformanceConstraints` — Pydantic models in `orchestrator/routing_config.py`.
+*   **Storage**: `config/routing_config.json` — 13 intent categories, 2 model tiers (standard + heavy), performance thresholds.
+*   **Hot-Reload**: `ConfigManager.reload()` validates JSON → notifies observers → `LLMClientPool.reconfigure()` + `DelegationManager.on_config_changed()`.
+*   **Thread Safety**: `threading.RLock` protects all config reads/writes.
 
 ### 4.4 LLM Service (The Engine)
 *   **Role**: Provides text generation and reasoning capabilities.
@@ -158,10 +215,98 @@ graph TD
 
 ### 4.9 Observability Stack
 *   **OpenTelemetry Collector** (`otel-collector:4317/4318`): Central telemetry hub receiving OTLP gRPC + HTTP.
-*   **Prometheus** (`prometheus:9090`): Scrapes 5 targets; stores metrics with `grpc_llm_` namespace.
-*   **Grafana** (`grafana:3001`): Auto-provisioned with 4 JSON dashboards in `gRPC LLM` folder; embedding enabled for iframe use in the UI Monitoring page. Anonymous viewer access enabled.
+*   **Prometheus** (`prometheus:9090`): Scrapes 6 targets (orchestrator :8888, dashboard :8002, llm_service, bridge_service, cAdvisor :8080, self); stores metrics with `grpc_llm_` namespace.
+*   **Grafana** (`grafana:3001`): Auto-provisioned with 5 JSON dashboards in `gRPC LLM` folder; embedding enabled for iframe use in the UI Monitoring page. Anonymous viewer access enabled.
+    *   Service Health — container status, uptime, resource usage
+    *   NEXUS Modules — module installs, validation rates, build pipeline
+    *   LLM Performance — inference latency, token throughput, model routing
+    *   Agent Workflows — tool calls, iteration depth, success rates
+    *   Infrastructure — cAdvisor container metrics, network I/O
 *   **Tempo** (`tempo:3200`): Distributed tracing backend.
+*   **cAdvisor** (`cadvisor:8080`): Container resource monitoring (CPU, memory, network, disk I/O).
 *   **CLI**: `make status` shows beautified box-drawn service health; `make logs` streams to a 128 KB rolling slog128 window.
+
+### 4.10 Self-Evolution Pipeline (Track A4)
+
+The system can autonomously build, test, and deploy new modules via four agent tools:
+
+```mermaid
+flowchart TD
+    U[User: 'Build me a weather module'] --> ID{Intent Detection}
+    ID -->|_is_module_build_intent| SP[Inject MODULE_BUILDER_SYSTEM_PROMPT<br/>Set max_iterations=10]
+    
+    SP --> B[🔧 build_module<br/>Create manifest + scaffold]
+    B --> W[✏️ write_module_code<br/>LLM generates adapter code]
+    W --> V{✅ validate_module}
+    
+    V -->|3-stage pipeline| S1[1. Syntax Check<br/>ast.parse]
+    S1 --> S2[2. Structure Check<br/>AST analysis: methods, decorators]
+    S2 --> S3[3. Sandbox Test<br/>Import + execute in sandbox_service]
+    
+    S3 -->|All pass| PASS[Status: VALIDATED]
+    S3 -->|Any fail| FAIL[Status: FAILED + fix_hints]
+    S2 -->|Missing methods| FAIL
+    S1 -->|Syntax error| FAIL
+    
+    FAIL --> FH[📋 Fix Hints<br/>Structured error-specific guidance]
+    FH -->|Retry budget remaining| W
+    FH -->|Budget exhausted| STOP[❌ Max iterations reached]
+    
+    PASS --> I[📦 install_module<br/>VALIDATED guard enforced]
+    I --> HR[Hot-reload into live system]
+    HR --> DONE[✅ Module available as agent tool]
+    
+    style B fill:#2196F3,color:#fff
+    style W fill:#FF9800,color:#fff
+    style V fill:#4CAF50,color:#fff
+    style I fill:#9C27B0,color:#fff
+    style FAIL fill:#f44336,color:#fff
+    style PASS fill:#2d6a4f,color:#fff
+```
+
+**Key components:**
+
+| Component | File | Responsibility |
+|-----------|------|---------------|
+| Intent Detection | `core/graph.py` | `_is_module_build_intent()` matches keywords; `_is_module_build_session()` checks tool history |
+| System Prompt | `core/graph.py` | `MODULE_BUILDER_SYSTEM_PROMPT` guides LLM through build→write→validate→install |
+| Iteration Budget | `core/state.py` | `module_build_max_iterations=10` (vs default `max_iterations=5`) |
+| Retry Budget | `core/graph.py` | `_tools_node` injects `[Retry budget: N/M iterations remaining]` into ToolMessage |
+| Fix Hints | `tools/builtin/module_validator.py` | `_build_fix_hints()` returns structured hints per error type |
+| Validation Guard | `tools/builtin/module_installer.py` | Rejects any module where `status != VALIDATED` |
+| Module Registry | `shared/modules/registry.py` | SQLite-backed storage for module manifests |
+| Credential Store | `shared/modules/credential_store.py` | Fernet-encrypted secrets per module |
+
+### 4.11 Module Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: build_module creates manifest
+    PENDING --> PENDING: write_module_code updates code
+    
+    PENDING --> VALIDATED: validate_module passes all 3 stages
+    PENDING --> FAILED: validate_module finds errors
+    
+    FAILED --> PENDING: write_module_code resets status
+    
+    VALIDATED --> INSTALLED: install_module hot-loads
+    
+    INSTALLED --> [*]: Module active as agent tool
+    
+    note right of FAILED
+        fix_hints generated:
+        - syntax_error → line context + suggestion
+        - missing_method → method signature template  
+        - missing_decorator → decorator code
+        - test_failure → fix checklist
+    end note
+    
+    note right of VALIDATED
+        Guard: install_module 
+        rejects anything 
+        != VALIDATED
+    end note
+```
 
 ---
 
@@ -288,6 +433,92 @@ flowchart TD
     
     H --> J[Resume or complete thread]
     I --> K[Log and skip]
+```
+
+### 5.6 Self-Evolution: Module Build Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant LLM as LLM Service
+    participant BM as build_module
+    participant WM as write_module_code
+    participant VM as validate_module
+    participant SB as Sandbox Service
+    participant IM as install_module
+    participant MR as Module Registry
+    
+    U->>O: "Build me a weather module"
+    O->>O: _is_module_build_intent() → true
+    O->>O: Inject MODULE_BUILDER_SYSTEM_PROMPT
+    O->>O: Set effective_max_iterations = 10
+    
+    O->>LLM: Generate(prompt + system_prompt + tools)
+    LLM-->>O: tool_call: build_module(name="weather", platform="openweather")
+    O->>BM: Execute
+    BM-->>O: Manifest created, scaffold ready
+    
+    O->>LLM: Generate(context + build_result)
+    LLM-->>O: tool_call: write_module_code(module_name, code)
+    O->>WM: Execute
+    WM-->>O: Code written, status=PENDING
+    
+    O->>LLM: Generate(context + write_result)
+    LLM-->>O: tool_call: validate_module(module_name)
+    O->>VM: Execute 3-stage validation
+    VM->>VM: 1. ast.parse() syntax check
+    VM->>VM: 2. AST structure analysis
+    VM->>SB: 3. Sandbox execution test
+    SB-->>VM: Test results
+    
+    alt Validation Passes
+        VM-->>O: status=VALIDATED
+        O->>LLM: Generate(context + validated)
+        LLM-->>O: tool_call: install_module(module_name)
+        O->>IM: Execute (VALIDATED guard passes)
+        IM->>MR: Hot-reload module
+        MR-->>IM: Module registered
+        IM-->>O: ✅ Installed
+        O-->>U: "Weather module built and installed"
+    else Validation Fails
+        VM-->>O: status=FAILED + fix_hints
+        O->>O: Append [Retry budget: N/10 remaining]
+        O->>LLM: Generate(context + errors + fix_hints)
+        LLM-->>O: tool_call: write_module_code(fixed_code)
+        Note over O,VM: Loop until VALIDATED or budget exhausted
+    end
+```
+
+### 5.7 LIDM Provider Routing Flow
+
+```mermaid
+flowchart LR
+    Q[Query] --> PC[Provider Router]
+    
+    PC --> CC{Complexity<br/>Classification}
+    
+    CC -->|"Simple: factual, math"| STD[Standard Provider<br/>llama.cpp local]
+    CC -->|"Complex: reasoning, analysis"| HVY[Heavy Provider<br/>Larger context window]
+    CC -->|"Ultra: multi-step, code gen"| ULT[Ultra Provider<br/>GPU / external API]
+    
+    STD --> CB1[Circuit Breaker]
+    HVY --> CB2[Circuit Breaker]
+    ULT --> CB3[Circuit Breaker]
+    
+    CB1 -->|Open| FB[Fallback: next tier up]
+    CB2 -->|Open| FB
+    CB3 -->|Open| ERR[Error: all providers down]
+    
+    CB1 -->|Closed| R[Response]
+    CB2 -->|Closed| R
+    CB3 -->|Closed| R
+    
+    FB --> R
+    
+    style STD fill:#2d6a4f,color:#fff
+    style HVY fill:#e67e22,color:#fff
+    style ULT fill:#c0392b,color:#fff
 ```
 
 ---
@@ -417,16 +648,20 @@ Based on research from the Agent0 paper (arXiv:2511.16043), the following advanc
 |----------|---------|-------------|
 | `ORCHESTRATOR_HOST` | `0.0.0.0` | Bind address |
 | `ORCHESTRATOR_PORT` | `50054` | gRPC port |
+| `ORCHESTRATOR_METRICS_PORT` | `8888` | Prometheus metrics HTTP port |
 | `LLM_HOST` | `llm_service` | LLM service host |
 | `LLM_PORT` | `50051` | LLM service port |
 | `SANDBOX_HOST` | `sandbox_service` | Sandbox service host |
 | `SANDBOX_PORT` | `50057` | Sandbox service port |
-| `AGENT_MAX_ITERATIONS` | `5` | Max tool iterations |
+| `AGENT_MAX_ITERATIONS` | `5` | Max tool iterations (standard) |
+| `MODULE_BUILD_MAX_ITERATIONS` | `10` | Max iterations for module build loops |
 | `AGENT_TEMPERATURE` | `0.7` | LLM temperature |
 | `ENABLE_SELF_CONSISTENCY` | `false` | Enable self-consistency |
 | `SELF_CONSISTENCY_SAMPLES` | `5` | Samples for voting |
 | `SELF_CONSISTENCY_THRESHOLD` | `0.6` | Confidence threshold |
 | `SERPER_API_KEY` | - | Web search API key |
+| `MODULE_DIR` | `modules/` | Module storage directory |
+| `CREDENTIAL_STORE_KEY` | auto | Fernet encryption key for credential store |
 
 ---
 
@@ -442,21 +677,21 @@ Based on research from the Agent0 paper (arXiv:2511.16043), the following advanc
 
 ---
 
-## 11. OpenClaw MCP Bridge Integration
+## 11. MCP Bridge Service
 
 ### 11.1 Architecture
 
 ```mermaid
 graph TD
-    OC[🔌 OpenClaw Gateway<br/>:8000] <-->|MCP JSON-RPC| Bridge[🌉 Bridge Service<br/>HTTP :8100]
-    
+    Client[🔌 External Client] <-->|MCP JSON-RPC| Bridge[🌉 Bridge Service<br/>HTTP :8100]
+
     subgraph "MCP Server"
         Bridge -->|gRPC| Orch[🧠 Orchestrator<br/>:50054]
         Bridge -->|gRPC| Chroma[📚 ChromaDB<br/>:50052]
         Bridge -->|gRPC| Sandbox[🔒 Sandbox<br/>:50057]
         Bridge -->|HTTP| Dashboard[📊 Dashboard<br/>:8001]
     end
-    
+
     style Bridge fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
@@ -493,132 +728,97 @@ graph TD
 
 ---
 
-## 12. Prompt Flow Integration
+## 12. Future Roadmap
 
-### 12.1 Overview
-
-Microsoft Prompt Flow provides visual workflow editing, batch evaluation, and prompt versioning capabilities.
-
-```mermaid
-graph TD
-    subgraph "Prompt Flow Workspace"
-        PF[📐 Flow Editor<br/>VS Code] -->|Edit| Flow[flow.dag.yaml]
-        Flow -->|Nodes| N1[intent_analyzer.py]
-        Flow -->|Nodes| N2[context_retriever.py]
-        Flow -->|Nodes| N3[tool_selector.jinja2]
-        Flow -->|Nodes| N4[tool_executor.py]
-        Flow -->|Nodes| N5[synthesize_response.jinja2]
-    end
-    
-    subgraph "Execution"
-        Flow -->|pf flow test| Test[Test Run]
-        Flow -->|pf flow serve| API[HTTP API :8080]
-        Flow -->|pf run| Batch[Batch Evaluation]
-    end
-    
-    subgraph "Backend Services"
-        N2 -->|gRPC| Chroma[📚 ChromaDB :50052]
-        N4 -->|gRPC| Sandbox[🔒 Sandbox :50057]
-        N4 -->|gRPC| LLM[🤖 LLM :50051]
-    end
-```
-
-### 12.2 Directory Structure
-
-```
-promptflow/
-├── connections/          # LLM provider configs
-├── flows/
-│   ├── agent_workflow/  # Main agent DAG
-│   └── evaluator/       # Evaluation flow
-├── data/                # Test datasets
-└── prompts/             # Versioned prompt templates
-```
-
-### 12.3 Agent Workflow DAG
-
-| Node | Type | Purpose |
-|------|------|---------|
-| `intent_analyzer` | Python | Pattern matching for tools |
-| `context_retriever` | Python | ChromaDB semantic search |
-| `tool_selector` | LLM (Jinja2) | AI-powered tool selection |
-| `tool_executor` | Python | gRPC tool execution |
-| `synthesize_response` | LLM (Jinja2) | Final response generation |
-
-### 12.4 Evaluation Framework
-
-| Metric | Description |
-|--------|-------------|
-| Tool Precision | % of selected tools that were correct |
-| Tool Recall | % of expected tools that were selected |
-| Tool F1 | Harmonic mean of precision/recall |
-| Answer Match | Whether expected keywords appear |
-
-### 12.5 Prompt Variants (A/B Testing)
-
-| Variant | Use Case |
-|---------|----------|
-| `concise` | Brief, focused responses |
-| `detailed` | Comprehensive explanations |
-| `professional` | Formal business tone |
-
-### 12.6 Commands
-
-```bash
-# Run agent workflow
-make pf-run Q="What is 25 * 17?"
-
-# Run batch evaluation
-make pf-eval
-
-# Serve as API
-make pf-serve
-
-# Start trace UI
-make pf-trace
-```
-
----
-
-## 13. Future Roadmap
+### Core Platform (Complete)
 
 | Phase | Feature | Status |
 |-------|---------|--------|
-| Phase 1 | Multi-Turn Tool Rollouts | ✅ Complete |
-| Phase 2 | Self-Consistency Scoring | ✅ Complete |
-| Phase 3 | Sandbox Service | ✅ Complete |
-| Phase 4 | OpenClaw MCP Bridge | ✅ Complete |
-| Phase 5 | Prompt Flow Integration | ✅ Complete |
-| Phase 6 | Bank Data Integration (CIBC CSV) | ✅ Complete |
-| Phase 7 | Self-Evolving Module System | 📋 Planned |
-| Phase 8 | Enhanced RAG Pipeline | 🔄 Planned |
-| Phase 9 | Multi-modal Support (Image/Audio) | 🔄 Planned |
-| Phase 10 | Kubernetes Helm Charts | 🔄 Planned |
-| Phase 11 | ADPO Training Loop | 🔄 Planned |
+| 1 | Multi-Turn Tool Rollouts | ✅ Complete |
+| 2 | Self-Consistency Scoring | ✅ Complete |
+| 3 | Sandbox Service | ✅ Complete |
+| 4 | MCP Bridge Service | ✅ Complete |
+| 5 | Bank Data Integration (CIBC CSV) | ✅ Complete |
+| 6 | Real Adapter Integrations (Weather, Calendar, Gaming) | ✅ Complete |
+| 7a | Self-Evolving Module System (A1–A3) | ✅ Complete |
+| 7b | LLM-Driven Module Builder (A4) | ✅ Complete |
+| 7c | Observability Hardening (B1–B4) | ✅ Complete |
+| 8 | Dynamic Configuration System | ✅ Complete |
+| 9 | Admin API v2 (Module + Config CRUD) | ✅ Complete |
+| 10 | Pipeline UI + Showroom Demo | ✅ Complete |
+
+### Commercial Platform (Planned)
+
+| Phase | Feature | Status | Revenue Impact |
+|-------|---------|--------|----------------|
+| C1 | Authentication + RBAC | 📋 Planned | Unlocks all paid tiers |
+| C2 | Run Unit Metering + Usage Tracking | 📋 Planned | Core billing primitive |
+| C3 | Audit Trail System | 📋 Planned | Enterprise requirement |
+| C4 | Trace Retention + Data Lifecycle | 📋 Planned | Tier differentiation |
+| C5 | Module Marketplace | 📋 Planned | Revenue flywheel |
+| C6 | SSO / SAML / SCIM | 📋 Planned | Enterprise sales |
+| C7 | PII Redaction + Policy Engine | 📋 Planned | Enterprise compliance |
+| C8 | Managed Deployments + Compliance Packs | 📋 Planned | Enterprise differentiator |
+
+### Research Track (Planned)
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| R1 | Enhanced RAG Pipeline | 📋 Planned |
+| R2 | Multi-modal Support (Image/Audio) | 📋 Planned |
+| R3 | Kubernetes Helm Charts | 📋 Planned |
+| R4 | ADPO Training Loop | 📋 Planned |
+| R5 | Curriculum Agent | 📋 Planned |
+
+### Implementation Status
+
+```mermaid
+pie title Feature Completion (v4.0)
+    "Core Complete" : 12
+    "Commercial Planned" : 8
+    "Research Planned" : 5
+```
+
+### Test Coverage
+
+| Suite | Files | Status |
+|-------|-------|--------|
+| Unit Tests | 15 files in `tests/unit/` | ✅ Passing |
+| Integration Tests | 7 files in `tests/integration/` | ✅ Passing |
+| Showroom Tests | `scripts/showroom_test.sh` (15+ checks) | ✅ Passing |
 
 ---
 
-## 14. Quick Reference Commands
+## 13. Quick Reference Commands
 
 ```bash
 # Build and start all services
 make build && make up
 
 # View logs
-make logs
+make logs                       # Stream with 128 KB rolling window
+make logs-orchestrator          # Tail specific service
+make logs-errors                # Error-level logs only
+make logs-debug                 # Debug-level logs
 
-# Health check all services
-make health-check
+# Status and health
+make status                     # Box-drawn service health overview
 
 # Run tests
 pytest tests/unit/ -v
 pytest tests/integration/ -v
+make showroom                   # Integration test suite
+make nexus-demo                 # Full demo (rebuild + test + open dashboards)
 
 # Regenerate protobufs
 make proto-gen
 
 # MCP Bridge commands
 make bridge-query QUERY="Hello"
-make bridge-health-check
-make bridge-briefing
+make bridge-health
+
+# Admin API
+curl http://localhost:8003/admin/health
+curl http://localhost:8003/admin/modules
+curl http://localhost:8003/admin/routing-config
 ```

@@ -2,6 +2,324 @@ Build Configurable Multi-Provider Agent UI
 Create a modular settings UI for your gRPC LLM framework that enables runtime configuration of LLM providers, tools, and inference endpoints—implementing the "control plane" pattern that separates orchestration configuration from execution.
 
 ---
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Plan to implement                                                                                                                                  │
+│                                                                                                                                                    │
+│ NEXUS Implementation Roadmap                                                                                                                       │
+│                                                                                                                                                    │
+│ Context                                                                                                                                            │
+│                                                                                                                                                    │
+│ NEXUS has a production-grade foundation (13-container Docker stack, gRPC contracts, self-evolution pipeline, observability, module system) but     │
+│ lacks the enterprise/commercial features described in the Lean Canvas and Monetization Strategy documents. This roadmap bridges the gap from       │
+│ current open-source prototype to a monetizable open-core platform with Team ($49-99/seat) and Enterprise ($30k-250k/yr) tiers.                     │
+│                                                                                                                                                    │
+│ Current state: Core runtime, LIDM routing, module builder, observability stack, admin API, adapter ecosystem — all functional.                     │
+│ Target state: Tiered product with RBAC, billing/metering, marketplace, audit trails, SSO, and compliance features.                                 │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 1: Authentication & RBAC (Team Tier Foundation)                                                                                              │
+│                                                                                                                                                    │
+│ Priority: Critical — blocks all paid tier enforcement                                                                                              │
+│ Estimated scope: ~15 files                                                                                                                         │
+│                                                                                                                                                    │
+│ 1.1 API Key Authentication                                                                                                                         │
+│                                                                                                                                                    │
+│ - Create shared/auth/api_keys.py — API key generation, validation, hashing (SHA-256)                                                               │
+│ - Add SQLite table api_keys (key_hash, org_id, role, created_at, last_used, rate_limit)                                                            │
+│ - Create middleware shared/auth/middleware.py — FastAPI dependency for admin API + dashboard                                                       │
+│ - Wire into orchestrator/admin_api.py and dashboard_service/main.py                                                                                │
+│                                                                                                                                                    │
+│ 1.2 Role-Based Access Control                                                                                                                      │
+│                                                                                                                                                    │
+│ - Create shared/auth/rbac.py — Role enum (viewer, operator, admin, owner), permission matrix                                                       │
+│ - Permission checks: module management (admin+), config changes (admin+), credential ops (owner), read-only dashboards (viewer+)                   │
+│ - Create shared/auth/models.py — Organization, User, Role Pydantic models                                                                          │
+│ - SQLite tables: organizations, users, user_roles                                                                                                  │
+│                                                                                                                                                    │
+│ 1.3 Organization/Tenant Model                                                                                                                      │
+│                                                                                                                                                    │
+│ - Add org_id to AgentState (extend existing user_id field in core/state.py)                                                                        │
+│ - Scope module registry queries by org (shared/modules/registry.py)                                                                                │
+│ - Scope credential store by org (shared/modules/credentials.py)                                                                                    │
+│ - Scope routing config by org (orchestrator/config_manager.py)                                                                                     │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/auth/ (new package: api_keys.py, rbac.py, middleware.py, models.py)                                                                       │
+│ - orchestrator/admin_api.py — add auth middleware                                                                                                  │
+│ - dashboard_service/main.py — add auth middleware                                                                                                  │
+│ - core/state.py — extend org_id propagation                                                                                                        │
+│ - shared/modules/registry.py — org-scoped queries                                                                                                  │
+│ - shared/modules/credentials.py — org-scoped credential isolation                                                                                  │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 2: Run Unit Metering & Usage Tracking                                                                                                        │
+│                                                                                                                                                    │
+│ Priority: Critical — core billing primitive                                                                                                        │
+│ Estimated scope: ~8 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 2.1 Run Unit Calculator                                                                                                                            │
+│                                                                                                                                                    │
+│ - Create shared/billing/run_units.py — implements the formula:                                                                                     │
+│ Run Unit = max(CPU_seconds, GPU_seconds) x tier_multiplier + tool_call_overhead                                                                    │
+│ - Hook into orchestrator's _tools_node in core/graph.py to track per-request compute                                                               │
+│ - Leverage existing ProviderMetrics.provider_latency_ms and ToolMetrics.tool_call_duration                                                         │
+│                                                                                                                                                    │
+│ 2.2 Usage Storage & Quotas                                                                                                                         │
+│                                                                                                                                                    │
+│ - Create shared/billing/usage_store.py — SQLite table usage_records (org_id, timestamp, run_units, tier, tool_calls, details)                      │
+│ - Create shared/billing/quota_manager.py — enforce tier limits (Free: 100 runs/mo, Team: 5,000 runs/mo)                                            │
+│ - Reject requests when quota exceeded (return gRPC RESOURCE_EXHAUSTED)                                                                             │
+│                                                                                                                                                    │
+│ 2.3 Usage API Endpoints                                                                                                                            │
+│                                                                                                                                                    │
+│ - Add to orchestrator/admin_api.py:                                                                                                                │
+│   - GET /admin/billing/usage — current period usage by org                                                                                         │
+│   - GET /admin/billing/usage/history — historical usage with date range                                                                            │
+│   - GET /admin/billing/quota — remaining quota for current period                                                                                  │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/billing/ (new package: run_units.py, usage_store.py, quota_manager.py)                                                                    │
+│ - core/graph.py — instrument _tools_node with run unit tracking                                                                                    │
+│ - orchestrator/admin_api.py — billing endpoints                                                                                                    │
+│ - orchestrator/orchestrator_service.py — quota check before processing                                                                             │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 3: Audit Trail System                                                                                                                        │
+│                                                                                                                                                    │
+│ Priority: High — required for enterprise compliance                                                                                                │
+│ Estimated scope: ~6 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 3.1 Audit Log Storage                                                                                                                              │
+│                                                                                                                                                    │
+│ - Create shared/observability/audit_log.py — SQLite table audit_events:                                                                            │
+│   - Fields: id, timestamp, org_id, actor_id, action, resource_type, resource_id, before_state (JSON), after_state (JSON), ip_address, metadata     │
+│ - Immutable append-only design (no UPDATE/DELETE on audit table)                                                                                   │
+│                                                                                                                                                    │
+│ 3.2 Audit Middleware                                                                                                                               │
+│                                                                                                                                                    │
+│ - Create decorator @audit_action(action, resource_type) for admin API endpoints                                                                    │
+│ - Auto-capture before/after state for config changes, module lifecycle, credential ops                                                             │
+│ - Hook into existing admin API endpoints in orchestrator/admin_api.py                                                                              │
+│                                                                                                                                                    │
+│ 3.3 Audit Query API                                                                                                                                │
+│                                                                                                                                                    │
+│ - GET /admin/audit-logs — filter by date range, actor, action, resource_type                                                                       │
+│ - GET /admin/audit-logs/export — CSV export for compliance reviews                                                                                 │
+│ - Grafana dashboard panel: audit event timeline                                                                                                    │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/observability/audit_log.py (new)                                                                                                          │
+│ - shared/auth/middleware.py — add audit decorator                                                                                                  │
+│ - orchestrator/admin_api.py — wire audit logging to all mutation endpoints                                                                         │
+│ - config/grafana/provisioning/dashboards/json/ — add audit panel to nexus-modules dashboard                                                        │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 4: Trace Retention & Data Lifecycle                                                                                                          │
+│                                                                                                                                                    │
+│ Priority: High — differentiates Free vs Team vs Enterprise                                                                                         │
+│ Estimated scope: ~5 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 4.1 Tiered Retention Policies                                                                                                                      │
+│                                                                                                                                                    │
+│ - Update config/prometheus.yaml — configure storage retention flags                                                                                │
+│ - Create shared/observability/retention.py — retention policy engine:                                                                              │
+│   - Free: 7 days, Team: 90 days, Enterprise: unlimited                                                                                             │
+│ - Add retention config to organization model                                                                                                       │
+│                                                                                                                                                    │
+│ 4.2 Data Cleanup Jobs                                                                                                                              │
+│                                                                                                                                                    │
+│ - Create shared/observability/data_lifecycle.py — background cleanup worker                                                                        │
+│ - Prune expired traces, logs, and usage records per org retention policy                                                                           │
+│ - Schedule via orchestrator startup (background thread, daily)                                                                                     │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/observability/retention.py (new)                                                                                                          │
+│ - shared/observability/data_lifecycle.py (new)                                                                                                     │
+│ - config/prometheus.yaml — retention flags                                                                                                         │
+│ - orchestrator/orchestrator_service.py — start cleanup worker                                                                                      │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 5: Marketplace Foundation                                                                                                                    │
+│                                                                                                                                                    │
+│ Priority: High — revenue stream + ecosystem flywheel                                                                                               │
+│ Estimated scope: ~10 files                                                                                                                         │
+│                                                                                                                                                    │
+│ 5.1 Module Publishing API                                                                                                                          │
+│                                                                                                                                                    │
+│ - Extend shared/modules/manifest.py — add creator_id, version, price, license, downloads, rating                                                   │
+│ - Create shared/marketplace/publisher.py — submission, versioning, validation gates                                                                │
+│ - Extend shared/modules/registry.py — marketplace queries (search, filter by category, sort by downloads)                                          │
+│                                                                                                                                                    │
+│ 5.2 Marketplace API Endpoints                                                                                                                      │
+│                                                                                                                                                    │
+│ - Add to dashboard_service/main.py:                                                                                                                │
+│   - GET /marketplace/modules — browse with search, category filter, pagination                                                                     │
+│   - GET /marketplace/modules/{id} — detail view with readme, reviews, install count                                                                │
+│   - POST /marketplace/modules/{id}/install — install from marketplace                                                                              │
+│   - GET /marketplace/creator/earnings — creator revenue dashboard                                                                                  │
+│                                                                                                                                                    │
+│ 5.3 Marketplace UI                                                                                                                                 │
+│                                                                                                                                                    │
+│ - Create marketplace page in ui_service/src/app/marketplace/page.tsx                                                                               │
+│ - Module cards: icon, name, category, creator, downloads, rating                                                                                   │
+│ - Install flow: one-click install via admin API proxy                                                                                              │
+│ - Creator dashboard: earnings, install trends, ratings                                                                                             │
+│                                                                                                                                                    │
+│ 5.4 Take-Rate Tracking                                                                                                                             │
+│                                                                                                                                                    │
+│ - Create shared/marketplace/revenue.py — 85/15 split calculation (launch phase)                                                                    │
+│ - Track per-module revenue in registry (creator_revenue, platform_revenue fields)                                                                  │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/marketplace/ (new package: publisher.py, revenue.py)                                                                                      │
+│ - shared/modules/manifest.py — extend with marketplace fields                                                                                      │
+│ - shared/modules/registry.py — marketplace queries                                                                                                 │
+│ - dashboard_service/main.py — marketplace endpoints                                                                                                │
+│ - ui_service/src/app/marketplace/page.tsx (new)                                                                                                    │
+│ - ui_service/src/components/marketplace/ (new: ModuleCard.tsx, CreatorDashboard.tsx)                                                               │
+│ - ui_service/src/components/layout/Navbar.tsx — add Marketplace route                                                                              │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 6: SSO & Enterprise Authentication                                                                                                           │
+│                                                                                                                                                    │
+│ Priority: Medium — unlocks enterprise sales                                                                                                        │
+│ Estimated scope: ~8 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 6.1 OAuth2/OIDC Provider                                                                                                                           │
+│                                                                                                                                                    │
+│ - Create shared/auth/oauth2.py — OIDC integration (Google, GitHub, Microsoft)                                                                      │
+│ - JWT token issuance and validation for API access                                                                                                 │
+│ - Session management with refresh tokens                                                                                                           │
+│                                                                                                                                                    │
+│ 6.2 SAML Support                                                                                                                                   │
+│                                                                                                                                                    │
+│ - Create shared/auth/saml.py — SAML 2.0 SP implementation (python3-saml)                                                                           │
+│ - Support for Okta, Azure AD, OneLogin as IdPs                                                                                                     │
+│ - Attribute mapping to NEXUS roles                                                                                                                 │
+│                                                                                                                                                    │
+│ 6.3 SCIM User Provisioning                                                                                                                         │
+│                                                                                                                                                    │
+│ - Create shared/auth/scim.py — SCIM 2.0 endpoints for automated user/group sync                                                                    │
+│ - GET/POST /scim/v2/Users, GET/POST /scim/v2/Groups                                                                                                │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/auth/oauth2.py (new)                                                                                                                      │
+│ - shared/auth/saml.py (new)                                                                                                                        │
+│ - shared/auth/scim.py (new)                                                                                                                        │
+│ - orchestrator/admin_api.py — SSO callback routes                                                                                                  │
+│ - orchestrator/requirements.txt — add python3-saml, PyJWT                                                                                          │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 7: PII Redaction & Policy Engine                                                                                                             │
+│                                                                                                                                                    │
+│ Priority: Medium — enterprise compliance                                                                                                           │
+│ Estimated scope: ~6 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 7.1 PII Detection & Redaction                                                                                                                      │
+│                                                                                                                                                    │
+│ - Create shared/security/pii_redactor.py — regex + spaCy NER for PII detection                                                                     │
+│ - Patterns: SSN, credit card, email, phone, addresses, names in context                                                                            │
+│ - Configurable redaction modes: mask (***), hash, remove                                                                                           │
+│ - Hook into trace export pipeline and log output                                                                                                   │
+│                                                                                                                                                    │
+│ 7.2 Policy Engine                                                                                                                                  │
+│                                                                                                                                                    │
+│ - Create shared/security/policy_engine.py — declarative YAML/JSON policies                                                                         │
+│ - Tool allowlists/blocklists per org (e.g., "org X cannot use execute_code tool")                                                                  │
+│ - Data source access policies (e.g., "org Y can only access weather, not finance")                                                                 │
+│ - Enforce in core/graph.py _tools_node before tool invocation                                                                                      │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/security/ (new package: pii_redactor.py, policy_engine.py)                                                                                │
+│ - core/graph.py — policy check before tool execution                                                                                               │
+│ - shared/observability/logging_config.py — PII redaction filter on log handlers                                                                    │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Phase 8: Managed Deployments & Compliance                                                                                                          │
+│                                                                                                                                                    │
+│ Priority: Lower — enterprise differentiator                                                                                                        │
+│ Estimated scope: ~6 files                                                                                                                          │
+│                                                                                                                                                    │
+│ 8.1 Canary Deployments                                                                                                                             │
+│                                                                                                                                                    │
+│ - Create shared/deployments/canary.py — percentage-based traffic splitting for module updates                                                      │
+│ - Leverage ModuleLoader.reload_module() for zero-downtime upgrades                                                                                 │
+│ - Admin API: POST /admin/modules/{id}/canary (traffic %, duration)                                                                                 │
+│                                                                                                                                                    │
+│ 8.2 Compliance Packs                                                                                                                               │
+│                                                                                                                                                    │
+│ - Create shared/compliance/ — pre-built validation suites                                                                                          │
+│ - SOC2 pack: audit trail checks, access control verification, encryption validation                                                                │
+│ - HIPAA pack: PII redaction enabled, data residency verified, BAA template                                                                         │
+│ - Test targets: make test-soc2, make test-hipaa                                                                                                    │
+│                                                                                                                                                    │
+│ Files to modify/create:                                                                                                                            │
+│                                                                                                                                                    │
+│ - shared/deployments/canary.py (new)                                                                                                               │
+│ - shared/compliance/soc2.py (new)                                                                                                                  │
+│ - shared/compliance/hipaa.py (new)                                                                                                                 │
+│ - orchestrator/admin_api.py — canary endpoints                                                                                                     │
+│ - Makefile — compliance test targets                                                                                                               │
+│                                                                                                                                                    │
+│ ---                                                                                                                                                │
+│ Implementation Priority Matrix                                                                                                                     │
+│ ┌───────┬──────────────────────────┬───────────────────────────┬────────┬─────────────┐                                                            │
+│ │ Phase │         Feature          │      Revenue Impact       │ Effort │ Ship Target │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 1     │ Auth + RBAC              │ Unlocks all paid tiers    │ Medium │ Week 1-3    │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 2     │ Run Unit Metering        │ Core billing primitive    │ Medium │ Week 3-5    │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 3     │ Audit Trails             │ Enterprise requirement    │ Low    │ Week 5-6    │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 4     │ Trace Retention          │ Tier differentiation      │ Low    │ Week 6-7    │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 5     │ Marketplace              │ Revenue stream + flywheel │ High   │ Week 7-10   │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 6     │ SSO/SAML/SCIM            │ Enterprise sales          │ Medium │ Week 10-12  │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 7     │ PII + Policy Engine      │ Enterprise compliance     │ Medium │ Week 12-14  │                                                            │
+│ ├───────┼──────────────────────────┼───────────────────────────┼────────┼─────────────┤                                                            │
+│ │ 8     │ Deployments + Compliance │ Enterprise differentiator │ Medium │ Week 14-16  │                                                            │
+│ └───────┴──────────────────────────┴───────────────────────────┴────────┴─────────────┘                                                            │
+│ ---                                                                                                                                                │
+│ Verification Plan                                                                                                                                  │
+│                                                                                                                                                    │
+│ Per-Phase Testing                                                                                                                                  │
+│                                                                                                                                                    │
+│ - Phase 1: Unit tests for RBAC permission matrix; integration test: unauthenticated request → 401; authorized request → 200                        │
+│ - Phase 2: Unit test Run Unit formula; integration test: exceed quota → RESOURCE_EXHAUSTED; usage endpoint returns correct totals                  │
+│ - Phase 3: Unit test audit decorator captures before/after state; integration test: admin config change → audit log entry created                  │
+│ - Phase 4: Integration test: create traces → wait past retention window → verify cleanup                                                           │
+│ - Phase 5: Integration test: publish module → appears in marketplace search → install → module loaded                                              │
+│ - Phase 6: Integration test: OIDC login flow → JWT issued → API access with token                                                                  │
+│ - Phase 7: Unit test PII patterns (SSN, CC, email); integration test: policy blocks denied tool call                                               │
+│ - Phase 8: Integration test: canary deploy at 10% → verify traffic split; compliance pack passes on configured system                              │
+│                                                                                                                                                    │
+│ End-to-End Validation                                                                                                                              │
+│                                                                                                                                                    │
+│ 1. docker compose up → all 13+ services healthy                                                                                                    │
+│ 2. Create org + admin user via API key                                                                                                             │
+│ 3. Build module via agent → validate → install → appears in marketplace                                                                            │
+│ 4. Execute workflow → Run Units metered → quota enforced                                                                                           │
+│ 5. Check audit log → all mutations recorded                                                                                                        │
+│ 6. Grafana dashboards show billing, audit, module analytics                                                                                        │
+│ 7. make showroom + new make test-billing + make test-rbac all pass                                                                                 │
+│                                                                                                                                                    │
+│ Existing Tests to Extend                                                                                                                           │
+│                                                                                                                                                    │
+│ - tests/unit/test_module_tools.py — add RBAC permission checks                                                                                     │
+│ - tests/integration/test_orchestrator_e2e.py — add auth header, quota enforcement                                                                  │
+│ - tests/integration/test_module_builder_e2e.py — add marketplace publish flow                                                                      │
+│ - scripts/showroom_test.sh — add billing + auth endpoint checks                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 ## Document Conventions
 - Sections above the Appendix are the active roadmap.
