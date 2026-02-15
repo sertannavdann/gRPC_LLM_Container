@@ -51,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-        test test-unit test-integration test-e2e test-monkey \
+        test test-unit test-integration test-e2e test-monkey auth-test \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -773,6 +773,10 @@ test-tools:
 test-monkey:
 	@printf '$(CYAN)Running monkey runner tests (requires services up)...$(RESET)\n'
 	@cd tests && python -m pytest integration/test_monkey_runner.py -v --tb=short -x
+
+auth-test:
+	@printf '$(CYAN)Running auth unit + integration tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_auth.py auth/test_auth_integration.py -v --tb=short
 
 # ============================================================================
 # HEALTH CHECKS (used internally, prefer `make status` for user-facing)
