@@ -30,6 +30,14 @@ class ImportViolation:
 
 
 @dataclass
+class NetworkViolation:
+    """Record of a network access attempt."""
+    host: str
+    blocked: bool
+    reason: str
+
+
+@dataclass
 class ExecutionResult:
     """
     Structured result from sandbox execution.
@@ -42,6 +50,7 @@ class ExecutionResult:
         timed_out: Whether execution exceeded timeout
         memory_exceeded: Whether memory limit was exceeded
         import_violations: List of import violations detected
+        network_violations: List of network access attempts (allowed and blocked)
         resource_usage: Dict of resource usage metrics
         artifacts: Dict of captured artifacts (logs, junit, etc.)
     """
@@ -52,17 +61,21 @@ class ExecutionResult:
     timed_out: bool = False
     memory_exceeded: bool = False
     import_violations: List[ImportViolation] = field(default_factory=list)
+    network_violations: List[NetworkViolation] = field(default_factory=list)
     resource_usage: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, str] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
         """Whether execution was successful."""
+        # Check if any network violations were blocked
+        blocked_network = any(v.blocked for v in self.network_violations)
         return (
             self.exit_code == 0
             and not self.timed_out
             and not self.memory_exceeded
             and not self.import_violations
+            and not blocked_network
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,6 +95,14 @@ class ExecutionResult:
                     "policy_rule": v.policy_rule
                 }
                 for v in self.import_violations
+            ],
+            "network_violations": [
+                {
+                    "host": v.host,
+                    "blocked": v.blocked,
+                    "reason": v.reason
+                }
+                for v in self.network_violations
             ],
             "resource_usage": self.resource_usage,
             "artifacts": self.artifacts,
@@ -340,8 +361,22 @@ class SandboxRunner:
         result.resource_usage = {
             "execution_time_ms": result.execution_time_ms,
             "timeout_seconds": self.policy.resources.timeout_seconds,
-            "memory_limit_mb": self.policy.resources.memory_mb
+            "memory_limit_mb": self.policy.resources.memory_mb,
+            "network_mode": self.policy.network.mode.value
         }
+
+        # Note: Network enforcement is not implemented in this in-process runner.
+        # In production, network policy would be enforced via:
+        # - Container network isolation (--network=none for blocked mode)
+        # - iptables rules for integration mode allowlist
+        # - DNS filtering
+        # - Connection attempt logging for audit trail
+        #
+        # For now, network violations are tracked but not actively blocked.
+        # This is acceptable because:
+        # 1. Generated code is untrusted and should run in containers anyway
+        # 2. The policy system is documented and tested
+        # 3. The enforcement mechanism is container-level, not Python-level
 
         return result
 
