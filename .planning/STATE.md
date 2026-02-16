@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-02 complete).
+**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-03 complete).
 
-**Current Plan**: 3-03 (Sandboxed Validation Loop)
-**Progress**: 2/6 plans complete
+**Current Plan**: 3-04 (Installer with Rollback)
+**Progress**: 3/6 plans complete
 
 ---
 
@@ -54,7 +54,7 @@
 ### Phase 3: Self-Evolution Engine 🚧
 - ✅ **Plan 01: Core Contracts** — Manifest schema, adapter/generator contracts, artifact bundling, canonical output envelope (106 tests)
 - ✅ **Plan 02: Module Generator Gateway** — GitHub Models provider, LLM Gateway with purpose-based routing, schema validation, budget tracking (47 tests)
-- 📋 Plan 03: Sandboxed Validation Loop
+- ✅ **Plan 03: Sandboxed Validation Loop** — Dual-layer import enforcement, deny-by-default policies, merged validation reports, artifact capture (64 tests)
 - 📋 Plan 04: Installer with Rollback
 - 📋 Plan 05: Repair Loop
 - 📋 Plan 06: End-to-End Integration
@@ -107,6 +107,12 @@
 - **Schema validation rejects, not repairs**: Non-conforming outputs trigger fallback, not silent acceptance
 - **Deterministic fallback order**: Same failure condition always selects same next model for predictability
 - **Budget enforcement before generation**: Prevents wasted API calls when budget exceeded
+
+### Phase 3 Plan 03 (Sandboxed Validation Loop)
+- **Dual-layer import enforcement (static + runtime)**: Static AST check catches obvious violations; runtime hook prevents dynamic bypass attempts
+- **Deny-by-default network policy**: Default blocked mode prevents accidental egress; integration mode requires explicit allowlist
+- **Merged ValidationReport (static + runtime)**: Single source of truth for LLM repair loop; includes fix hints with context
+- **In-process runner for development**: Production uses containers; in-process allows testing policy logic without Docker overhead
 
 ---
 
