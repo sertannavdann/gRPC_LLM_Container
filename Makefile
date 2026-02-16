@@ -51,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering test-self-evolution \
+		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering test-self-evolution verify \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -119,6 +119,7 @@ help:
 	@printf '  $(CYAN)make test-monkey$(RESET)        - Run monkey runner (requires services up)\n'
 	@printf '  $(CYAN)make test-metering$(RESET)      - Run run-unit metering unit + integration tests\n'
 	@printf '  $(CYAN)make make-test-metering$(RESET) - Alias for test-metering\n'
+	@printf '  $(CYAN)make verify$(RESET)             - Run full release verification pipeline\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)📦 Proto Generation:$(RESET)\n'
 	@printf '  $(CYAN)make proto-gen$(RESET)          - Generate all protobuf stubs\n'
@@ -799,6 +800,10 @@ test-self-evolution:
 	@printf '$(YELLOW)Scenario regression tests (5+ curated patterns)...$(RESET)\n'
 	@python -m pytest tests/scenarios/ -v --tb=short
 	@printf '$(GREEN)✓ All Phase 3 tests passed$(RESET)\n'
+
+verify:
+	@printf '$(BOLD)$(CYAN)Running NEXUS Release Verification...$(RESET)\n'
+	@bash scripts/verify.sh
 
 # ============================================================================
 # HEALTH CHECKS (used internally, prefer `make status` for user-facing)
