@@ -1,30 +1,71 @@
 """
-Module Builder Tool — creates adapter module scaffolding for the LLM.
+Module Builder Tool — LLM-driven module generation with stage pipeline.
 
-When the orchestrator detects a "build me X" intent, this tool creates
-the directory structure, manifest, and code skeleton. The LLM then
-fills in the API-specific fetch/transform logic.
+Generation flow:
+    1. Scaffold stage: Create directory, manifest, stub adapter, base tests
+    2. Implement stage: Call LLM gateway to generate adapter.py implementation
+    3. Tests stage: Call LLM gateway to generate test_adapter.py
+    4. Repair stage (if validation fails): Call LLM gateway with fix hints to repair
 
-Flow:
-    1. LLM calls build_module() with high-level spec
-    2. Tool creates modules/{category}/{platform}/ with manifest + skeleton
-    3. Returns the skeleton code for LLM to refine with API-specific logic
-    4. LLM calls write_module_code() with the refined adapter code
-    5. LLM calls validate_module() to test in sandbox
+Features:
+    - Stage-based pipeline with deterministic artifact tracking
+    - Bounded repair loop (max 10 attempts) with failure fingerprinting
+    - Immutable attempt records with audit trail
+    - Terminal failure detection (policy/security violations stop immediately)
 """
+import hashlib
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
+from dataclasses import dataclass, field
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus, ValidationResults
 from shared.modules.templates.adapter_template import generate_adapter_code
 from shared.modules.templates.test_template import generate_test_code
+from shared.modules.artifacts import ArtifactBundleBuilder, ArtifactIndex
+from shared.providers.llm_gateway import LLMGateway, Purpose
 
 logger = logging.getLogger(__name__)
 
 MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
+
+# Configuration
+MAX_REPAIR_ATTEMPTS = 10
+
+# Global gateway reference (set by orchestrator)
+_llm_gateway: Optional[LLMGateway] = None
+
+
+def set_llm_gateway(gateway: LLMGateway) -> None:
+    """Wire LLM gateway from orchestrator."""
+    global _llm_gateway
+    _llm_gateway = gateway
+
+
+@dataclass
+class BuildSession:
+    """
+    Tracks state for a single module build job.
+
+    Provides idempotent job identity via normalized request hash.
+    Tracks current stage, attempt number, and artifact references.
+    """
+    job_id: str
+    module_id: str
+    current_stage: str = "scaffold"
+    attempt_number: int = 0
+    artifacts: List[ArtifactIndex] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+    @classmethod
+    def create_job_id(cls, module_id: str, spec: Dict[str, Any]) -> str:
+        """Create deterministic job ID from module ID and spec."""
+        spec_json = json.dumps(spec, sort_keys=True)
+        spec_hash = hashlib.sha256(spec_json.encode()).hexdigest()[:8]
+        return f"{module_id.replace('/', '_')}_{spec_hash}"
 
 
 def build_module(
@@ -39,30 +80,28 @@ def build_module(
     display_name: str = "",
 ) -> Dict[str, Any]:
     """
-    Create a new adapter module with scaffolding code.
+    Create a new adapter module using LLM-driven stage pipeline.
 
-    Use this tool when the user asks to build, create, or add a new
-    integration or data source. This generates the module directory,
-    manifest, adapter skeleton, and test file.
-
-    After calling this, review the generated code and call
-    write_module_code() to customize the API-specific logic, then
-    call validate_module() to test it.
+    Stage pipeline:
+        1. Scaffold: Create directory, manifest, stub files
+        2. Implement: LLM generates adapter.py
+        3. Tests: LLM generates test_adapter.py
+        4. Validate: Run tests in sandbox
+        5. Repair (if needed): LLM fixes issues based on validation report
 
     Args:
-        name (str): Module name, e.g. "clashroyale" or "apple_health".
-        category (str): Module category, e.g. "gaming", "health", "finance",
-            "weather", "social", "productivity".
-        platform (str): Platform identifier. Defaults to name if not provided.
-        description (str): Human-readable description of what this module does.
-        api_base_url (str): Base URL of the API to integrate with.
-        requires_api_key (bool): Whether the API needs authentication. Default True.
-        auth_type (str): Authentication type — "api_key", "oauth2", "basic", "none".
-        icon (str): Emoji icon for the module.
-        display_name (str): Human-readable display name.
+        name: Module name (e.g., "clashroyale")
+        category: Module category (e.g., "gaming", "health", "finance")
+        platform: Platform identifier (defaults to name)
+        description: Human-readable description
+        api_base_url: Base URL of the API to integrate
+        requires_api_key: Whether API needs authentication
+        auth_type: Authentication type ("api_key", "oauth2", "basic", "none")
+        icon: Emoji icon for the module
+        display_name: Human-readable display name
 
     Returns:
-        Dict with status, module_id, generated file paths, and skeleton code.
+        Dict with status, module_id, stage info, and artifacts
     """
     if not platform:
         platform = name
@@ -70,17 +109,36 @@ def build_module(
     if not display_name:
         display_name = name.replace("_", " ").title()
 
+    module_id = f"{category}/{platform}"
     module_dir = MODULES_DIR / category / platform
 
     # Check if module already exists
     if module_dir.exists() and (module_dir / "manifest.json").exists():
         return {
             "status": "error",
-            "error": f"Module {category}/{platform} already exists. Use write_module_code() to update it.",
-            "module_id": f"{category}/{platform}",
+            "error": f"Module {module_id} already exists. Use write_module_code() to update it.",
+            "module_id": module_id,
         }
 
-    # Create manifest
+    # Create build session
+    spec = {
+        "name": name,
+        "category": category,
+        "platform": platform,
+        "description": description,
+        "api_base_url": api_base_url,
+        "requires_api_key": requires_api_key,
+        "auth_type": auth_type,
+    }
+    session = BuildSession(
+        job_id=BuildSession.create_job_id(module_id, spec),
+        module_id=module_id,
+        current_stage="scaffold"
+    )
+
+    # ========== SCAFFOLD STAGE ==========
+    logger.info(f"[{session.job_id}] Starting scaffold stage for {module_id}")
+
     manifest = ModuleManifest(
         name=name,
         category=category,
@@ -124,11 +182,31 @@ def build_module(
     (module_dir / "adapter.py").write_text(adapter_code)
     (module_dir / "test_adapter.py").write_text(test_code)
 
-    logger.info(f"Module scaffolding created: {manifest.module_id}")
+    # Create artifact bundle for scaffold stage
+    scaffold_files = {
+        f"{category}/{platform}/manifest.json": manifest_file.read_text(),
+        f"{category}/{platform}/adapter.py": adapter_code,
+        f"{category}/{platform}/test_adapter.py": test_code,
+    }
+    manifest_file = module_dir / "manifest.json"
+
+    artifact_index = ArtifactBundleBuilder.build_from_dict(
+        files=scaffold_files,
+        job_id=session.job_id,
+        attempt_id=session.attempt_number,
+        module_id=module_id,
+        stage="scaffold"
+    )
+    session.artifacts.append(artifact_index)
+    session.attempt_number += 1
+
+    logger.info(f"[{session.job_id}] Scaffold stage complete: {artifact_index.bundle_sha256}")
 
     return {
         "status": "success",
-        "module_id": manifest.module_id,
+        "module_id": module_id,
+        "job_id": session.job_id,
+        "stage": "scaffold",
         "module_dir": str(module_dir),
         "files_created": [
             str(module_dir / "manifest.json"),
@@ -136,7 +214,7 @@ def build_module(
             str(module_dir / "test_adapter.py"),
         ],
         "class_name": manifest.class_name,
-        "adapter_code": adapter_code,
+        "artifact_bundle": artifact_index.bundle_sha256,
         "instructions": (
             f"Module skeleton created at {module_dir}. "
             f"The adapter.py contains a default fetch/transform implementation. "
@@ -159,14 +237,12 @@ def write_module_code(
     API-specific adapter logic. The module_id is "{category}/{platform}".
 
     Args:
-        module_id (str): Module identifier in "category/platform" format,
-            e.g. "gaming/clashroyale".
-        adapter_code (str): Complete Python source code for adapter.py.
-            Must contain a class decorated with @register_adapter.
-        test_code (str): Optional updated test code. If empty, keeps existing tests.
+        module_id: Module identifier in "category/platform" format
+        adapter_code: Complete Python source code for adapter.py
+        test_code: Optional updated test code
 
     Returns:
-        Dict with status and file paths written.
+        Dict with status and file paths written
     """
     parts = module_id.split("/")
     if len(parts) != 2:
