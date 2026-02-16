@@ -306,3 +306,148 @@ class BuildAuditLog:
         """Load audit log from disk."""
         data = json.loads(audit_file.read_text())
         return cls.from_dict(data)
+
+
+@dataclass
+class AuditEvent:
+    """
+    Single audit event for dev-mode actions.
+
+    Attributes:
+        event_id: Unique event identifier
+        action: Action type (draft_created, draft_edited, etc.)
+        actor: Identity of user who performed the action
+        timestamp: ISO timestamp of action
+        module_id: Module identifier (if applicable)
+        draft_id: Draft identifier (if applicable)
+        details: Additional context (file hashes, version refs, etc.)
+    """
+    event_id: str
+    action: str
+    actor: str
+    timestamp: str
+    module_id: Optional[str] = None
+    draft_id: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AuditEvent":
+        """Create AuditEvent from dictionary."""
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+class DevModeAuditLog:
+    """
+    Audit trail for dev-mode operations.
+
+    Records all draft lifecycle actions with actor identity and artifact hashes:
+    - draft_created
+    - draft_edited
+    - draft_diff_viewed
+    - draft_validated
+    - draft_promoted
+    - draft_discarded
+    - version_rollback
+
+    Logs are append-only JSONL format for immutability and streaming.
+    """
+
+    def __init__(self, audit_dir: Path):
+        """
+        Initialize dev-mode audit log.
+
+        Args:
+            audit_dir: Directory for audit logs
+        """
+        self.audit_dir = Path(audit_dir)
+        self.audit_dir.mkdir(parents=True, exist_ok=True)
+        self.audit_file = self.audit_dir / "dev_mode_audit.jsonl"
+
+    def log_action(
+        self,
+        action: str,
+        actor: str,
+        module_id: Optional[str] = None,
+        draft_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Log a dev-mode action.
+
+        Args:
+            action: Action type
+            actor: User identity
+            module_id: Module identifier (if applicable)
+            draft_id: Draft identifier (if applicable)
+            details: Additional context
+
+        Returns:
+            event_id
+        """
+        event_id = hashlib.sha256(
+            f"{action}_{actor}_{datetime.utcnow().isoformat()}".encode()
+        ).hexdigest()[:16]
+
+        event = AuditEvent(
+            event_id=event_id,
+            action=action,
+            actor=actor,
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            module_id=module_id,
+            draft_id=draft_id,
+            details=details or {}
+        )
+
+        # Append to JSONL file
+        with open(self.audit_file, "a") as f:
+            f.write(json.dumps(event.to_dict()) + "\n")
+
+        logger.debug(f"Audit event logged: {action} by {actor}")
+
+        return event_id
+
+    def get_events(
+        self,
+        module_id: Optional[str] = None,
+        draft_id: Optional[str] = None,
+        action: Optional[str] = None,
+        limit: int = 100
+    ) -> List[AuditEvent]:
+        """
+        Query audit events with filters.
+
+        Args:
+            module_id: Filter by module identifier
+            draft_id: Filter by draft identifier
+            action: Filter by action type
+            limit: Maximum number of events to return
+
+        Returns:
+            List of AuditEvent
+        """
+        if not self.audit_file.exists():
+            return []
+
+        events = []
+        with open(self.audit_file, "r") as f:
+            for line in f:
+                event = AuditEvent.from_dict(json.loads(line))
+
+                # Apply filters
+                if module_id and event.module_id != module_id:
+                    continue
+                if draft_id and event.draft_id != draft_id:
+                    continue
+                if action and event.action != action:
+                    continue
+
+                events.append(event)
+
+                if len(events) >= limit:
+                    break
+
+        return events[-limit:]  # Return most recent
