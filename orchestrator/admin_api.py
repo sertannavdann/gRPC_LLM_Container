@@ -472,6 +472,195 @@ def reload_system(user: User = Depends(require_permission(Permission.WRITE_CONFI
     }
 
 
+# =============================================================================
+# DEV-MODE ENDPOINTS: DRAFT / PROMOTE / ROLLBACK
+# =============================================================================
+
+# Module-level references (set by start_admin_server)
+_draft_manager = None
+_version_manager = None
+
+
+class DraftCreateRequest(BaseModel):
+    """Request to create a draft from installed module."""
+    from_version: str = "active"
+
+
+class DraftEditRequest(BaseModel):
+    """Request to edit a file in draft."""
+    file_path: str
+    content: str
+
+
+class RollbackRequest(BaseModel):
+    """Request to rollback to prior version."""
+    target_version: str
+    reason: str = ""
+
+
+@_app.post("/admin/modules/{category}/{platform}/draft")
+def create_draft(
+    category: str,
+    platform: str,
+    request: DraftCreateRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """Create a draft from installed module (operator+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    module_id = f"{category}/{platform}"
+
+    result = _draft_manager.create_draft(
+        module_id=module_id,
+        from_version=request.from_version,
+        actor=user.org_id
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Draft creation failed"))
+
+    return result
+
+
+@_app.patch("/admin/modules/drafts/{draft_id}")
+def edit_draft_file(
+    draft_id: str,
+    request: DraftEditRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """Edit a file in draft (operator+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.edit_file(
+        draft_id=draft_id,
+        file_path=request.file_path,
+        content=request.content,
+        actor=user.org_id
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Edit failed"))
+
+    return result
+
+
+@_app.get("/admin/modules/drafts/{draft_id}/diff")
+def get_draft_diff(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """View diff between draft and source (operator+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.org_id)
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Diff failed"))
+
+    return result
+
+
+@_app.post("/admin/modules/drafts/{draft_id}/validate")
+def validate_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),  # admin+ role
+):
+    """Trigger sandbox validation on draft (admin+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.validate_draft(draft_id=draft_id, actor=user.org_id)
+
+    if result.get("status") not in ["success", "failed"]:
+        raise HTTPException(400, result.get("error", "Validation error"))
+
+    return result
+
+
+@_app.post("/admin/modules/drafts/{draft_id}/promote")
+def promote_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),  # admin+ role
+):
+    """Promote validated draft to new version (admin+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.promote_draft(draft_id=draft_id, actor=user.org_id)
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Promotion failed"))
+
+    return result
+
+
+@_app.delete("/admin/modules/drafts/{draft_id}")
+def discard_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """Discard a draft (operator+ role)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.discard_draft(draft_id=draft_id, actor=user.org_id)
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Discard failed"))
+
+    return result
+
+
+@_app.post("/admin/modules/{category}/{platform}/rollback")
+def rollback_module(
+    category: str,
+    platform: str,
+    request: RollbackRequest,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),  # admin+ role
+):
+    """Rollback module to prior version (admin+ role)."""
+    if _version_manager is None:
+        raise HTTPException(503, "Version manager not initialized")
+
+    module_id = f"{category}/{platform}"
+
+    result = _version_manager.rollback_to_version(
+        module_id=module_id,
+        target_version_id=request.target_version,
+        actor=user.org_id,
+        reason=request.reason
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Rollback failed"))
+
+    return result
+
+
+@_app.get("/admin/modules/{category}/{platform}/versions")
+def list_module_versions(
+    category: str,
+    platform: str,
+    user: User = Depends(get_current_user),  # viewer+ role
+):
+    """List all validated versions for a module (viewer+ role)."""
+    if _version_manager is None:
+        raise HTTPException(503, "Version manager not initialized")
+
+    module_id = f"{category}/{platform}"
+    versions = _version_manager.list_versions(module_id)
+
+    return {
+        "module_id": module_id,
+        "versions": [v.to_dict() for v in versions],
+        "total": len(versions),
+        "active": next((v.to_dict() for v in versions if v.status == "ACTIVE"), None)
+    }
+
+
 # ── Server launcher ──────────────────────────────────────────────────────────
 
 
@@ -623,14 +812,18 @@ def start_admin_server(
     api_key_store: Optional[APIKeyStore] = None,
     usage_store: Optional[UsageStore] = None,
     quota_manager: Optional[QuotaManager] = None,
+    draft_manager=None,
+    version_manager=None,
 ) -> None:
     """Start admin API in a daemon thread. Safe to call from gRPC serve()."""
     global _config_manager, _module_loader, _module_registry, _credential_store, _api_key_store
-    global _usage_store, _quota_manager
+    global _usage_store, _quota_manager, _draft_manager, _version_manager
     _config_manager = config_manager
     _module_loader = module_loader
     _module_registry = module_registry
     _credential_store = credential_store
+    _draft_manager = draft_manager
+    _version_manager = version_manager
 
     # Initialize auth
     _api_key_store = api_key_store or APIKeyStore(
