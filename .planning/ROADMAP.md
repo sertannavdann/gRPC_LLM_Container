@@ -217,23 +217,53 @@ Wave 3 — Quality + Dev-Mode:
 
 **Milestone**: "Release Confidence Gate"
 
-**Goal**: Single command that runs integration + showroom and records a perf/latency snapshot.
+**Goal**: Single command that runs integration + showroom and records a perf/latency snapshot. Additionally, bridge Phase 2 run-unit metering to the OTC (Optimal Tool Calls) reward signal for tool-call efficiency tracking.
+
+**Plans:** 3 plans (2 waves)
+
+Wave 1 - OTC Policy Store + Admin API Tests (parallel):
+- [ ] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
+- [ ] 04-02-PLAN.md - Admin API integration tests: module CRUD, credential ops, config hot-reload, billing endpoints (REQ-019)
+
+Wave 2 - Unified Verification:
+- [ ] 04-03-PLAN.md - Unified verify command + latency snapshot: make verify, p50/p95/p99 recording, structured report (REQ-028)
 
 ### Deliverables
 
-1. **Admin API integration tests** (REQ-019)
-   - `tests/integration/test_admin_api.py` — module CRUD, credential ops, config hot-reload
-   - Added to CI/CD pipeline
+1. **OTC Policy Storage + Reward Function**
+   - `shared/billing/otc_reward.py` - OTC-GRPO reward bridging Phase 2 run-unit metering to tool-call optimization
+   - `shared/billing/otc_policy_store.py` - SQLite store for intent_classes, module_sets, policy_checkpoints, trajectory_log, reward_events
+   - Unit tests for reward math and store CRUD
 
-2. **Unified verification command** (REQ-028)
-   - `make verify` runs: unit tests → integration tests → showroom demo → latency snapshot (p50/p95/p99)
+2. **Admin API integration tests** (REQ-019)
+   - `tests/integration/admin/` - module CRUD, credential ops, config hot-reload, billing endpoints
+   - FastAPI TestClient (in-process, no Docker required)
+   - RBAC enforcement verified for viewer/operator/admin roles
+
+3. **Unified verification command** (REQ-028)
+   - `make verify` runs: unit -> contract -> integration -> admin API -> feature -> showroom -> latency snapshot (p50/p95/p99)
    - Outputs structured pass/fail report; non-zero exit on failure
+   - `--skip-showroom` flag for CI without Docker
+
+### Files to Create/Modify
+
+- `shared/billing/otc_reward.py` - OTC reward function (relocated from root)
+- `shared/billing/otc_policy_store.py` - OTC policy checkpoint + trajectory SQLite store
+- `shared/billing/latency_snapshot.py` - percentile calculator + JSON snapshot writer
+- `tests/unit/test_otc_reward.py` - reward function unit tests
+- `tests/unit/test_otc_policy_store.py` - policy store unit tests
+- `tests/unit/test_latency_snapshot.py` - latency snapshot unit tests
+- `tests/integration/admin/` - Admin API integration test suite
+- `scripts/verify.sh` - unified verification pipeline script
+- `Makefile` - add verify target
 
 ### Done Criteria
 
 - `make verify` exits 0 on healthy system, non-zero on failure
-- Latency snapshot persisted as JSON artifact
-- Admin API tests cover all CRUD operations
+- Latency snapshot persisted as JSON artifact (data/verify_snapshot.json)
+- Admin API tests cover all CRUD operations with RBAC
+- OTC reward function computes correct r_tool peaking at m==n
+- OTC policy store persists all 5 tables in WAL-mode SQLite
 
 ---
 
