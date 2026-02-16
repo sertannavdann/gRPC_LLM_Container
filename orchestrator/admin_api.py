@@ -44,6 +44,10 @@ _api_key_store: Optional[APIKeyStore] = None
 _usage_store: Optional[UsageStore] = None
 _quota_manager: Optional[QuotaManager] = None
 
+# Dev-mode (set by start_admin_server)
+_draft_manager = None
+_version_manager = None
+
 # CORS for UI access
 _app.add_middleware(
     CORSMiddleware,
@@ -801,6 +805,225 @@ def get_billing_quota(user: User = Depends(get_current_user)):
         raise HTTPException(503, "Billing not initialized")
     result = _quota_manager.check_quota(user.org_id)
     return result.model_dump()
+
+
+# =============================================================================
+# DEV-MODE ENDPOINTS (Draft lifecycle + version management)
+# =============================================================================
+
+
+class DraftCreateRequest(BaseModel):
+    """Request to create a draft from an installed module."""
+    from_version: str = "active"
+
+
+class DraftEditRequest(BaseModel):
+    """Request to edit a file in a draft."""
+    file_path: str
+    content: str
+
+
+class RollbackRequest(BaseModel):
+    """Request to rollback to a prior version."""
+    target_version_id: str
+    reason: str = ""
+
+
+@_app.post("/admin/modules/{module_id}/draft")
+def create_draft(
+    module_id: str,
+    request: DraftCreateRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """
+    Create a draft from an installed module.
+
+    RBAC: operator+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.create_draft(
+        module_id=module_id,
+        from_version=request.from_version,
+        actor=user.org_id
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.patch("/admin/modules/drafts/{draft_id}")
+def edit_draft(
+    draft_id: str,
+    request: DraftEditRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """
+    Edit a file in a draft.
+
+    RBAC: operator+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.edit_file(
+        draft_id=draft_id,
+        file_path=request.file_path,
+        content=request.content,
+        actor=user.org_id
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.get("/admin/modules/drafts/{draft_id}/diff")
+def get_draft_diff(
+    draft_id: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    View diff between draft and source version.
+
+    RBAC: viewer+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.org_id)
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.post("/admin/modules/drafts/{draft_id}/validate")
+def validate_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.ADMIN_ALL)),
+):
+    """
+    Trigger sandbox validation for a draft.
+
+    RBAC: admin+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.validate_draft(
+        draft_id=draft_id,
+        actor=user.org_id
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.post("/admin/modules/drafts/{draft_id}/promote")
+def promote_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.ADMIN_ALL)),
+):
+    """
+    Promote a validated draft to a new version.
+
+    RBAC: admin+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.promote_draft(
+        draft_id=draft_id,
+        actor=user.org_id
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.delete("/admin/modules/drafts/{draft_id}")
+def discard_draft(
+    draft_id: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """
+    Discard a draft.
+
+    RBAC: operator+ role required.
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Draft manager not initialized")
+
+    result = _draft_manager.discard_draft(
+        draft_id=draft_id,
+        actor=user.org_id
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.post("/admin/modules/{module_id}/rollback")
+def rollback_module(
+    module_id: str,
+    request: RollbackRequest,
+    user: User = Depends(require_permission(Permission.ADMIN_ALL)),
+):
+    """
+    Rollback to a prior validated version.
+
+    RBAC: admin+ role required.
+    """
+    if _version_manager is None:
+        raise HTTPException(503, "Version manager not initialized")
+
+    result = _version_manager.rollback_to_version(
+        module_id=module_id,
+        target_version_id=request.target_version_id,
+        actor=user.org_id,
+        reason=request.reason
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(400, result.get("error", "Unknown error"))
+
+    return result
+
+
+@_app.get("/admin/modules/{module_id}/versions")
+def list_module_versions(
+    module_id: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    List all validated versions for a module.
+
+    RBAC: viewer+ role required.
+    """
+    if _version_manager is None:
+        raise HTTPException(503, "Version manager not initialized")
+
+    versions = _version_manager.list_versions(module_id=module_id)
+    active = _version_manager.get_active_version(module_id=module_id)
+
+    return {
+        "module_id": module_id,
+        "active_version": active.to_dict() if active else None,
+        "versions": [v.to_dict() for v in versions],
+        "total": len(versions)
+    }
 
 
 def start_admin_server(
