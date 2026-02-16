@@ -15,6 +15,8 @@ import {
   Zap,
   Shield,
   Layers,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 
 interface ProviderInfo {
@@ -22,9 +24,22 @@ interface ProviderInfo {
   default: string;
 }
 
+interface ProviderLockStatus {
+  locked: boolean;
+  missingRequirements: string[];
+  canTest: boolean;
+}
+
+interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
 interface SettingsConfig {
   provider: string;
   model: string;
+  hasNimKey: boolean;
   hasPerplexityKey: boolean;
   hasOpenaiKey: boolean;
   hasAnthropicKey: boolean;
@@ -38,12 +53,14 @@ type RestartStatus = 'idle' | 'restarting' | 'waiting' | 'ready' | 'error';
 
 const PROVIDER_META: Record<string, { label: string; icon: 'server' | 'brain'; color: string; keyEnvName: string; keyPrefix: string }> = {
   local: { label: 'Local (llama.cpp)', icon: 'server', color: 'text-emerald-400', keyEnvName: '', keyPrefix: '' },
+  nvidia: { label: 'NVIDIA NIM (Kimi K2.5)', icon: 'brain', color: 'text-lime-400', keyEnvName: 'NIM_API_KEY', keyPrefix: 'nvapi-' },
   perplexity: { label: 'Perplexity Sonar', icon: 'brain', color: 'text-blue-400', keyEnvName: 'PERPLEXITY_API_KEY', keyPrefix: 'pplx-' },
   openai: { label: 'OpenAI', icon: 'brain', color: 'text-green-400', keyEnvName: 'OPENAI_API_KEY', keyPrefix: 'sk-' },
   anthropic: { label: 'Anthropic Claude', icon: 'brain', color: 'text-orange-400', keyEnvName: 'ANTHROPIC_API_KEY', keyPrefix: 'sk-ant-' },
 };
 
 const API_KEY_FIELDS = [
+  { key: 'nvidia', label: 'NVIDIA NIM API Key', placeholder: 'nvapi-...' },
   { key: 'perplexity', label: 'Perplexity API Key', placeholder: 'pplx-...' },
   { key: 'openai', label: 'OpenAI API Key', placeholder: 'sk-...' },
   { key: 'anthropic', label: 'Anthropic API Key', placeholder: 'sk-ant-...' },
@@ -53,6 +70,7 @@ const API_KEY_FIELDS = [
 export default function SettingsPage() {
   const [config, setConfig] = useState<SettingsConfig | null>(null);
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
+  const [providerLocks, setProviderLocks] = useState<Record<string, ProviderLockStatus>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +81,17 @@ export default function SettingsPage() {
   const [selectedModel, setSelectedModel] = useState('');
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
+    nvidia: '',
     perplexity: '',
     openai: '',
     anthropic: '',
     serper: '',
   });
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
+
+  // Lock/unlock state
+  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, ConnectionTestResult>>({});
 
   // LIDM delegation state
   const [delegationEnabled, setDelegationEnabled] = useState(false);
@@ -89,6 +112,7 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to load settings');
       setConfig(data.config);
       setProviders(data.providers);
+      setProviderLocks(data.providerLocks || {});
       setSelectedProvider(data.config.provider);
       setSelectedModel(data.config.model);
       // LIDM
@@ -100,6 +124,35 @@ export default function SettingsPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const testProviderConnection = async (providerName: string) => {
+    setTestingProvider(providerName);
+    setTestResults({ ...testResults, [providerName]: { success: false, message: 'Testing...' } });
+    try {
+      const res = await fetch('/api/settings/connection-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerName }),
+      });
+      const result = await res.json();
+      setTestResults({ ...testResults, [providerName]: result });
+
+      // If test successful, update lock state
+      if (result.success) {
+        setProviderLocks({
+          ...providerLocks,
+          [providerName]: { locked: false, missingRequirements: [], canTest: true },
+        });
+      }
+    } catch (err: any) {
+      setTestResults({
+        ...testResults,
+        [providerName]: { success: false, message: err.message || 'Connection test failed' },
+      });
+    } finally {
+      setTestingProvider(null);
     }
   };
 
@@ -157,10 +210,12 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (providers[selectedProvider]) {
+    if (!providers[selectedProvider]) return;
+    const models = providers[selectedProvider].models || [];
+    if (!selectedModel || !models.includes(selectedModel)) {
       setSelectedModel(providers[selectedProvider].default);
     }
-  }, [selectedProvider, providers]);
+  }, [selectedProvider, providers, selectedModel]);
 
   const isBusy = saving || restartStatus === 'restarting' || restartStatus === 'waiting';
 
@@ -190,46 +245,104 @@ export default function SettingsPage() {
       {/* Provider selection */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">LLM Provider</h2>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3">
           {Object.entries(providers).map(([name, info]) => {
             const meta = PROVIDER_META[name];
             const isSelected = selectedProvider === name;
             const isActive = config?.provider === name;
+            const lockStatus = providerLocks[name];
+            const isLocked = lockStatus?.locked ?? false;
+            const testResult = testResults[name];
+            const isTesting = testingProvider === name;
+
             return (
-              <button
-                key={name}
-                onClick={() => setSelectedProvider(name)}
-                className={`relative flex items-center gap-3 p-4 rounded-xl border-2 transition-all ${
-                  isSelected
-                    ? 'border-primary bg-primary/5 shadow-sm'
-                    : 'border-border hover:border-primary/30 hover:bg-muted/30'
-                }`}
-              >
-                {isActive && (
-                  <span className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-green-500 font-medium">
-                    <Zap className="h-3 w-3" /> Active
-                  </span>
+              <div key={name} className="space-y-2">
+                <button
+                  onClick={() => !isLocked && setSelectedProvider(name)}
+                  disabled={isLocked}
+                  className={`relative flex items-center gap-3 p-4 rounded-xl border-2 transition-all w-full ${
+                    isSelected
+                      ? 'border-primary bg-primary/5 shadow-sm'
+                      : isLocked
+                      ? 'border-border/50 bg-muted/20 opacity-60 cursor-not-allowed'
+                      : 'border-border hover:border-primary/30 hover:bg-muted/30'
+                  }`}
+                >
+                  {isActive && (
+                    <span className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-green-500 font-medium">
+                      <Zap className="h-3 w-3" /> Active
+                    </span>
+                  )}
+                  {isLocked && (
+                    <span className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-amber-500 font-medium">
+                      <Lock className="h-3 w-3" /> Locked
+                    </span>
+                  )}
+                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-primary/10' : 'bg-muted/50'}`}>
+                    {meta?.icon === 'server'
+                      ? <Server className={`h-5 w-5 ${meta?.color || ''}`} />
+                      : <Brain className={`h-5 w-5 ${meta?.color || ''}`} />
+                    }
+                  </div>
+                  <div className="text-left flex-1">
+                    <div className="text-sm font-medium">{meta?.label || name}</div>
+                    <div className="text-xs text-muted-foreground">{info.models.length} models</div>
+                    {isLocked && lockStatus?.missingRequirements && lockStatus.missingRequirements.length > 0 && (
+                      <div className="text-xs text-amber-500 mt-1">
+                        Missing: {lockStatus.missingRequirements.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                  {isLocked && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        testProviderConnection(name);
+                      }}
+                      disabled={isTesting}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                    >
+                      {isTesting ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        <>
+                          <Unlock className="h-3 w-3" />
+                          Unlock
+                        </>
+                      )}
+                    </button>
+                  )}
+                </button>
+
+                {/* Connection test result */}
+                {testResult && (
+                  <div className={`flex items-start gap-2 p-3 rounded-lg text-sm ${
+                    testResult.success
+                      ? 'bg-green-500/10 text-green-600'
+                      : 'bg-destructive/10 text-destructive'
+                  }`}>
+                    {testResult.success ? (
+                      <Check className="h-4 w-4 mt-0.5 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    )}
+                    <div className="flex-1">
+                      <div className="font-medium">{testResult.message}</div>
+                      {testResult.details && Object.keys(testResult.details).length > 0 && (
+                        <div className="text-xs mt-1 opacity-80">
+                          {JSON.stringify(testResult.details, null, 2)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
-                <div className={`p-2 rounded-lg ${isSelected ? 'bg-primary/10' : 'bg-muted/50'}`}>
-                  {meta?.icon === 'server'
-                    ? <Server className={`h-5 w-5 ${meta?.color || ''}`} />
-                    : <Brain className={`h-5 w-5 ${meta?.color || ''}`} />
-                  }
-                </div>
-                <div className="text-left">
-                  <div className="text-sm font-medium">{meta?.label || name}</div>
-                  <div className="text-xs text-muted-foreground">{info.models.length} models</div>
-                </div>
-              </button>
+              </div>
             );
           })}
         </div>
-        {Object.keys(providers).length === 1 && (
-          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-            <AlertCircle className="h-3.5 w-3.5" />
-            Add API keys below to unlock cloud providers
-          </p>
-        )}
       </section>
 
       {/* Model selection */}
@@ -362,6 +475,7 @@ export default function SettingsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {[
+              { label: 'NVIDIA', has: config.hasNimKey },
               { label: 'Perplexity', has: config.hasPerplexityKey },
               { label: 'OpenAI', has: config.hasOpenaiKey },
               { label: 'Anthropic', has: config.hasAnthropicKey },
@@ -453,11 +567,11 @@ export default function SettingsPage() {
       <div className="flex justify-end pt-2">
         <button
           onClick={saveSettings}
-          disabled={isBusy || loading}
+          disabled={isBusy || loading || (providerLocks[selectedProvider]?.locked ?? false)}
           className="flex items-center gap-2 px-6 py-2.5 text-sm font-medium rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-          {isBusy ? 'Applying...' : 'Save & Apply'}
+          {(providerLocks[selectedProvider]?.locked ?? false) ? 'Provider Locked' : isBusy ? 'Applying...' : 'Save & Apply'}
         </button>
       </div>
     </div>
