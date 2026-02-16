@@ -219,11 +219,12 @@ Wave 3 — Quality + Dev-Mode:
 
 **Goal**: Single command that runs integration + showroom and records a perf/latency snapshot. Additionally, bridge Phase 2 run-unit metering to the OTC (Optimal Tool Calls) reward signal for tool-call efficiency tracking.
 
-**Plans:** 3 plans (2 waves)
+**Plans:** 4 plans (2 waves)
 
-Wave 1 - OTC Policy Store + Admin API Tests (parallel):
+Wave 1 - OTC Policy Store + Admin API Tests + Provider Lock UX (parallel):
 - [ ] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
 - [ ] 04-02-PLAN.md - Admin API integration tests: module CRUD, credential ops, config hot-reload, billing endpoints (REQ-019)
+- [ ] 04-04-PLAN.md - Settings provider lock/unlock architecture: base class + subclasses, API-driven unlock test output, UI gating + integration tests
 
 Wave 2 - Unified Verification:
 - [ ] 04-03-PLAN.md - Unified verify command + latency snapshot: make verify, p50/p95/p99 recording, structured report (REQ-028)
