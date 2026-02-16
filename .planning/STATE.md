@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 4 (Release-Quality Verification)** — in progress. OTC policy storage and reward function complete.
+**Phase 4 (Release-Quality Verification)** — in progress. OTC policy storage, reward function, and provider lock/unlock complete.
 
-**Progress**: 1/4 plans complete, 37 new OTC tests passing (100% pass rate)
-**Current Focus**: Phase 4 Plan 02 (TBD)
+**Progress**: 2/4 plans complete, 49 new tests passing (100% pass rate)
+**Current Focus**: Phase 4 Plan 03 (TBD)
 
 ---
 
@@ -143,6 +143,12 @@
 - **Observation/evaluation separation**: trajectory_log captures raw execution data; reward_events stores computed rewards; enables reward function versioning and offline replay
 - **Zero-dependency reward function**: Stdlib-only implementation (no numpy/torch) for portability and easier auditing
 
+### Phase 4 Plan 04 (Provider Lock/Unlock)
+- **Base class abstraction for provider unlock logic**: Enables dashboard APIs to reuse same validation rules without duplication (vs inline lock logic in routes)
+- **Lock only when connection prerequisites missing**: Only lock providers missing required fields (API key + base URL); avoids locking all cloud providers by default
+- **Inline connection test results in Settings UI**: Immediate feedback without modal or navigation; keeps UX minimal (vs modal dialog or separate test page)
+- **Lightweight connection probes**: Minimal API calls (list models or smallest chat request) for fast fail-fast behavior with 10s timeout
+
 ---
 
 ## Known Gaps
@@ -164,7 +170,7 @@
 | Docker containers | 13 (7 services + Prometheus + Grafana + cAdvisor + OTel + Tempo + postgres placeholder) |
 | Installed modules | 4 (weather, calendar, gaming, finance) + 1 showroom |
 | Unit tests | ~567 (270 base + 106 P3.01 + 47 P3.02 + 64 P3.03 + 14 P3.04 + 21 contract + 8 misc + 37 P4.01 OTC) |
-| Integration tests | ~200 (96 base + 46 feature + 26 scenario + 14 self-evolution + 7 install + dev-mode) |
+| Integration tests | ~212 (96 base + 46 feature + 26 scenario + 14 self-evolution + 7 install + dev-mode + 12 P4.04 provider-lock) |
 | Lines of code (Python) | ~17,000 |
 | docs/ files | 11 current + 7 archive |
 
@@ -181,14 +187,14 @@ Phase 0: Foundation            complete      —             —     —
 Phase 1: Auth Boundary         complete      3             3     0
 Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine complete        2             2     0
-Phase 4: Release-Quality       in-progress   4             1     3
+Phase 4: Release-Quality       in-progress   4             2     2
 Phase 5: Audit Trail           not-started   3             0     3
 Phase 6: Co-Evolution          not-started   4             0     4
 Phase 7: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        30            10    20
+TOTAL                                        30            11    19
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
-**Phase 4 detail:** 1/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward). 37 tests passing (100% pass rate). 4 artifacts created (996 lines).
+**Phase 4 detail:** 2/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
