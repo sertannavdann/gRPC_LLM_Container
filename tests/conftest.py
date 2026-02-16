@@ -22,6 +22,9 @@ import grpc
 # Note: grpc_testing is optional, only needed for advanced gRPC mocking
 # from grpc_testing import server_from_dictionary, strict_real_time
 
+# OpenTelemetry is now installed as a dependency for admin API tests
+# No mocking needed
+
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
