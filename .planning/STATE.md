@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 3 (Self-Evolution Engine)** — in progress (Plan 01 complete).
+**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-02 complete).
 
-**Current Plan**: 3-02 (Module Generator Gateway)
-**Progress**: 1/6 plans complete
+**Current Plan**: 3-03 (Sandboxed Validation Loop)
+**Progress**: 2/6 plans complete
 
 ---
 
@@ -53,7 +53,7 @@
 
 ### Phase 3: Self-Evolution Engine 🚧
 - ✅ **Plan 01: Core Contracts** — Manifest schema, adapter/generator contracts, artifact bundling, canonical output envelope (106 tests)
-- 🚧 Plan 02: Module Generator Gateway
+- ✅ **Plan 02: Module Generator Gateway** — GitHub Models provider, LLM Gateway with purpose-based routing, schema validation, budget tracking (47 tests)
 - 📋 Plan 03: Sandboxed Validation Loop
 - 📋 Plan 04: Installer with Rollback
 - 📋 Plan 05: Repair Loop
@@ -75,8 +75,8 @@
 
 | Item | Status | Blocker |
 |------|--------|---------|
-| Phase 3: Self-Evolution Engine | **Plan 01 complete, Plan 02 next** | Core contracts frozen |
-| Plan 02: Module Generator Gateway | Not started | Awaiting execution |
+| Phase 3: Self-Evolution Engine | **Plans 01-02 complete, Plan 03 next** | Gateway ready for builder integration |
+| Plan 03: Sandboxed Validation Loop | Not started | Awaiting execution |
 | Pipeline UI drag-and-drop | Design phase | — |
 
 ---
@@ -102,6 +102,12 @@
 - **Content-addressed artifacts**: SHA-256 bundling before install enables immutable identity and audit trail
 - **Canonical output envelope**: Single source of truth (AdapterRunResult) consumed by orchestrator, bridge, UI, metering
 
+### Phase 3 Plan 02 (Module Generator Gateway)
+- **GitHub Models inference endpoint (not Copilot IDE)**: Structured code generation with `response_format` json_schema
+- **Schema validation rejects, not repairs**: Non-conforming outputs trigger fallback, not silent acceptance
+- **Deterministic fallback order**: Same failure condition always selects same next model for predictability
+- **Budget enforcement before generation**: Prevents wasted API calls when budget exceeded
+
 ---
 
 ## Known Gaps
@@ -121,7 +127,7 @@
 | Services | 7 (orchestrator, dashboard, UI, LLM, chroma, sandbox, bridge) |
 | Docker containers | 13 (7 services + Prometheus + Grafana + cAdvisor + OTel + Tempo + postgres placeholder) |
 | Installed modules | 4 (weather, calendar, gaming, finance) + 1 showroom |
-| Unit tests | ~376 (270 + 106 from Phase 3 Plan 01) |
+| Unit tests | ~423 (270 + 106 from Plan 01 + 47 from Plan 02) |
 | Integration tests | ~96 |
 | Lines of code (Python) | ~17,000 |
 | docs/ files | 11 current + 7 archive |
