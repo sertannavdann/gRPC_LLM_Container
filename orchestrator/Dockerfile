@@ -29,6 +29,9 @@ COPY core/ ./core/
 # Tools components
 COPY tools/ ./tools/
 
+# Sandbox policy modules required by module validator imports
+COPY sandbox_service/ ./sandbox_service/
+
 # Protobuf files
 COPY shared/proto/ ./proto/
 
@@ -38,6 +41,7 @@ RUN python -m grpc_tools.protoc \
     --python_out=./shared/generated \
     --grpc_python_out=./shared/generated \
     proto/llm.proto \
+    proto/sandbox.proto \
     proto/chroma.proto \
     proto/agent.proto \
     proto/registry.proto \

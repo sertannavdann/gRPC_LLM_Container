@@ -29,7 +29,9 @@
       "Bash(python -m py_compile:*)",
       "Bash(MODULES_DIR=modules python:*)",
       "WebSearch",
-      "WebFetch(domain:deepwiki.com)"
+      "WebFetch(domain:deepwiki.com)",
+      "Skill(gsd:update)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

@@ -10,10 +10,12 @@ Provides endpoints for:
 - Prometheus metrics (/metrics)
 """
 import os
+import mimetypes
 import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Optional, List
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -202,6 +204,9 @@ _bank_service = BankService(
     data_dir=os.getenv("BANK_DATA_DIR", "/app/dashboard_service/Bank")
 )
 
+# Chart artifacts base directory (module_id scoped: <category>/<platform>/...)
+_artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "/app/data/artifacts"))
+
 
 # Settings fields that go into settings dict (not credentials)
 _SETTINGS_FIELDS = {
@@ -300,24 +305,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Registered adapters: {adapter_registry.to_dict()}")
 
-    # Initialize auth middleware
-    auth_db_path = os.getenv("AUTH_DB_PATH", "data/api_keys.db")
-    api_key_store = APIKeyStore(db_path=auth_db_path)
-    app.add_middleware(
-        APIKeyAuthMiddleware,
-        api_key_store=api_key_store,
-        public_paths=[
-            "/health",
-            "/docs",
-            "/openapi.json",
-            "/redoc",
-            "/metrics",
-            "/stream/pipeline-state",
-            "/static",
-            "/",
-        ],
-    )
-    app.state.api_key_store = api_key_store
+    app.state.api_key_store = _api_key_store
 
     yield
     logger.info("Dashboard Service shutting down...")
@@ -330,6 +318,23 @@ app = FastAPI(
     description="Unified context aggregator for user data from multiple platforms",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# API key auth store + middleware (must be added before app startup)
+_api_key_store = APIKeyStore(db_path=os.getenv("AUTH_DB_PATH", "data/api_keys.db"))
+app.add_middleware(
+    APIKeyAuthMiddleware,
+    api_key_store=_api_key_store,
+    public_paths=[
+        "/health",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/metrics",
+        "/stream/pipeline-state",
+        "/static",
+        "/",
+    ],
 )
 
 # Instrument FastAPI with OpenTelemetry
@@ -553,6 +558,67 @@ async def list_modules(request: Request):
         "total": len(modules),
         "loaded": sum(1 for m in modules if m.get("is_loaded")),
     }
+
+
+@app.get("/modules/{category}/{platform}/charts", tags=["Modules"])
+async def list_module_chart_artifacts(category: str, platform: str):
+    """
+    List available chart artifacts for a module.
+
+    Artifacts are served from ARTIFACTS_DIR/<category>/<platform>.
+    """
+    artifacts_path = _artifacts_dir / category / platform
+    if not artifacts_path.exists() or not artifacts_path.is_dir():
+        return {"module_id": f"{category}/{platform}", "charts": [], "total": 0}
+
+    charts = []
+    for artifact_file in sorted(artifacts_path.iterdir()):
+        if not artifact_file.is_file():
+            continue
+        if artifact_file.suffix.lower() not in (".json", ".png", ".svg", ".jpg", ".jpeg"):
+            continue
+
+        mime_type, _ = mimetypes.guess_type(str(artifact_file))
+        stat = artifact_file.stat()
+        charts.append({
+            "name": artifact_file.name,
+            "size_bytes": stat.st_size,
+            "mime_type": mime_type or "application/octet-stream",
+            "modified_at": stat.st_mtime,
+        })
+
+    return {
+        "module_id": f"{category}/{platform}",
+        "charts": charts,
+        "total": len(charts),
+    }
+
+
+@app.get("/modules/{category}/{platform}/charts/{chart_name}", tags=["Modules"])
+async def get_module_chart_artifact(category: str, platform: str, chart_name: str):
+    """
+    Serve a chart artifact with correct MIME type.
+    """
+    chart_file = (_artifacts_dir / category / platform / chart_name).resolve()
+    module_dir = (_artifacts_dir / category / platform).resolve()
+
+    if module_dir not in chart_file.parents:
+        raise HTTPException(status_code=400, detail="Invalid chart path")
+    if not chart_file.exists() or not chart_file.is_file():
+        raise HTTPException(status_code=404, detail=f"Chart artifact not found: {chart_name}")
+
+    mime_type, _ = mimetypes.guess_type(str(chart_file))
+    mime_type = mime_type or "application/octet-stream"
+    content = chart_file.read_bytes()
+
+    if mime_type == "application/json":
+        try:
+            import json
+            return json.loads(content)
+        except Exception:
+            pass
+
+    return Response(content=content, media_type=mime_type)
 
 
 @app.get("/context/summary/{user_id}", tags=["Context"])

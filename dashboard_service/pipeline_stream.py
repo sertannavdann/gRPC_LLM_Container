@@ -12,7 +12,7 @@ import time
 from typing import AsyncGenerator
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from shared.adapters import adapter_registry
@@ -101,7 +101,7 @@ async def pipeline_event_generator(app) -> AsyncGenerator[str, None]:
 
 
 @router.get("/stream/pipeline-state")
-async def stream_pipeline(request):
+async def stream_pipeline(request: Request):
     """SSE endpoint for live pipeline state."""
     return StreamingResponse(
         pipeline_event_generator(request.app),

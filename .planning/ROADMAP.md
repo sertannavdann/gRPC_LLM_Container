@@ -1,6 +1,6 @@
 # NEXUS — Roadmap
 
-> **GSD Canonical File** | Auto-generated 2026-02-15 from `docs/**`
+> **GSD Canonical File** | Updated 2026-02-16
 
 ---
 
@@ -10,7 +10,7 @@
 |---|-------|--------|--------------|--------|
 | 1 | Auth Boundary | **complete** | REQ-001, REQ-002, REQ-003 | Q2 2026 |
 | 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
-| 3 | **Self-Evolution Engine** | not-started | REQ-013, REQ-016 | Q2–Q3 2026 |
+| 3 | Self-Evolution Engine | **complete** | REQ-013, REQ-016 | Q2 2026 |
 | 4 | Release-Quality Verification | not-started | REQ-019, REQ-028 | Q3 2026 |
 | 5 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
 | 6 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
@@ -122,16 +122,18 @@ Plans:
 **Plans:** 6 plans (3 waves)
 
 Wave 1 — Contracts + Gateway:
-- [ ] 03-01-PLAN.md — Builder contracts: manifest schema, generator/adapter contracts, artifact bundles, canonical output envelope
-- [ ] 03-02-PLAN.md — LLM Gateway: GitHub Models provider, purpose-lane routing (codegen/repair/critic), schema enforcement, fallback chain
+- [x] 03-01-PLAN.md — Builder contracts: manifest schema, generator/adapter contracts, artifact bundles, canonical output envelope (106 tests)
+- [x] 03-02-PLAN.md — LLM Gateway: GitHub Models provider, purpose-lane routing (codegen/repair/critic), schema enforcement, fallback chain (47 tests)
 
 Wave 2 — Sandbox + Repair Loop:
-- [ ] 03-03-PLAN.md — Sandbox policy: network modes, import allowlists (AST + runtime), validator merge, artifact capture
-- [ ] 03-04-PLAN.md — Self-correction loop: stage pipeline (scaffold/implement/tests/repair), bounded repair (≤10), failure fingerprinting, install attestation guard
+- [x] 03-03-PLAN.md — Sandbox policy: network modes, import allowlists (AST + runtime), validator merge, artifact capture (64 tests)
+- [x] 03-04-PLAN.md — Self-correction loop: stage pipeline (scaffold/implement/tests/repair), bounded repair (≤10), failure fingerprinting, install attestation guard (14 tests)
 
 Wave 3 — Quality + Dev-Mode:
-- [ ] 03-05-PLAN.md — Feature tests: contract suites, capability-driven test harness (auth/pagination/rate-limit), chart validation, scenario library (5+ patterns)
-- [ ] 03-06-PLAN.md — Dev-mode: drafts, diffs, revalidation, promotion, rollback (pointer-based), full audit trail (autonomous: false)
+- [x] 03-05-PLAN.md — Feature tests: contract suites, capability-driven test harness (auth/pagination/rate-limit), chart validation, scenario library (5+ patterns) (93 tests)
+- [x] 03-06-PLAN.md — Dev-mode: drafts, diffs, revalidation, promotion, rollback (pointer-based), full audit trail
+
+**Status:** 6/6 plans complete. All wiring gaps closed. 134 tests passing (0 deprecation warnings). DraftManager + VersionManager wired to admin API.
 
 ### Deliverables
 

@@ -6,7 +6,7 @@ identity, requirements, and validation state. The ModuleManifest is the
 single source of truth for module metadata throughout the system.
 """
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, Any, List, Optional
 import json
@@ -79,8 +79,8 @@ class ModuleManifest:
     health_status: str = "unknown"  # healthy | degraded | unhealthy | unknown
     created_by: str = "user"        # user | executor_agent
     build_provider: str = ""        # e.g., "claude-sonnet-4-5", "local"
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # Validation
     validation_results: ValidationResults = field(default_factory=ValidationResults)
@@ -116,7 +116,7 @@ class ModuleManifest:
         module_path = base_path / self.category / self.platform
         module_path.mkdir(parents=True, exist_ok=True)
         manifest_file = module_path / "manifest.json"
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
         manifest_file.write_text(json.dumps(self.to_dict(), indent=2))
         return manifest_file
 

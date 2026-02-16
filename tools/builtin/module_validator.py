@@ -20,7 +20,7 @@ import ast
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 
 MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
 ARTIFACTS_DIR = Path(os.getenv("ARTIFACTS_DIR", "/app/data/artifacts"))
+_sandbox_client = None
+
+
+def set_sandbox_client(client) -> None:
+    """Set optional sandbox client dependency for orchestrator wiring."""
+    global _sandbox_client
+    _sandbox_client = client
 
 
 @dataclass
@@ -88,7 +95,7 @@ class ValidationReport:
     runtime_results: Optional[RuntimeCheckResult] = None
     fix_hints: List[FixHint] = field(default_factory=list)
     artifacts: List[str] = field(default_factory=list)
-    validated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    validated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -453,7 +460,7 @@ def _store_execution_artifacts(
     artifact_dir = ARTIFACTS_DIR / category / platform
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     artifacts = []
 
     # Store stdout
@@ -484,7 +491,7 @@ def _store_validation_artifacts(module_id: str, report: ValidationReport) -> Non
     artifact_dir = ARTIFACTS_DIR / category / platform
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     report_file = artifact_dir / f"validation_{timestamp}.json"
     report_file.write_text(json.dumps(report.to_dict(), indent=2))
 

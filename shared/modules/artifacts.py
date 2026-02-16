@@ -10,7 +10,7 @@ Provides deterministic artifact bundling with SHA-256 content addressing:
 import hashlib
 import json
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -171,7 +171,7 @@ class ArtifactBundleBuilder:
             attempt_id=attempt_id,
             bundle_sha256=bundle_hash,
             files=file_artifacts,
-            created_at=datetime.utcnow().isoformat() + "Z",
+            created_at=datetime.now(timezone.utc).isoformat() + "Z",
             module_id=module_id,
             stage=stage
         )

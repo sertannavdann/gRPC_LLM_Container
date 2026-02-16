@@ -11,9 +11,9 @@ import os
 import threading
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from typing import Optional, Dict, Any, List
@@ -26,6 +26,7 @@ from shared.billing import UsageStore, QuotaManager
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
+from tools.builtin.chart_validator import validate_chart, ChartValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ _quota_manager: Optional[QuotaManager] = None
 _draft_manager = None
 _version_manager = None
 
+# Chart artifacts (set by start_admin_server)
+_artifacts_dir = None
+
 # CORS for UI access
 _app.add_middleware(
     CORSMiddleware,
@@ -64,16 +68,25 @@ def _get_mgr() -> ConfigManager:
     return _config_manager
 
 
-def _check_module_credentials(module_id: str) -> bool:
+def _dashboard_auth_headers(forwarded_api_key: Optional[str] = None) -> Dict[str, str]:
+    """Build auth headers for orchestrator->dashboard proxy calls."""
+    api_key = forwarded_api_key or os.getenv("DASHBOARD_API_KEY") or os.getenv("INTERNAL_API_KEY")
+    if not api_key:
+        return {}
+    return {"X-API-Key": api_key}
+
+
+def _check_module_credentials(module_id: str, forwarded_api_key: Optional[str] = None) -> bool:
     """Check if a module has credentials stored in the dashboard credential store."""
     import requests as http_req
-    dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
+    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
     try:
         parts = module_id.split("/", 1)
         if len(parts) != 2:
             return False
         resp = http_req.get(
             f"{dashboard_url}/admin/module-credentials/{parts[0]}/{parts[1]}/status",
+            headers=_dashboard_auth_headers(forwarded_api_key),
             timeout=5,
         )
         if resp.status_code == 200:
@@ -171,7 +184,7 @@ class ModuleActionResponse(BaseModel):
 
 
 @_app.get("/admin/modules")
-def list_modules(user: User = Depends(get_current_user)):
+def list_modules(request: Request, user: User = Depends(get_current_user)):
     """List all modules with status, health, and credential info."""
     if _module_loader is None:
         return {"modules": [], "total": 0}
@@ -194,7 +207,7 @@ def list_modules(user: User = Depends(get_current_user)):
                 entry["last_used"] = reg.get("last_used")
 
         # Add credential status (proxy to dashboard)
-        entry["has_credentials"] = _check_module_credentials(module_id)
+        entry["has_credentials"] = _check_module_credentials(module_id, request.headers.get("X-API-Key"))
 
         enriched.append(entry)
 
@@ -206,7 +219,7 @@ def list_modules(user: User = Depends(get_current_user)):
 
 
 @_app.get("/admin/modules/{category}/{platform}")
-def get_module(category: str, platform: str, user: User = Depends(get_current_user)):
+def get_module(category: str, platform: str, request: Request, user: User = Depends(get_current_user)):
     """Get detailed information about a specific module."""
     module_id = f"{category}/{platform}"
 
@@ -229,7 +242,7 @@ def get_module(category: str, platform: str, user: User = Depends(get_current_us
             result["registry"] = reg
 
     # Credential status (proxy to dashboard)
-    result["has_credentials"] = _check_module_credentials(module_id)
+    result["has_credentials"] = _check_module_credentials(module_id, request.headers.get("X-API-Key"))
 
     return result
 
@@ -311,6 +324,7 @@ def reload_module(
 def uninstall_module(
     category: str,
     platform: str,
+    request: Request,
     user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
 ):
     """Uninstall a module (unload + remove from registry)."""
@@ -325,10 +339,11 @@ def uninstall_module(
             _module_registry.uninstall(module_id)
         # Delete credentials via dashboard proxy
         import requests as http_req
-        dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
+        dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
         try:
             http_req.delete(
                 f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
+                headers=_dashboard_auth_headers(request.headers.get("X-API-Key")),
                 timeout=5,
             )
         except Exception:
@@ -347,16 +362,18 @@ def store_credentials(
     category: str,
     platform: str,
     request: ModuleCredentialRequest,
+    http_request: Request,
     user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
 ):
     """Store API credentials for a module — proxies to dashboard credential store."""
     import requests as http_req
-    dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
+    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
 
     try:
         resp = http_req.post(
             f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
             json={"credentials": request.credentials},
+            headers=_dashboard_auth_headers(http_request.headers.get("X-API-Key")),
             timeout=10,
         )
         resp.raise_for_status()
@@ -378,15 +395,17 @@ def store_credentials(
 def delete_credentials(
     category: str,
     platform: str,
+    request: Request,
     user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
 ):
     """Remove stored credentials for a module — proxies to dashboard credential store."""
     import requests as http_req
-    dashboard_url = __import__("os").getenv("DASHBOARD_URL", "http://dashboard:8001")
+    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
 
     try:
         resp = http_req.delete(
             f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
+            headers=_dashboard_auth_headers(request.headers.get("X-API-Key")),
             timeout=10,
         )
         resp.raise_for_status()
@@ -1026,6 +1045,130 @@ def list_module_versions(
     }
 
 
+# =============================================================================
+# CHART ARTIFACT ENDPOINTS
+# =============================================================================
+
+@_app.get("/admin/modules/{category}/{platform}/charts")
+def list_chart_artifacts(
+    category: str,
+    platform: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    List available chart artifacts for a module.
+
+    RBAC: viewer+ role required.
+    """
+    from pathlib import Path
+    import mimetypes
+
+    if _artifacts_dir is None:
+        raise HTTPException(503, "Artifacts directory not configured")
+
+    artifacts_path = Path(_artifacts_dir) / category / platform
+    if not artifacts_path.exists():
+        return {"module_id": f"{category}/{platform}", "charts": [], "total": 0}
+
+    charts = []
+    for f in sorted(artifacts_path.iterdir()):
+        if f.is_file() and f.suffix in (".json", ".png", ".svg", ".jpg", ".jpeg"):
+            mime_type, _ = mimetypes.guess_type(str(f))
+            charts.append({
+                "name": f.name,
+                "size_bytes": f.stat().st_size,
+                "mime_type": mime_type or "application/octet-stream",
+                "modified_at": f.stat().st_mtime,
+            })
+
+    return {
+        "module_id": f"{category}/{platform}",
+        "charts": charts,
+        "total": len(charts),
+    }
+
+
+@_app.get("/admin/modules/{category}/{platform}/charts/{chart_name}")
+def get_chart_artifact(
+    category: str,
+    platform: str,
+    chart_name: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    Serve a specific chart artifact with proper Content-Type.
+
+    RBAC: viewer+ role required.
+    """
+    from pathlib import Path
+    import mimetypes
+
+    if _artifacts_dir is None:
+        raise HTTPException(503, "Artifacts directory not configured")
+
+    chart_path = Path(_artifacts_dir) / category / platform / chart_name
+    if not chart_path.exists() or not chart_path.is_file():
+        raise HTTPException(404, f"Chart artifact not found: {chart_name}")
+
+    mime_type, _ = mimetypes.guess_type(str(chart_path))
+    mime_type = mime_type or "application/octet-stream"
+
+    content = chart_path.read_bytes()
+
+    # JSON charts: return as JSON response
+    if mime_type == "application/json":
+        import json
+        try:
+            data = json.loads(content)
+            return JSONResponse(content=data)
+        except json.JSONDecodeError:
+            pass
+
+    return Response(content=content, media_type=mime_type)
+
+
+class ChartValidateRequest(BaseModel):
+    """Request body for chart validation."""
+    chart_data_base64: str
+    expected_series: Optional[List[str]] = None
+    expected_title: Optional[str] = None
+    check_rendering_hash: bool = False
+    expected_hash: Optional[str] = None
+
+
+@_app.post("/admin/modules/{category}/{platform}/charts/validate")
+def validate_chart_artifact(
+    category: str,
+    platform: str,
+    body: ChartValidateRequest,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """
+    Validate an uploaded chart artifact.
+
+    RBAC: operator+ role required (MANAGE_MODULES permission).
+    """
+    import base64
+
+    try:
+        artifact_bytes = base64.b64decode(body.chart_data_base64)
+    except Exception:
+        raise HTTPException(400, "Invalid base64 chart data")
+
+    result = validate_chart(
+        artifact_bytes=artifact_bytes,
+        expected_series=body.expected_series,
+        expected_title=body.expected_title,
+        check_rendering_hash=body.check_rendering_hash,
+        expected_hash=body.expected_hash,
+    )
+
+    return {
+        "module_id": f"{category}/{platform}",
+        "validation": result.to_dict(),
+    }
+
+
 def start_admin_server(
     config_manager: ConfigManager,
     port: int = 8003,
@@ -1037,16 +1180,18 @@ def start_admin_server(
     quota_manager: Optional[QuotaManager] = None,
     draft_manager=None,
     version_manager=None,
+    artifacts_dir=None,
 ) -> None:
     """Start admin API in a daemon thread. Safe to call from gRPC serve()."""
     global _config_manager, _module_loader, _module_registry, _credential_store, _api_key_store
-    global _usage_store, _quota_manager, _draft_manager, _version_manager
+    global _usage_store, _quota_manager, _draft_manager, _version_manager, _artifacts_dir
     _config_manager = config_manager
     _module_loader = module_loader
     _module_registry = module_registry
     _credential_store = credential_store
     _draft_manager = draft_manager
     _version_manager = version_manager
+    _artifacts_dir = artifacts_dir
 
     # Initialize auth
     _api_key_store = api_key_store or APIKeyStore(

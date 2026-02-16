@@ -1,15 +1,15 @@
 # NEXUS — Current State
 
-> **GSD Canonical File** | Auto-generated 2026-02-15 from `docs/**`
+> **GSD Canonical File** | Updated 2026-02-16
 
 ---
 
 ## Current Phase
 
-**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-06 complete).
+**Phase 3 (Self-Evolution Engine)** — complete. All gaps closed, all wiring verified.
 
-**Current Plan**: 3-07 (End-to-End Integration)
-**Progress**: 6/6 plans complete
+**Progress**: 6/6 plans complete, 134 tests passing (contract + feature + scenario + cross-feature), 0 deprecation warnings
+**Current Focus**: Phase 4 (Release-Quality Verification)
 
 ---
 
@@ -18,8 +18,8 @@
 ### Track A: Self-Evolving Module Infrastructure
 - **A1 ✅** Module manifest schema, dynamic loader (`importlib`), SQLite registry
 - **A2 ✅** Fernet credential store with encryption at rest
-- **A3 ✅** Agent tool integration (`build_module`, `install_module` tools registered)
-- **A4 🚧** LLM-driven module builder — stub implemented, template generation in progress
+- **A3 ✅** Agent tool wiring active in orchestrator (`build_module`, `repair_module`, `install_module` registered)
+- **A4 ✅** LLM-driven module builder repair stage calls `gateway.generate(purpose=REPAIR)` and records repair attempts
 
 ### Track B: Observability & Control
 - **B1 ✅** Prometheus metrics, `ModuleMetrics` dataclass
@@ -51,13 +51,18 @@
 - ✅ Run-unit metrics exported (`nexus_run_units_total`, `nexus_run_units_per_request`)
 - ✅ Metering test suite target (`make test-metering` / `make make-test-metering`)
 
-### Phase 3: Self-Evolution Engine ✅
+### Phase 3: Self-Evolution Engine ✅ (6/6 plans coded, wiring closure pass complete)
 - ✅ **Plan 01: Core Contracts** — Manifest schema, adapter/generator contracts, artifact bundling, canonical output envelope (106 tests)
 - ✅ **Plan 02: Module Generator Gateway** — GitHub Models provider, LLM Gateway with purpose-based routing, schema validation, budget tracking (47 tests)
 - ✅ **Plan 03: Sandboxed Validation Loop** — Dual-layer import enforcement, deny-by-default policies, merged validation reports, artifact capture (64 tests)
 - ✅ **Plan 04: Self-Correction Pipeline** — Stage-based builder, bounded repair loop (max 10 attempts), failure fingerprinting, install attestation guard (14 tests)
-- ✅ **Plan 05: Repair Loop** — Repair strategies, thrash detection, terminal failure classification
+- ✅ **Plan 05: Feature Tests + Scenario Library** — Contract suites, capability-driven test harness, chart validation, 5 curated scenarios (93 tests)
 - ✅ **Plan 06: RBAC Lifecycle Management** — Draft lifecycle, validation/promotion with attestation, instant rollback, dev-mode admin API with RBAC
+
+**Wiring closure status (cross-feature verified):**
+1. ✅ `build_module`/`repair_module` orchestrator tool registration validated
+2. ✅ `repair_module` invokes `gateway.generate(purpose=REPAIR)` in repair path
+3. ✅ Dashboard chart artifact routes added for visibility (`/modules/{category}/{platform}/charts`)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -75,8 +80,9 @@
 
 | Item | Status | Blocker |
 |------|--------|---------|
-| Phase 3: Self-Evolution Engine | **Plans 01-02 complete, Plan 03 next** | Gateway ready for builder integration |
-| Plan 03: Sandboxed Validation Loop | Not started | Awaiting execution |
+| Phase 3: All gaps closed | **Complete** | None |
+| DraftManager + VersionManager wiring | **Complete** | None |
+| datetime.utcnow() deprecations | **Fixed** | None |
 | Pipeline UI drag-and-drop | Design phase | — |
 
 ---
@@ -132,11 +138,12 @@
 
 ## Known Gaps
 
-1. **Auth + metering complete, audit/marketplace pending** — auth implemented in Phase 1; metering implemented in Phase 2; audit (Phase 5) and marketplace (Phase 7) remain.
-2. **Track C (Co-Evolution)** — Curriculum Agent, Executor Agent, approval gates: 0% complete, planned Q2 2026.
-3. **Multi-tenant isolation** — org_id scoping implemented in Phase 1 (registry, credentials, state); full multi-tenant deployment not yet tested at scale.
-4. **No E2E tests** for Pipeline UI SSE reconnection.
-5. **No centralized logging** — logs are per-container, searched via `docker-compose logs`.
+1. ~~Phase 3 wiring closure~~ — ✅ All gaps closed: DraftManager/VersionManager wired to admin API, usage_store/quota_manager passed to admin server, datetime deprecations fixed. 134 tests passing.
+2. **Auth + metering complete, audit/marketplace pending** — auth implemented in Phase 1; metering implemented in Phase 2; audit (Phase 5) and marketplace (Phase 7) remain.
+3. **Track C (Co-Evolution)** — Curriculum Agent, Executor Agent, approval gates: 0% complete, planned for Phase 6.
+4. **Multi-tenant isolation** — org_id scoping implemented in Phase 1 (registry, credentials, state); full multi-tenant deployment not yet tested at scale.
+5. **No E2E tests** for Pipeline UI SSE reconnection.
+6. **No centralized logging** — logs are per-container, searched via `docker-compose logs`.
 
 ---
 
@@ -147,8 +154,8 @@
 | Services | 7 (orchestrator, dashboard, UI, LLM, chroma, sandbox, bridge) |
 | Docker containers | 13 (7 services + Prometheus + Grafana + cAdvisor + OTel + Tempo + postgres placeholder) |
 | Installed modules | 4 (weather, calendar, gaming, finance) + 1 showroom |
-| Unit tests | ~423 (270 + 106 from Plan 01 + 47 from Plan 02) |
-| Integration tests | ~96 |
+| Unit tests | ~530 (270 base + 106 Plan 01 + 47 Plan 02 + 64 Plan 03 + 14 Plan 04 + 21 contract + 8 misc) |
+| Integration tests | ~200 (96 base + 46 feature + 26 scenario + 14 self-evolution + 7 install + dev-mode) |
 | Lines of code (Python) | ~17,000 |
 | docs/ files | 11 current + 7 archive |
 
@@ -156,7 +163,7 @@
 
 ## Progress Snapshot
 
-> Placeholder for `gsd-tools progress table` output.
+> Updated 2026-02-16
 
 ```
 Phase                          Status        Requirements  Done  Remaining
@@ -164,11 +171,13 @@ Phase                          Status        Requirements  Done  Remaining
 Phase 0: Foundation            complete      —             —     —
 Phase 1: Auth Boundary         complete      3             3     0
 Phase 2: Run-Unit Metering     complete      4             4     0
-Phase 3: Self-Evolution Engine not-started   2             0     2
+Phase 3: Self-Evolution Engine complete        2             2     0
 Phase 4: Release-Quality       not-started   2             0     2
 Phase 5: Audit Trail           not-started   3             0     3
 Phase 6: Co-Evolution          not-started   4             0     4
 Phase 7: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        30            7     23
+TOTAL                                        30            9     21
 ```
+
+**Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.

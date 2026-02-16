@@ -120,6 +120,7 @@ services:
       - ROUTING_CONFIG_PATH=/app/config/routing_config.json
       - ADMIN_API_PORT=8003
       - MODULES_DIR=/app/modules
+      - AUTH_DB_PATH=/app/data/api_keys.db
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -149,6 +150,7 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_SERVICE_NAME=dashboard-service
       - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
+      - AUTH_DB_PATH=/app/shared_data/api_keys.db
       - CACHE_TTL_SECONDS=300
       # Real adapter API keys
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
@@ -162,6 +164,7 @@ services:
       - MODULES_DIR=/app/modules
     volumes:
       - ./dashboard_service/data:/app/data
+      - ./data:/app/shared_data
       - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
       - ./logs:/app/logs
       - ./modules:/app/modules:rw

@@ -13,11 +13,13 @@ Features:
     - Immutable attempt records with audit trail
     - Terminal failure detection (policy/security violations stop immediately)
 """
+import asyncio
 import hashlib
 import json
 import logging
 import os
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
@@ -33,7 +35,15 @@ from shared.modules.audit import (
     FailureType,
     FailureFingerprint,
 )
-from shared.providers.llm_gateway import LLMGateway, Purpose
+from shared.modules.contracts import GeneratorResponseContract
+from shared.providers.llm_gateway import (
+    LLMGateway,
+    Purpose,
+    BudgetExceededError,
+    SchemaValidationError,
+    AllModelsFailedError,
+)
+from shared.providers.base_provider import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +63,76 @@ def set_llm_gateway(gateway: LLMGateway) -> None:
     _llm_gateway = gateway
 
 
+REPAIR_SYSTEM_PROMPT = """\
+You are a Python adapter code repair agent for the NEXUS module system.
+
+Your task is to fix failing adapter code based on validation errors and fix hints.
+
+Rules:
+- Return ONLY valid JSON conforming to the GeneratorResponseContract schema.
+- Each changed_file must have a "path" and "content" field.
+- File content must NOT contain markdown fences (``` or similar).
+- Never use forbidden imports: subprocess, os.system, shutil.rmtree, eval, exec, __import__.
+- Every adapter must have: @register_adapter decorator, fetch_raw(), transform(), get_schema() methods.
+- Keep fixes minimal — only change what's needed to pass validation.
+"""
+
+
+def _build_repair_user_prompt(
+    module_id: str,
+    current_files: Dict[str, str],
+    fix_hints_text: str,
+    failing_logs: str,
+) -> str:
+    """Build the user prompt for repair with current code and errors."""
+    parts = [f"## Module: {module_id}\n"]
+
+    for filename, content in current_files.items():
+        parts.append(f"## Current {filename}:\n{content}\n")
+
+    parts.append(f"## Validation Failures:\n{fix_hints_text}\n")
+
+    if failing_logs.strip():
+        parts.append(f"## Test Output (truncated):\n{failing_logs[:2000]}\n")
+
+    parts.append(
+        "## Task:\n"
+        "Fix the code to pass all validations. Return the corrected files "
+        "using the GeneratorResponseContract JSON schema."
+    )
+
+    return "\n".join(parts)
+
+
+def _run_async(coro):
+    """Run async coroutine from sync context, handling existing event loops."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        return asyncio.run(coro)
+
+    # Event loop already running — use thread to avoid nested loop
+    result = [None]
+    exception = [None]
+
+    def _target():
+        try:
+            result[0] = asyncio.run(coro)
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=_target)
+    thread.start()
+    thread.join(timeout=120)
+
+    if exception[0] is not None:
+        raise exception[0]
+    return result[0]
+
+
 @dataclass
 class BuildSession:
     """
@@ -66,7 +146,7 @@ class BuildSession:
     current_stage: str = "scaffold"
     attempt_number: int = 0
     artifacts: List[ArtifactIndex] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
 
     @classmethod
     def create_job_id(cls, module_id: str, spec: Dict[str, Any]) -> str:
@@ -413,36 +493,144 @@ def repair_module(
         f"[{audit_log.job_id}] Starting repair attempt {len(audit_log.attempts) + 1}"
     )
 
-    # TODO: Call LLM gateway with repair prompt (when gateway is available)
-    # For now, record the attempt as failed and return instructions
-    attempt_record = AttemptRecord(
-        attempt_number=len(audit_log.attempts) + 1,
-        bundle_sha256="pending",  # Will be filled after LLM generates code
-        stage="repair",
-        status=AttemptStatus.FAILED,
-        validation_report=validation_report,
-        logs=[f"Fix hints: {fix_hints_text}", f"Failing logs: {failing_logs[:500]}"],
-        failure_fingerprint=fingerprint.hash,
-        failure_type=failure_type,
-        metadata={"current_files": list(current_files.keys())},
-    )
+    # Call LLM gateway with repair prompt
+    if _llm_gateway is None:
+        # No gateway available — record pending and return instructions
+        attempt_record = AttemptRecord(
+            attempt_number=len(audit_log.attempts) + 1,
+            bundle_sha256="pending",
+            stage="repair",
+            status=AttemptStatus.FAILED,
+            validation_report=validation_report,
+            logs=[f"Fix hints: {fix_hints_text}", f"Failing logs: {failing_logs[:500]}"],
+            failure_fingerprint=fingerprint.hash,
+            failure_type=failure_type,
+            metadata={"current_files": list(current_files.keys())},
+        )
+        audit_log.add_attempt(attempt_record)
+        audit_file = audit_log.save(AUDIT_DIR)
+        return {
+            "status": "repair_pending",
+            "module_id": module_id,
+            "attempt_number": attempt_record.attempt_number,
+            "failure_type": failure_type.value,
+            "fingerprint": fingerprint.hash,
+            "fix_hints": fix_hints,
+            "audit_file": str(audit_file),
+            "instructions": (
+                f"Repair attempt {attempt_record.attempt_number} recorded. "
+                f"LLM gateway not available. Fix hints: {fix_hints_text}"
+            ),
+        }
 
-    audit_log.add_attempt(attempt_record)
+    # Build repair prompt
+    messages = [
+        ChatMessage(role="system", content=REPAIR_SYSTEM_PROMPT),
+        ChatMessage(role="user", content=_build_repair_user_prompt(
+            module_id, current_files, fix_hints_text, failing_logs,
+        )),
+    ]
 
-    # Save audit log
-    audit_file = audit_log.save(AUDIT_DIR)
+    contract_schema = GeneratorResponseContract.model_json_schema()
+    allowed_dirs = [f"modules/{category}/{platform}", f"{category}/{platform}"]
 
-    return {
-        "status": "repair_pending",
-        "module_id": module_id,
-        "attempt_number": attempt_record.attempt_number,
-        "failure_type": failure_type.value,
-        "fingerprint": fingerprint.hash,
-        "fix_hints": fix_hints,
-        "audit_file": str(audit_file),
-        "instructions": (
-            f"Repair attempt {attempt_record.attempt_number} recorded. "
-            f"LLM gateway integration needed to generate fixes. "
-            f"Fix hints: {fix_hints_text}"
-        ),
-    }
+    try:
+        contract, gen_metadata = _run_async(
+            _llm_gateway.generate(
+                purpose=Purpose.REPAIR,
+                messages=messages,
+                schema=contract_schema,
+                allowed_dirs=allowed_dirs,
+                job_id=audit_log.job_id,
+                temperature=0.4,
+            )
+        )
+
+        # Apply patches from generated contract
+        for file_change in contract.changed_files:
+            target = module_dir / Path(file_change.path).name
+            target.write_text(file_change.content)
+
+        # Build artifact bundle from updated files
+        updated_files = {}
+        for fn in ["adapter.py", "test_adapter.py", "manifest.json"]:
+            fp = module_dir / fn
+            if fp.exists():
+                updated_files[f"{category}/{platform}/{fn}"] = fp.read_text()
+
+        bundle = ArtifactBundleBuilder.build_from_dict(
+            files=updated_files,
+            job_id=audit_log.job_id,
+            attempt_id=len(audit_log.attempts) + 1,
+            module_id=module_id,
+        )
+
+        # Record success attempt
+        attempt_record = AttemptRecord(
+            attempt_number=len(audit_log.attempts) + 1,
+            bundle_sha256=bundle.bundle_sha256,
+            stage="repair",
+            status=AttemptStatus.SUCCESS,
+            validation_report=validation_report,
+            logs=[
+                f"Fix hints: {fix_hints_text}",
+                f"Changed files: {[fc.path for fc in contract.changed_files]}",
+                f"Provider: {gen_metadata.get('provider', 'unknown')}",
+            ],
+            failure_fingerprint=fingerprint.hash,
+            failure_type=failure_type,
+            metadata={
+                "changed_files": [fc.path for fc in contract.changed_files],
+                "provider": gen_metadata.get("provider"),
+                "model": gen_metadata.get("model"),
+            },
+        )
+        audit_log.add_attempt(attempt_record)
+        audit_file = audit_log.save(AUDIT_DIR)
+
+        logger.info(
+            f"[{audit_log.job_id}] Repair attempt {attempt_record.attempt_number} "
+            f"succeeded — {len(contract.changed_files)} files patched"
+        )
+
+        return {
+            "status": "success",
+            "module_id": module_id,
+            "attempt_number": attempt_record.attempt_number,
+            "bundle_sha256": bundle.bundle_sha256,
+            "changed_files": [fc.path for fc in contract.changed_files],
+            "audit_file": str(audit_file),
+            "instructions": (
+                f"Repair applied ({len(contract.changed_files)} files). "
+                f"Call validate_module('{module_id}') to verify."
+            ),
+        }
+
+    except (BudgetExceededError, SchemaValidationError, AllModelsFailedError) as e:
+        logger.error(
+            f"[{audit_log.job_id}] Repair gateway call failed: {type(e).__name__}: {e}"
+        )
+
+        attempt_record = AttemptRecord(
+            attempt_number=len(audit_log.attempts) + 1,
+            bundle_sha256="error",
+            stage="repair",
+            status=AttemptStatus.FAILED,
+            validation_report=validation_report,
+            logs=[f"Gateway error: {type(e).__name__}: {e}"],
+            failure_fingerprint=fingerprint.hash,
+            failure_type=FailureType.GATEWAY_FAILURE,
+            metadata={"error_type": type(e).__name__, "error_message": str(e)},
+        )
+        audit_log.add_attempt(attempt_record)
+        audit_file = audit_log.save(AUDIT_DIR)
+
+        return {
+            "status": "failed",
+            "module_id": module_id,
+            "attempt_number": attempt_record.attempt_number,
+            "failure_type": FailureType.GATEWAY_FAILURE.value,
+            "fingerprint": fingerprint.hash,
+            "error": str(e),
+            "audit_file": str(audit_file),
+        }

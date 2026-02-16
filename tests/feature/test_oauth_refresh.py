@@ -9,7 +9,7 @@ Tests verify:
 """
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import httpx
 
 
@@ -143,13 +143,13 @@ class TestOAuthRefresh:
 
     def test_token_expiry_calculation(self):
         """Verify token expiry time is calculated correctly."""
-        issued_at = datetime.utcnow()
+        issued_at = datetime.now(timezone.utc)
         expires_in = 3600  # 1 hour
 
         expiry_time = issued_at + timedelta(seconds=expires_in)
 
         # Token should not be expired immediately
-        assert datetime.utcnow() < expiry_time
+        assert datetime.now(timezone.utc) < expiry_time
 
         # Token should be expired after expiry time
         future_time = expiry_time + timedelta(seconds=1)

@@ -74,7 +74,7 @@ from tools.builtin.code_executor import execute_code, set_sandbox_client
 from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
 from tools.builtin.knowledge_search import search_knowledge, store_knowledge
 from tools.builtin.finance_query import query_finance
-from tools.builtin.module_builder import build_module, write_module_code
+from tools.builtin.module_builder import build_module, write_module_code, repair_module, set_llm_gateway
 from tools.builtin.module_validator import validate_module
 from tools.builtin.module_validator import set_sandbox_client as set_validator_sandbox
 from tools.builtin.module_manager import (
@@ -105,6 +105,7 @@ from shared.providers import (
     ChatMessage,
     BaseProvider,
 )
+from shared.providers.llm_gateway import LLMGateway, RoutingPolicy, ModelPreference, BudgetConfig
 
 import os
 from pathlib import Path
@@ -123,6 +124,9 @@ from shared.generated import agent_pb2_grpc
 
 # Billing / metering
 from shared.billing import QuotaManager, UsageStore
+from shared.modules.drafts import DraftManager
+from shared.modules.versioning import VersionManager
+from shared.modules.audit import DevModeAuditLog
 
 
 logging.basicConfig(
@@ -943,9 +947,18 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Register module building tools (NEXUS self-evolution)
         self.tool_registry.register(build_module)
         self.tool_registry.register(write_module_code)
+        self.tool_registry.register(repair_module)
         self.tool_registry.register(validate_module)
         if self.sandbox_client:
             set_validator_sandbox(self.sandbox_client)
+
+        # Initialize LLM Gateway for module builder repair loop
+        self.llm_gateway = self._initialize_llm_gateway()
+        if self.llm_gateway:
+            set_llm_gateway(self.llm_gateway)
+            logger.info("LLMGateway wired to module_builder for repair loop")
+        else:
+            logger.warning("LLMGateway not available — repair_module will run without LLM")
 
         # Register module management tools
         self.tool_registry.register(list_modules)
@@ -1033,7 +1046,70 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self._run_startup_recovery()
         
         logger.info("Orchestrator initialization complete")
-    
+
+    def _initialize_llm_gateway(self) -> Optional[LLMGateway]:
+        """
+        Initialize LLM Gateway for purpose-based code generation and repair.
+
+        Uses the same provider as the main orchestrator LLM, configured
+        for all three purpose lanes (codegen, repair, critic).
+        """
+        provider_type = self.config.provider_type
+        if provider_type == "local":
+            logger.info("LLMGateway: local provider not supported, skipping")
+            return None
+
+        if not self.config.provider_api_key:
+            logger.info("LLMGateway: no API key configured, skipping")
+            return None
+
+        try:
+            provider_type_map = {
+                "perplexity": ProviderType.PERPLEXITY,
+                "openai": ProviderType.OPENAI,
+                "anthropic": ProviderType.ANTHROPIC,
+            }
+
+            if provider_type not in provider_type_map:
+                logger.warning(f"LLMGateway: unknown provider '{provider_type}', skipping")
+                return None
+
+            config = ProviderConfig(
+                provider_type=provider_type_map[provider_type],
+                api_key=self.config.provider_api_key,
+                base_url=self.config.provider_base_url,
+                timeout=self.config.provider_timeout,
+            )
+
+            provider = get_provider(config, name=f"gateway_{provider_type}")
+            providers = {provider_type: provider}
+
+            model_name = self.config.provider_model or "default"
+            pref = ModelPreference(
+                provider_name=provider_type,
+                model_name=model_name,
+                priority=0,
+            )
+            policy = RoutingPolicy(
+                codegen=[pref],
+                repair=[pref],
+                critic=[pref],
+            )
+
+            budget = BudgetConfig(max_tokens_per_request=8000)
+
+            gateway = LLMGateway(
+                providers=providers,
+                routing_policy=policy,
+                budget_config=budget,
+            )
+            logger.info(f"LLMGateway initialized: provider={provider_type}, model={model_name}")
+            return gateway
+
+        except Exception as e:
+            logger.warning(f"LLMGateway initialization failed: {e}")
+            return None
+
     def _initialize_provider(self):
         """
         Initialize LLM provider based on config.
@@ -1634,12 +1710,29 @@ def serve(config: Optional[OrchestratorConfig] = None):
     # Start admin API for dynamic routing config + module management (daemon thread)
     from .admin_api import start_admin_server
     admin_port = int(os.getenv("ADMIN_API_PORT", "8003"))
+    # Initialize dev-mode managers for draft lifecycle and version rollback
+    _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
+    _draft_manager = DraftManager(
+        drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
+        modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
+        audit_log=_audit_log,
+    )
+    _version_manager = VersionManager(
+        db_path=os.getenv("VERSION_DB_PATH", "data/module_versions.db"),
+        audit_log=_audit_log,
+    )
+
     start_admin_server(
         config_manager=orchestrator_service.config_manager,
         port=admin_port,
         module_loader=orchestrator_service.module_loader,
         module_registry=orchestrator_service.module_registry,
         credential_store=orchestrator_service.credential_store,
+        usage_store=orchestrator_service._usage_store,
+        quota_manager=orchestrator_service._quota_manager,
+        draft_manager=_draft_manager,
+        version_manager=_version_manager,
+        artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "/app/data/artifacts")),
     )
 
     try:

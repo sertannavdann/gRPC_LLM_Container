@@ -265,14 +265,14 @@ def _log_install_rejection(module_id: str, reason: str, details: str) -> None:
         reason: Rejection reason code (validation_failed, hash_mismatch, etc.)
         details: Additional context
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     import json
 
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_file = AUDIT_DIR / "install_rejections.jsonl"
 
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "module_id": module_id,
         "reason": reason,
         "details": details,
@@ -295,14 +295,14 @@ def _log_install_success(
         module_id: Module identifier
         validation_attestation: Validation attestation with bundle_sha256
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     import json
 
     AUDIT_DIR.mkdir(parents=True, exist_ok=True)
     audit_file = AUDIT_DIR / "install_success.jsonl"
 
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "module_id": module_id,
         "action": "install_success",
         "bundle_sha256": (

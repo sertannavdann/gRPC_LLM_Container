@@ -14,7 +14,7 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -159,10 +159,10 @@ class VersionManager:
             version_id
         """
         # Generate version ID
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         version_id = f"{module_id.replace('/', '_')}_v_{timestamp}"
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat() + "Z"
 
         with self._connect() as conn:
             conn.execute(
@@ -351,7 +351,7 @@ class VersionManager:
             from_version = current[0] if current else None
 
             # Update active version pointer
-            now = datetime.utcnow().isoformat() + "Z"
+            now = datetime.now(timezone.utc).isoformat() + "Z"
             if current:
                 conn.execute(
                     "UPDATE active_versions SET version_id = ?, updated_at = ? WHERE module_id = ? AND org_id = ?",

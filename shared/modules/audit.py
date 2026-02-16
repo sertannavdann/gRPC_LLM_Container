@@ -15,11 +15,14 @@ Key features:
 """
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 
 class FailureType(str, Enum):
@@ -132,7 +135,7 @@ class AttemptRecord:
     bundle_sha256: str
     stage: str
     status: AttemptStatus
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
     validation_report: Optional[Dict[str, Any]] = None
     logs: List[str] = field(default_factory=list)
     failure_fingerprint: Optional[str] = None
@@ -180,7 +183,7 @@ class BuildAuditLog:
     attempts: List[AttemptRecord] = field(default_factory=list)
     final_status: str = "PENDING"
     total_duration_ms: float = 0.0
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
     completed_at: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -389,14 +392,14 @@ class DevModeAuditLog:
             event_id
         """
         event_id = hashlib.sha256(
-            f"{action}_{actor}_{datetime.utcnow().isoformat()}".encode()
+            f"{action}_{actor}_{datetime.now(timezone.utc).isoformat()}".encode()
         ).hexdigest()[:16]
 
         event = AuditEvent(
             event_id=event_id,
             action=action,
             actor=actor,
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat() + "Z",
             module_id=module_id,
             draft_id=draft_id,
             details=details or {}

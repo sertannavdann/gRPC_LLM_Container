@@ -16,7 +16,7 @@ import json
 import logging
 import shutil
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -140,7 +140,7 @@ class DraftManager:
             }
 
         # Generate draft ID
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         draft_id = f"{module_id.replace('/', '_')}_{timestamp}"
 
         draft_workspace = self.drafts_dir / draft_id
@@ -159,7 +159,7 @@ class DraftManager:
                 files_copied[filename] = file_hash
 
         # Create metadata
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat() + "Z"
         metadata = DraftMetadata(
             draft_id=draft_id,
             module_id=module_id,
@@ -251,7 +251,7 @@ class DraftManager:
         file_hash = hashlib.sha256(content.encode()).hexdigest()
         metadata.files[file_path] = file_hash
         metadata.state = DraftState.EDITING
-        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_at = datetime.now(timezone.utc).isoformat() + "Z"
         metadata.updated_by = actor
 
         # Save metadata
@@ -377,7 +377,7 @@ class DraftManager:
         # Load and update metadata
         metadata = DraftMetadata.from_dict(json.loads(metadata_file.read_text()))
         metadata.state = DraftState.DISCARDED
-        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_at = datetime.now(timezone.utc).isoformat() + "Z"
         metadata.updated_by = actor
 
         # Save metadata
@@ -483,7 +483,7 @@ class DraftManager:
 
         # Update state to VALIDATING
         metadata.state = DraftState.VALIDATING
-        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_at = datetime.now(timezone.utc).isoformat() + "Z"
         metadata.updated_by = actor
         metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
 
@@ -539,7 +539,7 @@ class DraftManager:
                 metadata.state = DraftState.EDITING  # Back to editing on failure
                 metadata.validation_report = report
 
-            metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+            metadata.updated_at = datetime.now(timezone.utc).isoformat() + "Z"
             metadata.updated_by = actor
             metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
 
@@ -650,7 +650,7 @@ class DraftManager:
             "validation_report": metadata.validation_report,
             "draft_id": draft_id,
             "promoted_by": actor,
-            "promoted_at": datetime.utcnow().isoformat() + "Z"
+            "promoted_at": datetime.now(timezone.utc).isoformat() + "Z"
         }
 
         # Install via module_installer
@@ -671,7 +671,7 @@ class DraftManager:
 
         # Update metadata
         metadata.state = DraftState.PROMOTED
-        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_at = datetime.now(timezone.utc).isoformat() + "Z"
         metadata.updated_by = actor
         metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
 
