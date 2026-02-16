@@ -119,36 +119,86 @@ Plans:
 
 **Goal**: The defining feature of NEXUS — users describe what they want in natural language, and the system builds, tests, and deploys a production module **entirely in the cloud sandbox**, with zero local dev environment setup (no conda, pip, venv on the user's machine). Built modules can produce data visualizations (graphs/charts) and pass structured data to the LLM for reference.
 
+**Plans:** 6 plans (3 waves)
+
+Wave 1 — Contracts + Gateway:
+- [ ] 03-01-PLAN.md — Builder contracts: manifest schema, generator/adapter contracts, artifact bundles, canonical output envelope
+- [ ] 03-02-PLAN.md — LLM Gateway: GitHub Models provider, purpose-lane routing (codegen/repair/critic), schema enforcement, fallback chain
+
+Wave 2 — Sandbox + Repair Loop:
+- [ ] 03-03-PLAN.md — Sandbox policy: network modes, import allowlists (AST + runtime), validator merge, artifact capture
+- [ ] 03-04-PLAN.md — Self-correction loop: stage pipeline (scaffold/implement/tests/repair), bounded repair (≤10), failure fingerprinting, install attestation guard
+
+Wave 3 — Quality + Dev-Mode:
+- [ ] 03-05-PLAN.md — Feature tests: contract suites, capability-driven test harness (auth/pagination/rate-limit), chart validation, scenario library (5+ patterns)
+- [ ] 03-06-PLAN.md — Dev-mode: drafts, diffs, revalidation, promotion, rollback (pointer-based), full audit trail (autonomous: false)
+
 ### Deliverables
 
-1. **Cloud sandbox build pipeline** (REQ-013)
-   - `build_module` tool generates adapter code from NL spec via templates
-   - All code generation, dependency resolution, and testing happens inside the sandbox container — user needs only Docker
-   - Sandbox validation with self-correction loop (structured fix hints, up to 10 retries)
-   - Covers diverse API patterns: REST, OAuth2, paginated, rate-limited, CSV/file-based
+1. **Builder contracts + artifact system** (REQ-013, REQ-016)
+   - Module format fixed: `{manifest.json, adapter.py, test_adapter.py}`
+   - Strict generator response contract (no markdown fences, path allowlist, size bounds)
+   - Content-addressed immutable artifact bundles (sha256 per file + bundle)
+   - Canonical `AdapterRunResult` envelope for orchestrator, bridge, UI, metering
 
-2. **Data visualization in modules** (REQ-013)
-   - Built modules can produce chart/graph outputs (matplotlib, plotly, or similar rendered server-side)
-   - Visualization artifacts passed to LLM as structured context for richer answers
-   - Dashboard integration: module outputs rendered in Pipeline UI
+2. **LLM Gateway** (REQ-013)
+   - GitHub Models `chat/completions` API as primary inference surface (not Copilot IDE)
+   - Purpose-lane routing: codegen, repair, critic — config-driven model selection
+   - `response_format` with `json_schema` enforcement; non-conforming outputs rejected
+   - Deterministic fallback chain on provider/model outage
+   - Integrated as `shared/providers/` module (follows existing provider pattern)
 
-3. **Automated test generation** (REQ-016)
-   - Builder generates `test_adapter.py` alongside `adapter.py`
-   - Tests run in sandbox before approval; >80% coverage target on generated adapters
-   - Scenario capture: record API interaction patterns for regression testing
+3. **Cloud sandbox build pipeline** (REQ-013)
+   - `build_module` tool: NL intent → scaffold → implement → tests → repair → install
+   - All execution in sandbox container — user needs only Docker
+   - Sandbox policy: deny-by-default network, import allowlist (AST + runtime hook), resource caps
+   - Validation produces merged report (static + runtime) with structured fix hints
 
-4. **Scenario library** (REQ-013)
-   - Curated set of build scenarios: simple REST API, OAuth2 flow, paginated results, file parsing, webhook listener
-   - Each scenario has expected adapter shape, test suite, and known edge cases
-   - Used for regression testing the builder itself
+4. **Bounded self-correction loop** (REQ-013, REQ-016)
+   - Max 10 repair attempts with immutable per-attempt artifacts
+   - Failure fingerprint dedup: stops early on repeated identical failures
+   - Terminal vs retryable failure classification (policy violations stop immediately)
+   - Install attestation guard: `VALIDATED` status + `bundle_sha256` match required
+
+5. **Automated test generation + feature suites** (REQ-016)
+   - Generic contract tests: registration, output schema, error handling
+   - Feature-specific tests driven by manifest capabilities (auth, pagination, rate-limit, charts)
+   - Chart artifact validation: structural + semantic integrity tiers
+   - Deterministic tests: no real sleeps, mock transport, stable fixtures
+
+6. **Scenario library** (REQ-013)
+   - 5+ curated build scenarios: REST API, OAuth2 flow, paginated API, file parser, rate-limited API
+   - Each scenario: NL intent, expected adapter shape, test suite, known edge cases
+   - Exercised in CI for builder regression testing
+
+7. **Dev-mode safe editing** (REQ-013, REQ-016)
+   - Draft → edit → diff → revalidate → promote → install → rollback lifecycle
+   - Drafts never installable until re-validated and promoted (same attestation guard)
+   - Rollback is pointer movement to prior validated version (no rebuild)
+   - Full audit trail: actor identity + hashes for every action
 
 ### Files to Create/Modify
 
-- `tools/builtin/module_builder.py` — full implementation (currently stub)
-- `tools/builtin/module_validator.py` — sandbox validation loop
-- `shared/modules/templates/` — adapter + test templates per scenario
-- `sandbox_service/sandbox_service.py` — extend SAFE_IMPORTS for module build deps
-- `orchestrator/orchestrator_service.py` — wire build intent → builder → validator → installer
+- `shared/modules/contracts.py` — generator + adapter contract specs
+- `shared/modules/manifest_schema.json` — versioned manifest JSON schema
+- `shared/modules/artifacts.py` — content-addressed bundle builder + index
+- `shared/modules/output_contract.py` — canonical AdapterRunResult envelope
+- `shared/modules/audit.py` — per-attempt audit records
+- `shared/modules/drafts.py` — draft lifecycle management
+- `shared/modules/versioning.py` — version pointer rollback
+- `shared/modules/scenarios/` — curated scenario library (5+ patterns)
+- `shared/providers/github_models.py` — GitHub Models provider client
+- `shared/providers/llm_gateway.py` — purpose-lane routing + schema enforcement
+- `tools/builtin/module_builder.py` — stage pipeline + repair loop (extend existing)
+- `tools/builtin/module_validator.py` — merged static + runtime validation (extend existing)
+- `tools/builtin/module_installer.py` — attestation guard (extend existing)
+- `tools/builtin/feature_test_harness.py` — capability-driven test suite selector
+- `tools/builtin/chart_validator.py` — chart artifact validation
+- `sandbox_service/policy.py` — network, import, resource policy profiles
+- `sandbox_service/runner.py` — structured sandbox execution with artifact capture
+- `sandbox_service/sandbox_service.py` — extend SAFE_IMPORTS (modify existing)
+- `orchestrator/orchestrator_service.py` — wire gateway + build flow (modify existing)
+- `orchestrator/admin_api.py` — dev-mode endpoints (modify existing)
 
 ### Done Criteria
 
@@ -156,6 +206,8 @@ Plans:
 - Built module produces a chart visible in dashboard
 - Builder self-corrects on first sandbox failure (at least 1 retry cycle working)
 - 5+ scenario templates exercised in CI
+- Dev-mode: create draft, edit, revalidate, promote, rollback — all auditable
+- `make test-self-evolution` runs full Phase 3 regression suite and passes
 
 ---
 
