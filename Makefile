@@ -51,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering \
+		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering test-self-evolution \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -789,6 +789,16 @@ test-metering:
 	@cd tests && python -m pytest unit/test_billing.py auth/test_billing_integration.py -v --tb=short
 
 make-test-metering: test-metering
+
+test-self-evolution:
+	@printf '$(CYAN)Running Phase 3 self-evolution tests...$(RESET)\n'
+	@printf '$(YELLOW)Contract tests (registration + output schema)...$(RESET)\n'
+	@python -m pytest tests/contract/ -v --tb=short
+	@printf '$(YELLOW)Feature tests (auth, pagination, rate-limit, schema drift, charts)...$(RESET)\n'
+	@python -m pytest tests/feature/ -v --tb=short
+	@printf '$(YELLOW)Scenario regression tests (5+ curated patterns)...$(RESET)\n'
+	@python -m pytest tests/scenarios/ -v --tb=short
+	@printf '$(GREEN)✓ All Phase 3 tests passed$(RESET)\n'
 
 # ============================================================================
 # HEALTH CHECKS (used internally, prefer `make status` for user-facing)
