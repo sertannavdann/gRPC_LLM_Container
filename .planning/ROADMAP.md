@@ -11,10 +11,11 @@
 | 1 | Auth Boundary | **complete** | REQ-001, REQ-002, REQ-003 | Q2 2026 |
 | 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
 | 3 | Self-Evolution Engine | **complete** | REQ-013, REQ-016 | Q2 2026 |
-| 4 | Release-Quality Verification | not-started | REQ-019, REQ-028 | Q3 2026 |
-| 5 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
-| 6 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
-| 7 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
+| 4 | Release-Quality Verification | **complete** | REQ-019, REQ-028 | Q3 2026 |
+| 5 | UI Contract Alignment | not-started | REQ-031, REQ-032 | Q3 2026 |
+| 6 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
+| 7 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
+| 8 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
 
@@ -222,12 +223,12 @@ Wave 3 — Quality + Dev-Mode:
 **Plans:** 4 plans (2 waves)
 
 Wave 1 - OTC Policy Store + Admin API Tests + Provider Lock UX (parallel):
-- [ ] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
-- [ ] 04-02-PLAN.md - Admin API integration tests: module CRUD, credential ops, config hot-reload, billing endpoints (REQ-019)
-- [ ] 04-04-PLAN.md - Settings provider lock/unlock architecture: base class + subclasses, API-driven unlock test output, UI gating + integration tests
+- [x] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
+- [x] 04-02-PLAN.md - Admin API integration tests: module CRUD, credential ops, config hot-reload, billing endpoints (REQ-019)
+- [x] 04-04-PLAN.md - Settings provider lock/unlock architecture: base class + subclasses, API-driven unlock test output, UI gating + integration tests
 
 Wave 2 - Unified Verification:
-- [ ] 04-03-PLAN.md - Unified verify command + latency snapshot: make verify, p50/p95/p99 recording, structured report (REQ-028)
+- [x] 04-03-PLAN.md - Unified verify command + latency snapshot: make verify, p50/p95/p99 recording, structured report (REQ-028)
 
 ### Deliverables
 
@@ -268,7 +269,97 @@ Wave 2 - Unified Verification:
 
 ---
 
-## Phase 5: Audit Trail
+## Phase 5: UI Contract Alignment
+
+**Milestone**: "Capability-Driven UI — Sync UI with Backend Truth"
+
+**Goal**: Eliminate UI fragility by making every page render from a backend capability contract. The UI never assumes what features/modules/providers exist — it asks the backend and renders truthfully. Error states are visible, not silent. User preferences persist across sessions.
+
+**Plans:** 5 plans (3 waves)
+
+Wave 1 — Backend Capability Contract (Cursor only):
+- [ ] 05-01-PLAN.md — Capability schema + BFF endpoints: Pydantic models, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + docs
+
+Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
+- [ ] 05-02-PLAN.md — UI infrastructure + first pages: adminClient ETag extension, useCapabilities hook, error taxonomy, /capabilities dashboard, /modules browser
+- [ ] 05-03-PLAN.md — Provider settings + monitoring: /settings/providers with lock/unlock, /monitoring with service health + agent runs + Grafana tabs
+- [ ] 05-04-PLAN.md — Pipeline viewer rewrite: build job list, attempt timeline, validation report, SSE indicator
+
+Wave 3 — Persistence + Polish:
+- [ ] 05-05-PLAN.md — User preferences (SQLite + API + hook), error resilience fixes (401/JSON/timeout), navigation updates, full QA checkpoint
+
+### Deliverables
+
+1. **Backend capability contract** (REQ-031)
+   - `shared/contracts/ui_capability_schema.py` — Pydantic models for CapabilityEnvelope
+   - `GET /admin/capabilities` — typed envelope with tools, modules, providers, features + ETag
+   - `GET /admin/feature-health` — per-feature readiness with degraded reasons
+   - `GET /admin/config/version` — ETag-based lightweight polling
+   - Contract tests + TypeScript type documentation
+
+2. **Capability-driven UI pages** (REQ-032)
+   - `/capabilities` — system capabilities dashboard with health cards
+   - `/modules` — module browser with lifecycle panel (draft/validate/promote/rollback)
+   - `/settings/providers` — provider settings with lock/unlock and connection test
+   - `/monitoring` — service health cards + agent runs table + Grafana tabs
+   - `/pipeline` — build job list + attempt timeline + validation report + SSE indicator
+
+3. **UI infrastructure**
+   - `useCapabilities` hook with 30s ETag-based polling
+   - Error taxonomy (NOT_AUTHORIZED, NOT_CONFIGURED, DEGRADED_PROVIDER, TOOL_SCHEMA_MISMATCH, TIMEOUT)
+   - Error state components (DegradedBanner, EmptyState, TimeoutSkeleton)
+   - `useUserPrefs` hook with optimistic concurrency
+
+4. **Per-user preference persistence**
+   - SQLite `user_prefs` table with optimistic concurrency (version check)
+   - `GET/PUT /admin/user/prefs` endpoints
+   - Theme, provider ordering, module favorites, tab positions persisted
+
+### Tool Usage (v0 Premium + Cursor Pro)
+
+**Workflow**: v0 generates visual TSX shell → paste into repo → Cursor wires to real APIs.
+
+| Tool | Role | Best For |
+|------|------|----------|
+| v0 Premium ($20/mo) | Visual shell generation | Page layouts, card grids, tables, status badges, dark mode |
+| Cursor Pro ($20/mo) | Repo-aware multi-file wiring | API wiring, ETag caching, error handling, RBAC, adminClient |
+
+Plans 02-04 include v0 prompts for each page. Plan 01 and Plan 05 are backend-only (Cursor).
+
+### Files to Create/Modify
+
+- `shared/contracts/__init__.py` — new package
+- `shared/contracts/ui_capability_schema.py` — Pydantic capability models
+- `shared/auth/user_prefs.py` — user preferences SQLite store
+- `orchestrator/admin_api.py` — capability + user prefs endpoints
+- `ui_service/src/lib/adminClient.ts` — extend with capability + prefs methods
+- `ui_service/src/hooks/useCapabilities.ts` — capability polling hook
+- `ui_service/src/hooks/useUserPrefs.ts` — user preferences hook
+- `ui_service/src/lib/errors.ts` — error taxonomy
+- `ui_service/src/components/ui/error-states.tsx` — error state components
+- `ui_service/src/app/capabilities/page.tsx` — new page
+- `ui_service/src/app/modules/page.tsx` — new page (replaces placeholder)
+- `ui_service/src/app/settings/providers/page.tsx` — new page
+- `ui_service/src/app/monitoring/page.tsx` — rewrite
+- `ui_service/src/app/pipeline/page.tsx` — rewrite
+- `ui_service/src/components/pipeline/BuildJobPanel.tsx` — new component
+- `ui_service/src/components/pipeline/ValidationReport.tsx` — new component
+- `ui_service/src/components/nav/Navbar.tsx` — update
+- `ui_service/src/app/layout.tsx` — update
+- `tests/unit/test_capability_contract.py` — new tests
+- `docs/ui_contract.md` — new documentation
+
+### Done Criteria
+
+- Every page renders from capability contract data — no hardcoded assumptions
+- Error states visible: 401 → degraded banner, invalid JSON → warning, timeout → skeleton
+- User preferences persist across page refreshes
+- `make verify` passes (780+ tests, zero regressions)
+- Manual QA: all 5 pages work against live orchestrator
+
+---
+
+## Phase 6: Audit Trail
 
 **Milestone**: "Enterprise Foundation — Audit"
 
@@ -297,7 +388,7 @@ Wave 2 - Unified Verification:
 
 ---
 
-## Phase 6: Co-Evolution & Approval
+## Phase 7: Co-Evolution & Approval
 
 **Milestone**: "Self-Evolving Agent — Safety Gates"
 
@@ -315,7 +406,7 @@ Wave 2 - Unified Verification:
 
 ---
 
-## Phase 7: Enterprise & Marketplace (Future — Ideation Only)
+## Phase 8: Enterprise & Marketplace (Future — Ideation Only)
 
 **Milestone**: "Enterprise Scale + Revenue"
 
