@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-03 complete).
+**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-04 complete).
 
-**Current Plan**: 3-04 (Installer with Rollback)
-**Progress**: 3/6 plans complete
+**Current Plan**: 3-05 (Repair Loop)
+**Progress**: 4/6 plans complete
 
 ---
 
@@ -55,7 +55,7 @@
 - ✅ **Plan 01: Core Contracts** — Manifest schema, adapter/generator contracts, artifact bundling, canonical output envelope (106 tests)
 - ✅ **Plan 02: Module Generator Gateway** — GitHub Models provider, LLM Gateway with purpose-based routing, schema validation, budget tracking (47 tests)
 - ✅ **Plan 03: Sandboxed Validation Loop** — Dual-layer import enforcement, deny-by-default policies, merged validation reports, artifact capture (64 tests)
-- 📋 Plan 04: Installer with Rollback
+- ✅ **Plan 04: Self-Correction Pipeline** — Stage-based builder, bounded repair loop (max 10 attempts), failure fingerprinting, install attestation guard (14 tests)
 - 📋 Plan 05: Repair Loop
 - 📋 Plan 06: End-to-End Integration
 
@@ -113,6 +113,13 @@
 - **Deny-by-default network policy**: Default blocked mode prevents accidental egress; integration mode requires explicit allowlist
 - **Merged ValidationReport (static + runtime)**: Single source of truth for LLM repair loop; includes fix hints with context
 - **In-process runner for development**: Production uses containers; in-process allows testing policy logic without Docker overhead
+
+### Phase 3 Plan 04 (Self-Correction Pipeline)
+- **MAX_REPAIR_ATTEMPTS set to 10**: Configurable constant prevents infinite loops while allowing reasonable repair attempts
+- **Failure fingerprints from error types + tests + hints**: Deterministic hash enables thrash detection across repair attempts
+- **Terminal failures stop immediately**: Policy/security violations are non-retryable and exit repair loop without wasting attempts
+- **JSONL audit logs**: Append-only format supports streaming, replay, and audit analysis
+- **Install requires VALIDATED + hash match**: Double verification prevents installing unvalidated or tampered modules
 
 ---
 
