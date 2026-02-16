@@ -19,6 +19,7 @@ from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
 from .perplexity_provider import PerplexityProvider
 from .openclaw_provider import OpenClawProvider
+from .github_models import GitHubModelsProvider
 
 __all__ = [
     # Base classes
@@ -46,6 +47,7 @@ __all__ = [
     "OpenAIProvider",
     "PerplexityProvider",
     "OpenClawProvider",
+    "GitHubModelsProvider",
     # Config
     "ProviderConfigLoader",
 ]
