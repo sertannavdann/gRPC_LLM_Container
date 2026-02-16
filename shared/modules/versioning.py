@@ -159,7 +159,7 @@ class VersionManager:
             version_id
         """
         # Generate version ID
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
         version_id = f"{module_id.replace('/', '_')}_v_{timestamp}"
 
         now = datetime.utcnow().isoformat() + "Z"
