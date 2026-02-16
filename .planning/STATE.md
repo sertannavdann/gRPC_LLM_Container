@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-04 complete).
+**Phase 3 (Self-Evolution Engine)** — in progress (Plans 01-06 complete).
 
-**Current Plan**: 3-05 (Repair Loop)
-**Progress**: 4/6 plans complete
+**Current Plan**: 3-07 (End-to-End Integration)
+**Progress**: 6/6 plans complete
 
 ---
 
@@ -51,13 +51,13 @@
 - ✅ Run-unit metrics exported (`nexus_run_units_total`, `nexus_run_units_per_request`)
 - ✅ Metering test suite target (`make test-metering` / `make make-test-metering`)
 
-### Phase 3: Self-Evolution Engine 🚧
+### Phase 3: Self-Evolution Engine ✅
 - ✅ **Plan 01: Core Contracts** — Manifest schema, adapter/generator contracts, artifact bundling, canonical output envelope (106 tests)
 - ✅ **Plan 02: Module Generator Gateway** — GitHub Models provider, LLM Gateway with purpose-based routing, schema validation, budget tracking (47 tests)
 - ✅ **Plan 03: Sandboxed Validation Loop** — Dual-layer import enforcement, deny-by-default policies, merged validation reports, artifact capture (64 tests)
 - ✅ **Plan 04: Self-Correction Pipeline** — Stage-based builder, bounded repair loop (max 10 attempts), failure fingerprinting, install attestation guard (14 tests)
-- 📋 Plan 05: Repair Loop
-- 📋 Plan 06: End-to-End Integration
+- ✅ **Plan 05: Repair Loop** — Repair strategies, thrash detection, terminal failure classification
+- ✅ **Plan 06: RBAC Lifecycle Management** — Draft lifecycle, validation/promotion with attestation, instant rollback, dev-mode admin API with RBAC
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -120,6 +120,13 @@
 - **Terminal failures stop immediately**: Policy/security violations are non-retryable and exit repair loop without wasting attempts
 - **JSONL audit logs**: Append-only format supports streaming, replay, and audit analysis
 - **Install requires VALIDATED + hash match**: Double verification prevents installing unvalidated or tampered modules
+
+### Phase 3 Plan 06 (RBAC Lifecycle Management)
+- **Drafts never directly installable**: Drafts must go through validate_draft() → promote_draft() → install_module() flow to preserve supply-chain integrity
+- **Promotion creates new immutable version**: Each promotion generates new bundle_sha256 + attestation, preserving immutability and install guard integrity
+- **Rollback is pointer movement only**: Version rollback updates active_versions pointer in SQLite without rebuilding artifacts (instant operation)
+- **RBAC enforcement**: Draft create/edit/diff = operator+, validate/promote/rollback = admin+ (approval gate for production changes)
+- **Full audit trail**: All dev-mode actions logged with actor identity, timestamps, and artifact hashes for compliance
 
 ---
 
