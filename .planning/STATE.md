@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 4 (Release-Quality Verification)** — in progress. OTC policy storage, Admin API integration tests, and provider lock/unlock complete.
+**Phase 4 (Release-Quality Verification)** — complete. All 4 plans executed.
 
-**Progress**: 3/4 plans complete, 95 new tests passing (87% pass rate for plan 02)
-**Current Focus**: Phase 4 Plan 03 (TBD)
+**Progress**: 4/4 plans complete, 105+ new tests passing
+**Current Focus**: Phase 5 (Audit Trail)
 
 ---
 
@@ -64,8 +64,11 @@
 2. ✅ `repair_module` invokes `gateway.generate(purpose=REPAIR)` in repair path
 3. ✅ Dashboard chart artifact routes added for visibility (`/modules/{category}/{platform}/charts`)
 
-### Phase 4: Release-Quality Verification (1/4 plans complete)
+### Phase 4: Release-Quality Verification ✅ (4/4 plans complete)
 - ✅ **Plan 01: OTC Policy Storage & Reward** — OTC-GRPO reward function, SQLite policy checkpoint storage, trajectory logging with reward separation (37 tests)
+- ✅ **Plan 02: Admin API Integration Tests** — Module CRUD, credential ops, config hot-reload, billing endpoints with RBAC enforcement (46 tests)
+- ✅ **Plan 03: Unified Verify Command** — `make verify` chains 7 test tiers, latency snapshot (p50/p95/p99), structured pass/fail report (10 tests)
+- ✅ **Plan 04: Provider Lock/Unlock** — Base class + 5 provider handlers, connection test API, settings UI lock gating (12 tests)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -83,9 +86,7 @@
 
 | Item | Status | Blocker |
 |------|--------|---------|
-| Phase 3: All gaps closed | **Complete** | None |
-| DraftManager + VersionManager wiring | **Complete** | None |
-| datetime.utcnow() deprecations | **Fixed** | None |
+| Phase 4: Release-Quality Verification | **Complete** | None |
 | Pipeline UI drag-and-drop | Design phase | — |
 
 ---
@@ -96,7 +97,7 @@
 |------|----------|------------|
 | ~~No auth on Admin API or Dashboard~~ | ~~HIGH~~ | ✅ Resolved in Phase 1 — API key auth + RBAC enforced on all endpoints |
 | **No approval gates for module install** | HIGH | Malicious adapter code can be enabled without review; mitigated partially by sandbox validation (once A4 complete) |
-| **No automated tests for Admin API CRUD** | MEDIUM | Regressions from refactoring go undetected; manual curl testing only |
+| ~~No automated tests for Admin API CRUD~~ | ~~MEDIUM~~ | ✅ Resolved in Phase 4 — 46 integration tests covering all CRUD + RBAC |
 | **Dashboard SRP violation** | MEDIUM | Single service handles 5+ concerns; harder to scale and test independently |
 | **No rate limiting** | MEDIUM | All HTTP endpoints vulnerable to abuse/DoS |
 | **SQLite is sufficient for now** | LOW | Module registry, credentials, checkpoints all on SQLite; good enough for local development — scaling migration deferred |
