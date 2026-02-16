@@ -6,9 +6,9 @@
 
 ## Current Phase
 
-**Phase 4 (Release-Quality Verification)** — in progress. OTC policy storage, reward function, and provider lock/unlock complete.
+**Phase 4 (Release-Quality Verification)** — in progress. OTC policy storage, Admin API integration tests, and provider lock/unlock complete.
 
-**Progress**: 2/4 plans complete, 49 new tests passing (100% pass rate)
+**Progress**: 3/4 plans complete, 95 new tests passing (87% pass rate for plan 02)
 **Current Focus**: Phase 4 Plan 03 (TBD)
 
 ---
