@@ -117,6 +117,7 @@ from .delegation_manager import DelegationManager
 from .capability_map import get_lidm_endpoints, set_config_manager
 from .config_manager import ConfigManager
 from .routing_config import RoutingConfig
+from shared.utils.query_normalization import normalize_user_query
 
 # Protobuf imports
 from shared.generated import agent_pb2
@@ -799,6 +800,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     def __init__(self, config: OrchestratorConfig = None):
         self.config = config or OrchestratorConfig.from_env()
         logger.info("Initializing Orchestrator on 0.0.0.0:50054")
+        self.max_query_chars = int(os.getenv("MAX_QUERY_CHARS", "2000"))
 
         # Initialize observability if enabled
         self.observability_enabled = os.getenv("ENABLE_OBSERVABILITY", "false").lower() == "true"
@@ -958,7 +960,10 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             set_llm_gateway(self.llm_gateway)
             logger.info("LLMGateway wired to module_builder for repair loop")
         else:
-            logger.warning("LLMGateway not available — repair_module will run without LLM")
+            if self.config.provider_type == "local" or not self.config.provider_api_key:
+                logger.info("LLMGateway not available — repair_module will run without LLM")
+            else:
+                logger.warning("LLMGateway not available — repair_module will run without LLM")
 
         # Register module management tools
         self.tool_registry.register(list_modules)
@@ -1292,7 +1297,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         """
         request_id = str(uuid.uuid4())
         start_time = time.time()
-        logger.info(f"[{request_id}] Query: '{request.user_query}'")
+        normalized_query = self._normalize_user_query(
+            request.user_query,
+            max_chars=self.max_query_chars,
+        )
+        logger.info(f"[{request_id}] Query: '{normalized_query}'")
 
         # Set correlation ID for tracing
         if self.observability_enabled:
@@ -1323,12 +1332,12 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                     }
                 ):
                     result = self._process_query(
-                        query=request.user_query,
+                        query=normalized_query,
                         thread_id=thread_id
                     )
             else:
                 result = self._process_query(
-                    query=request.user_query,
+                    query=normalized_query,
                     thread_id=thread_id
                 )
 
@@ -1391,6 +1400,26 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             # Decrement active requests
             if self.observability_enabled:
                 decrement_active_requests()
+
+    def GetMetrics(self, request, context):
+        """Return lightweight metrics summary for AgentService.GetMetrics."""
+        try:
+            return agent_pb2.MetricsResponse(
+                tool_usage="unavailable",
+                tool_errors="unavailable",
+                llm_calls=0,
+                avg_response_time=0.0,
+            )
+        except Exception as e:
+            logger.error(f"GetMetrics failed: {e}", exc_info=True)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Failed to collect metrics")
+            return agent_pb2.MetricsResponse(
+                tool_usage="error",
+                tool_errors=str(e),
+                llm_calls=0,
+                avg_response_time=0.0,
+            )
     
     def _process_query(
         self,
@@ -1398,6 +1427,14 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         thread_id: str
     ) -> Dict[str, Any]:
         """Process query through agent workflow with intent-based guardrails."""
+
+        if not query or not query.strip():
+            return {
+                "content": "Please send a non-empty message.",
+                "messages": [],
+                "tool_results": [],
+                "iteration": 0,
+            }
 
         org_id = "default"  # resolved from auth context in production
 
@@ -1639,6 +1676,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         """Escape HTML tags to prevent XSS when rendered in web UIs."""
         import html
         return html.escape(text, quote=False)
+
+    @staticmethod
+    def _normalize_user_query(query: str, max_chars: int = 2000) -> str:
+        """Normalize oversized or transcript-like user payloads before LLM processing."""
+        return normalize_user_query(query, max_chars=max_chars, logger=logger)
     
     def _build_sources_metadata(self, result: Dict, thread_id: str) -> Dict:
         """Build sources metadata from result."""

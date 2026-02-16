@@ -36,6 +36,9 @@ def fetch_context_sync(
         logger.debug("Using mock context (USE_MOCK_CONTEXT=true)")
         return {}
 
+    api_key = os.getenv("DASHBOARD_API_KEY") or os.getenv("INTERNAL_API_KEY")
+    headers = {"X-API-Key": api_key} if api_key else None
+
     # If specific categories requested, fetch each one
     if categories:
         result = {}
@@ -44,6 +47,7 @@ def fetch_context_sync(
                 resp = requests.get(
                     f"{DASHBOARD_URL}/context/{category}",
                     params={"user_id": user_id},
+                    headers=headers,
                     timeout=_REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 200:
@@ -61,6 +65,7 @@ def fetch_context_sync(
         resp = requests.get(
             f"{DASHBOARD_URL}/context",
             params={"user_id": user_id},
+            headers=headers,
             timeout=_REQUEST_TIMEOUT,
         )
         if resp.status_code == 200:
@@ -130,7 +135,9 @@ def _normalize_context_for_tools(context_dict: Dict[str, Any]) -> Dict[str, Any]
             if isinstance(route, dict):
                 dest = route.get("destination", {})
                 if dest:
-                    name = dest.get("name", "Unknown")
+                    name = dest.get("name")
+                    if not isinstance(name, str) or not name.strip():
+                        name = "Unknown"
                     key = name.lower().replace(" ", "_")
                     saved_destinations[key] = {
                         "name": name,
