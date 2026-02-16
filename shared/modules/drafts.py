@@ -441,3 +441,260 @@ class DraftManager:
                 drafts.append(metadata)
 
         return sorted(drafts, key=lambda d: d.created_at, reverse=True)
+
+    def validate_draft(
+        self,
+        draft_id: str,
+        actor: str = "system",
+        validator_func=None
+    ) -> Dict[str, Any]:
+        """
+        Validate a draft using sandbox validation.
+
+        Runs draft files through the same validation pipeline as automated builds:
+        - Static checks (syntax, contract, manifest)
+        - Runtime checks (tests in sandbox)
+        - Generates ValidationReport with fix hints
+        - Stores bundle_sha256 for promotion attestation
+
+        Args:
+            draft_id: Draft identifier
+            actor: Identity of the user triggering validation
+            validator_func: Optional validator function (for testing)
+
+        Returns:
+            Dict with validation report and updated draft status
+        """
+        draft_workspace = self.drafts_dir / draft_id
+        metadata_file = draft_workspace / "metadata.json"
+
+        if not metadata_file.exists():
+            return {"status": "error", "error": f"Draft {draft_id} not found"}
+
+        # Load metadata
+        metadata = DraftMetadata.from_dict(json.loads(metadata_file.read_text()))
+
+        # Check state
+        if metadata.state in [DraftState.PROMOTED, DraftState.DISCARDED]:
+            return {
+                "status": "error",
+                "error": f"Cannot validate draft in state: {metadata.state}"
+            }
+
+        # Update state to VALIDATING
+        metadata.state = DraftState.VALIDATING
+        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_by = actor
+        metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
+
+        # Copy draft files to temporary module location for validation
+        draft_files_dir = draft_workspace / "files"
+        parts = metadata.module_id.split("/")
+        category, platform = parts
+
+        # Create temporary validation directory
+        temp_module_dir = self.modules_dir / f"{category}_draft_{draft_id}" / platform
+        temp_module_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Copy files
+            for filename in metadata.files.keys():
+                src = draft_files_dir / filename
+                dest = temp_module_dir / filename
+                shutil.copy2(src, dest)
+
+            # Run validation
+            if validator_func:
+                # Use provided validator (for testing)
+                validation_result = validator_func(f"{category}_draft_{draft_id}/{platform}")
+            else:
+                # Use real module_validator
+                from tools.builtin.module_validator import validate_module
+                validation_result = validate_module(f"{category}_draft_{draft_id}/{platform}")
+
+            # Extract report
+            report = validation_result.get("report", {})
+            status = validation_result.get("status", "error")
+
+            # Compute bundle hash
+            from shared.modules.artifacts import ArtifactBundleBuilder
+            bundle_files = {}
+            for filename in metadata.files.keys():
+                file_path = draft_files_dir / filename
+                bundle_files[f"{category}/{platform}/{filename}"] = file_path.read_text()
+
+            bundle = ArtifactBundleBuilder.build_from_dict(
+                files=bundle_files,
+                job_id=f"draft_{draft_id}",
+                attempt_id=1,
+                module_id=metadata.module_id
+            )
+
+            # Update metadata
+            if status == "success":
+                metadata.state = DraftState.VALIDATED
+                metadata.validation_report = report
+                metadata.bundle_sha256 = bundle.bundle_sha256
+            else:
+                metadata.state = DraftState.EDITING  # Back to editing on failure
+                metadata.validation_report = report
+
+            metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+            metadata.updated_by = actor
+            metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
+
+            # Audit log
+            if self.audit_log:
+                self.audit_log.log_action(
+                    action="draft_validated",
+                    actor=actor,
+                    draft_id=draft_id,
+                    details={
+                        "validation_status": status,
+                        "bundle_sha256": metadata.bundle_sha256
+                    }
+                )
+
+            logger.info(f"Draft validated: {draft_id}, status: {status}")
+
+            return {
+                "status": "success" if status == "success" else "failed",
+                "draft_id": draft_id,
+                "validation_report": report,
+                "bundle_sha256": metadata.bundle_sha256,
+                "draft_state": metadata.state.value,
+                "message": (
+                    f"Draft {draft_id} validation passed. Ready for promotion."
+                    if status == "success"
+                    else f"Draft {draft_id} validation failed. Fix errors and validate again."
+                )
+            }
+
+        finally:
+            # Clean up temporary validation directory
+            temp_parent = self.modules_dir / f"{category}_draft_{draft_id}"
+            if temp_parent.exists():
+                shutil.rmtree(temp_parent)
+
+    def promote_draft(
+        self,
+        draft_id: str,
+        actor: str = "system",
+        installer_func=None
+    ) -> Dict[str, Any]:
+        """
+        Promote a validated draft to a new immutable version.
+
+        Creates a new validated version with:
+        - New bundle_sha256 (computed during validation)
+        - Validation attestation (from validation report)
+        - Install via module_installer (same attestation guard)
+
+        Pre-conditions:
+        - Draft state must be VALIDATED
+        - Validation report must exist
+        - Bundle hash must exist
+
+        Args:
+            draft_id: Draft identifier
+            actor: Identity of the user promoting the draft
+            installer_func: Optional installer function (for testing)
+
+        Returns:
+            Dict with promotion status and new version info
+        """
+        draft_workspace = self.drafts_dir / draft_id
+        metadata_file = draft_workspace / "metadata.json"
+
+        if not metadata_file.exists():
+            return {"status": "error", "error": f"Draft {draft_id} not found"}
+
+        # Load metadata
+        metadata = DraftMetadata.from_dict(json.loads(metadata_file.read_text()))
+
+        # Check pre-conditions
+        if metadata.state != DraftState.VALIDATED:
+            return {
+                "status": "error",
+                "error": f"Draft must be VALIDATED before promotion. Current state: {metadata.state}"
+            }
+
+        if not metadata.validation_report:
+            return {
+                "status": "error",
+                "error": "No validation report found. Run validate_draft() first."
+            }
+
+        if not metadata.bundle_sha256:
+            return {
+                "status": "error",
+                "error": "No bundle hash found. Run validate_draft() first."
+            }
+
+        # Copy draft files to module directory
+        parts = metadata.module_id.split("/")
+        category, platform = parts
+        module_dir = self.modules_dir / category / platform
+        module_dir.mkdir(parents=True, exist_ok=True)
+
+        draft_files_dir = draft_workspace / "files"
+        for filename in metadata.files.keys():
+            src = draft_files_dir / filename
+            dest = module_dir / filename
+            shutil.copy2(src, dest)
+
+        # Create validation attestation
+        attestation = {
+            "bundle_sha256": metadata.bundle_sha256,
+            "validated_at": metadata.validation_report.get("validated_at"),
+            "validation_report": metadata.validation_report,
+            "draft_id": draft_id,
+            "promoted_by": actor,
+            "promoted_at": datetime.utcnow().isoformat() + "Z"
+        }
+
+        # Install via module_installer
+        if installer_func:
+            # Use provided installer (for testing)
+            install_result = installer_func(metadata.module_id, attestation)
+        else:
+            # Use real module_installer
+            from tools.builtin.module_installer import install_module
+            install_result = install_module(metadata.module_id, attestation)
+
+        if install_result.get("status") != "success":
+            return {
+                "status": "error",
+                "error": f"Installation failed: {install_result.get('error', 'unknown error')}",
+                "install_result": install_result
+            }
+
+        # Update metadata
+        metadata.state = DraftState.PROMOTED
+        metadata.updated_at = datetime.utcnow().isoformat() + "Z"
+        metadata.updated_by = actor
+        metadata_file.write_text(json.dumps(metadata.to_dict(), indent=2))
+
+        # Audit log
+        if self.audit_log:
+            self.audit_log.log_action(
+                action="draft_promoted",
+                actor=actor,
+                draft_id=draft_id,
+                module_id=metadata.module_id,
+                details={
+                    "bundle_sha256": metadata.bundle_sha256,
+                    "source_version": metadata.source_version
+                }
+            )
+
+        logger.info(f"Draft promoted: {draft_id} -> {metadata.module_id}")
+
+        return {
+            "status": "success",
+            "draft_id": draft_id,
+            "module_id": metadata.module_id,
+            "bundle_sha256": metadata.bundle_sha256,
+            "message": f"Draft {draft_id} promoted to {metadata.module_id}. Module installed with new version.",
+            "install_result": install_result
+        }
