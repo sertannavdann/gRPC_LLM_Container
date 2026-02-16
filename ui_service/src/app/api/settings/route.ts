@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { getProviderUnlockHandler } from '@/lib/provider-lock/providers';
+import type { ProviderLockStatus } from '@/lib/provider-lock/base';
 
 // Path to .env file in the root workspace
 const ENV_PATH = process.env.ENV_FILE_PATH || '/app/.env';
@@ -8,6 +10,11 @@ const ENV_PATH = process.env.ENV_FILE_PATH || '/app/.env';
 interface EnvConfig {
   LLM_PROVIDER: string;
   LLM_PROVIDER_MODEL: string;
+  NIM_API_KEY?: string;
+  NIM_BASE_URL?: string;
+  LLM_PROVIDER_TOP_P?: string;
+  LLM_PROVIDER_THINKING?: string;
+  LLM_PROVIDER_MAX_TOKENS?: string;
   PERPLEXITY_API_KEY?: string;
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
@@ -30,12 +37,57 @@ interface EnvConfig {
 // Admin API for provider/model config (single source of truth)
 const ADMIN_API = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
 
+function loadProviderConfigFallback(): {
+  providers: Record<string, { models: string[]; default: string }>;
+  lidmTierModels: Record<string, string[]>;
+} {
+  const candidatePaths = [
+    process.env.ROUTING_CONFIG_PATH,
+    '/app/config/routing_config.json',
+    join(process.cwd(), 'config', 'routing_config.json'),
+    join(process.cwd(), '..', 'config', 'routing_config.json'),
+  ].filter((value): value is string => Boolean(value));
+
+  for (const configPath of candidatePaths) {
+    try {
+      if (!existsSync(configPath)) {
+        continue;
+      }
+
+      const raw = readFileSync(configPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+
+      const providers = parsed?.providers;
+      const lidmTierModels = parsed?.lidm_tier_models;
+
+      if (providers && typeof providers === 'object') {
+        return {
+          providers,
+          lidmTierModels: lidmTierModels && typeof lidmTierModels === 'object' ? lidmTierModels : {},
+        };
+      }
+    } catch (error) {
+      console.warn(`[Settings API] Failed reading fallback routing config at ${configPath}:`, (error as Error).message);
+    }
+  }
+
+  return {
+    providers: {
+      local: {
+        models: ['qwen2.5-3b-instruct-q5_k_m'],
+        default: 'qwen2.5-3b-instruct-q5_k_m',
+      },
+    },
+    lidmTierModels: {},
+  };
+}
+
 async function fetchProviderConfig(): Promise<{
   providers: Record<string, { models: string[]; default: string }>;
   lidmTierModels: Record<string, string[]>;
 }> {
   try {
-    const res = await fetch(`${ADMIN_API}/admin/providers`, { next: { revalidate: 30 } });
+    const res = await fetch(`${ADMIN_API}/admin/providers`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`Admin API returned ${res.status}`);
     const data = await res.json();
     return {
@@ -43,8 +95,8 @@ async function fetchProviderConfig(): Promise<{
       lidmTierModels: data.lidm_tier_models || {},
     };
   } catch (err) {
-    console.warn('[Settings API] Admin API unreachable, using empty defaults:', (err as Error).message);
-    return { providers: { local: { models: [], default: '' } }, lidmTierModels: {} };
+    console.warn('[Settings API] Admin API unreachable, using routing config fallback:', (err as Error).message);
+    return loadProviderConfigFallback();
   }
 }
 
@@ -98,19 +150,10 @@ export async function GET() {
 
     const currentProvider = envConfig.LLM_PROVIDER || 'local';
 
-    // Filter providers: always include 'local', only include cloud providers with API keys
-    const providerKeyMap: Record<string, string> = {
-      perplexity: 'PERPLEXITY_API_KEY',
-      openai: 'OPENAI_API_KEY',
-      anthropic: 'ANTHROPIC_API_KEY',
+    // Return full provider catalog so users can select/configure providers before adding keys.
+    const availableProviders: Record<string, { models: string[]; default: string }> = {
+      ...allProviders,
     };
-
-    const availableProviders: Record<string, { models: string[]; default: string }> = {};
-    for (const [name, info] of Object.entries(allProviders)) {
-      if (name === 'local' || envConfig[providerKeyMap[name]]) {
-        availableProviders[name] = info;
-      }
-    }
 
     // If current provider is not in available list, fall back to 'local'
     const effectiveProvider = availableProviders[currentProvider] ? currentProvider : 'local';
@@ -118,10 +161,20 @@ export async function GET() {
       ? envConfig.LLM_PROVIDER_MODEL || allProviders[currentProvider]?.default || ''
       : allProviders.local?.default || '';
 
+    // Build provider lock metadata using unlock handler classes
+    const providerLocks: Record<string, ProviderLockStatus> = {};
+    for (const providerName of Object.keys(availableProviders)) {
+      const handler = getProviderUnlockHandler(providerName);
+      if (handler) {
+        providerLocks[providerName] = handler.toStatus(envConfig);
+      }
+    }
+
     return NextResponse.json({
       config: {
         provider: effectiveProvider,
         model: effectiveModel,
+        hasNimKey: !!envConfig.NIM_API_KEY,
         hasPerplexityKey: !!envConfig.PERPLEXITY_API_KEY,
         hasOpenaiKey: !!envConfig.OPENAI_API_KEY,
         hasAnthropicKey: !!envConfig.ANTHROPIC_API_KEY,
@@ -131,6 +184,7 @@ export async function GET() {
         lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K.gguf',
         lidmStandardModel: envConfig.LIDM_STANDARD_MODEL || 'qwen2.5-0.5b-instruct-q5_k_m.gguf',
       },
+      providerLocks,
       lidmTierModels,
       adapters: {
         openweather: {
@@ -190,10 +244,19 @@ export async function POST(request: NextRequest) {
 
     // Update LLM API keys (only if provided - don't overwrite with empty)
     if (apiKeys) {
+      if (apiKeys.nvidia) envConfig.NIM_API_KEY = apiKeys.nvidia;
       if (apiKeys.perplexity) envConfig.PERPLEXITY_API_KEY = apiKeys.perplexity;
       if (apiKeys.openai) envConfig.OPENAI_API_KEY = apiKeys.openai;
       if (apiKeys.anthropic) envConfig.ANTHROPIC_API_KEY = apiKeys.anthropic;
       if (apiKeys.serper) envConfig.SERPER_API_KEY = apiKeys.serper;
+    }
+
+    // Set sensible NVIDIA defaults when provider is selected
+    if (provider === 'nvidia') {
+      envConfig.NIM_BASE_URL = envConfig.NIM_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+      envConfig.LLM_PROVIDER_TOP_P = envConfig.LLM_PROVIDER_TOP_P || '0.95';
+      envConfig.LLM_PROVIDER_THINKING = envConfig.LLM_PROVIDER_THINKING || 'true';
+      envConfig.LLM_PROVIDER_MAX_TOKENS = envConfig.LLM_PROVIDER_MAX_TOKENS || '16384';
     }
 
     // Update adapter keys (only non-empty values)
