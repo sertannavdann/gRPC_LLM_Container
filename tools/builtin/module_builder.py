@@ -26,11 +26,19 @@ from shared.modules.manifest import ModuleManifest, ModuleStatus, ValidationResu
 from shared.modules.templates.adapter_template import generate_adapter_code
 from shared.modules.templates.test_template import generate_test_code
 from shared.modules.artifacts import ArtifactBundleBuilder, ArtifactIndex
+from shared.modules.audit import (
+    BuildAuditLog,
+    AttemptRecord,
+    AttemptStatus,
+    FailureType,
+    FailureFingerprint,
+)
 from shared.providers.llm_gateway import LLMGateway, Purpose
 
 logger = logging.getLogger(__name__)
 
 MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
+AUDIT_DIR = Path(os.getenv("AUDIT_DIR", "/app/data/audit"))
 
 # Configuration
 MAX_REPAIR_ATTEMPTS = 10
@@ -296,4 +304,145 @@ def write_module_code(
         "module_id": module_id,
         "files_written": files_written,
         "instructions": f"Code written. Call validate_module('{module_id}') to test it.",
+    }
+
+
+def repair_module(
+    module_id: str,
+    validation_report: Dict[str, Any],
+    audit_log: BuildAuditLog,
+) -> Dict[str, Any]:
+    """
+    Repair module using LLM with bounded retry loop.
+
+    Repair loop:
+        1. Extract fix hints from validation report
+        2. Load current file snapshots (no stale context)
+        3. Call LLM gateway with purpose=REPAIR
+        4. Apply patches to changed files
+        5. Create artifact bundle
+        6. Record immutable attempt
+        7. Check termination conditions:
+           - Terminal failure (policy/security) → stop immediately
+           - Max attempts reached → stop with failure report
+           - Identical failure fingerprint twice → stop (thrash detection)
+           - Otherwise → continue
+
+    Args:
+        module_id: Module identifier in "category/platform" format
+        validation_report: Validation report with fix hints
+        audit_log: Build audit log for tracking attempts
+
+    Returns:
+        Dict with repair status, updated files, and next steps
+    """
+    parts = module_id.split("/")
+    if len(parts) != 2:
+        return {"status": "error", "error": f"Invalid module_id: {module_id}"}
+
+    category, platform = parts
+    module_dir = MODULES_DIR / category / platform
+
+    if not module_dir.exists():
+        return {"status": "error", "error": f"Module not found: {module_dir}"}
+
+    # Check if we've exceeded max attempts
+    if len(audit_log.attempts) >= MAX_REPAIR_ATTEMPTS:
+        return {
+            "status": "failed",
+            "error": f"Max repair attempts ({MAX_REPAIR_ATTEMPTS}) reached",
+            "audit_log": audit_log.to_dict(),
+        }
+
+    # Classify failure type
+    failure_type = audit_log.classify_failure_type(validation_report)
+
+    # Terminal failures stop immediately
+    if failure_type in [
+        FailureType.POLICY_VIOLATION,
+        FailureType.SECURITY_BLOCK,
+        FailureType.BUDGET_EXCEEDED,
+        FailureType.GATEWAY_FAILURE,
+    ]:
+        logger.error(
+            f"[{audit_log.job_id}] Terminal failure detected: {failure_type.value}"
+        )
+        return {
+            "status": "failed",
+            "error": f"Terminal failure: {failure_type.value}. Cannot repair.",
+            "failure_type": failure_type.value,
+            "audit_log": audit_log.to_dict(),
+        }
+
+    # Check for thrashing (identical failure twice)
+    if audit_log.has_consecutive_identical_failures():
+        logger.warning(
+            f"[{audit_log.job_id}] Thrashing detected: identical failure fingerprint twice"
+        )
+        return {
+            "status": "failed",
+            "error": "Thrashing detected: same failure repeated. Stopping repair loop.",
+            "audit_log": audit_log.to_dict(),
+        }
+
+    # Create failure fingerprint
+    fingerprint = FailureFingerprint.from_validation_report(validation_report)
+
+    # Load current file snapshots (fresh context, no stale data)
+    adapter_file = module_dir / "adapter.py"
+    test_file = module_dir / "test_adapter.py"
+
+    current_files = {}
+    if adapter_file.exists():
+        current_files["adapter.py"] = adapter_file.read_text()
+    if test_file.exists():
+        current_files["test_adapter.py"] = test_file.read_text()
+
+    # Extract fix hints
+    fix_hints = validation_report.get("fix_hints", [])
+    fix_hints_text = "\n".join([
+        f"- {hint.get('category', 'unknown')}: {hint.get('message', '')}"
+        for hint in fix_hints
+    ])
+
+    # Get failing logs
+    runtime_results = validation_report.get("runtime_results", {})
+    failing_logs = runtime_results.get("stderr", "") + "\n" + runtime_results.get("stdout", "")
+
+    logger.info(
+        f"[{audit_log.job_id}] Starting repair attempt {len(audit_log.attempts) + 1}"
+    )
+
+    # TODO: Call LLM gateway with repair prompt (when gateway is available)
+    # For now, record the attempt as failed and return instructions
+    attempt_record = AttemptRecord(
+        attempt_number=len(audit_log.attempts) + 1,
+        bundle_sha256="pending",  # Will be filled after LLM generates code
+        stage="repair",
+        status=AttemptStatus.FAILED,
+        validation_report=validation_report,
+        logs=[f"Fix hints: {fix_hints_text}", f"Failing logs: {failing_logs[:500]}"],
+        failure_fingerprint=fingerprint.hash,
+        failure_type=failure_type,
+        metadata={"current_files": list(current_files.keys())},
+    )
+
+    audit_log.add_attempt(attempt_record)
+
+    # Save audit log
+    audit_file = audit_log.save(AUDIT_DIR)
+
+    return {
+        "status": "repair_pending",
+        "module_id": module_id,
+        "attempt_number": attempt_record.attempt_number,
+        "failure_type": failure_type.value,
+        "fingerprint": fingerprint.hash,
+        "fix_hints": fix_hints,
+        "audit_file": str(audit_file),
+        "instructions": (
+            f"Repair attempt {attempt_record.attempt_number} recorded. "
+            f"LLM gateway integration needed to generate fixes. "
+            f"Fix hints: {fix_hints_text}"
+        ),
     }
