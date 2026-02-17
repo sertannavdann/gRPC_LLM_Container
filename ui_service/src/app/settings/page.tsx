@@ -44,6 +44,10 @@ interface SettingsConfig {
   hasOpenaiKey: boolean;
   hasAnthropicKey: boolean;
   hasSerperKey: boolean;
+  hasOpenweatherKey: boolean;
+  hasClashRoyaleKey: boolean;
+  hasClashRoyalePlayerTag: boolean;
+  hasGoogleCalendarToken: boolean;
   delegationEnabled: boolean;
   lidmHeavyModel: string;
   lidmStandardModel: string;
@@ -67,6 +71,13 @@ const API_KEY_FIELDS = [
   { key: 'serper', label: 'Serper API Key (Web Search)', placeholder: '...' },
 ];
 
+const ADAPTER_KEY_FIELDS = [
+  { key: 'openweatherApiKey', label: 'OpenWeather API Key', placeholder: 'Your OpenWeatherMap API key' },
+  { key: 'clashroyaleApiKey', label: 'Clash Royale API Key', placeholder: 'Your Clash Royale developer key' },
+  { key: 'clashroyalePlayerTag', label: 'Clash Royale Player Tag', placeholder: '#XXXXXX' },
+  { key: 'googleCalendarAccessToken', label: 'Google Calendar Access Token', placeholder: 'OAuth access token' },
+];
+
 export default function SettingsPage() {
   const [config, setConfig] = useState<SettingsConfig | null>(null);
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
@@ -88,6 +99,16 @@ export default function SettingsPage() {
     serper: '',
   });
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
+
+  // Adapter key state
+  const [showAdapterKeys, setShowAdapterKeys] = useState(false);
+  const [adapterKeys, setAdapterKeys] = useState<Record<string, string>>({
+    openweatherApiKey: '',
+    clashroyaleApiKey: '',
+    clashroyalePlayerTag: '',
+    googleCalendarAccessToken: '',
+  });
+  const [visibleAdapterKeys, setVisibleAdapterKeys] = useState<Record<string, boolean>>({});
 
   // Lock/unlock state
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -209,6 +230,7 @@ export default function SettingsPage() {
     setSuccess(null);
     try {
       const hasNewKeys = Object.values(apiKeys).some(v => v.length > 0);
+      const hasNewAdapterKeys = Object.values(adapterKeys).some(v => v.length > 0);
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,6 +238,7 @@ export default function SettingsPage() {
           provider: selectedProvider,
           model: selectedModel,
           apiKeys: hasNewKeys ? apiKeys : undefined,
+          adapterKeys: hasNewAdapterKeys ? adapterKeys : undefined,
           delegation: {
             enabled: delegationEnabled,
             heavyModel: lidmHeavyModel || undefined,
@@ -227,7 +250,9 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to save');
 
       setApiKeys({ nvidia: '', perplexity: '', openai: '', anthropic: '', serper: '' });
+      setAdapterKeys({ openweatherApiKey: '', clashroyaleApiKey: '', clashroyalePlayerTag: '', googleCalendarAccessToken: '' });
       setShowApiKeys(false);
+      setShowAdapterKeys(false);
       setSaving(false);
 
       const reloaded = await reloadOrchestrator();
@@ -533,6 +558,9 @@ export default function SettingsPage() {
               { label: 'OpenAI', has: config.hasOpenaiKey },
               { label: 'Anthropic', has: config.hasAnthropicKey },
               { label: 'Serper', has: config.hasSerperKey },
+              { label: 'OpenWeather', has: config.hasOpenweatherKey },
+              { label: 'Clash Royale', has: config.hasClashRoyaleKey },
+              { label: 'Calendar', has: config.hasGoogleCalendarToken },
             ].map(({ label, has }) => (
               <span key={label} className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
                 has ? 'bg-green-500/10 text-green-500' : 'bg-muted text-muted-foreground'
@@ -580,6 +608,46 @@ export default function SettingsPage() {
             ))}
             <p className="text-xs text-muted-foreground">
               Leave empty to keep existing keys. New keys unlock their provider above.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Adapter Keys */}
+      <section className="space-y-3">
+        <button
+          onClick={() => setShowAdapterKeys(!showAdapterKeys)}
+          className="flex items-center gap-2 text-sm text-primary hover:underline"
+        >
+          <Key className="h-4 w-4" />
+          {showAdapterKeys ? 'Hide Adapter Keys' : 'Update Adapter Keys'}
+        </button>
+
+        {showAdapterKeys && (
+          <div className="space-y-4 p-4 border rounded-xl">
+            {ADAPTER_KEY_FIELDS.map(({ key, label, placeholder }) => (
+              <div key={key} className="space-y-1">
+                <label className="text-xs font-medium">{label}</label>
+                <div className="relative">
+                  <input
+                    type={visibleAdapterKeys[key] ? 'text' : 'password'}
+                    value={adapterKeys[key]}
+                    onChange={(e) => setAdapterKeys({ ...adapterKeys, [key]: e.target.value })}
+                    placeholder={placeholder}
+                    className="w-full p-2 pr-10 text-sm rounded-lg border bg-background font-mono"
+                  />
+                  <button
+                    onClick={() => setVisibleAdapterKeys({ ...visibleAdapterKeys, [key]: !visibleAdapterKeys[key] })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                    type="button"
+                  >
+                    {visibleAdapterKeys[key] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Leave empty to keep existing keys. Adapter keys are persisted to .env and unlock adapters on the dashboard.
             </p>
           </div>
         )}

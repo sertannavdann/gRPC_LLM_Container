@@ -24,7 +24,11 @@ interface EnvConfig {
   ENABLE_DELEGATION?: string;
   LIDM_HEAVY_MODEL?: string;
   LIDM_STANDARD_MODEL?: string;
-  // Note: Adapter keys no longer stored in .env — they flow through Admin API
+  // Adapter keys — single source of truth in .env
+  OPENWEATHER_API_KEY?: string;
+  CLASH_ROYALE_API_KEY?: string;
+  CLASH_ROYALE_PLAYER_TAG?: string;
+  GOOGLE_CALENDAR_ACCESS_TOKEN?: string;
 }
 
 // Admin API for provider/model config (single source of truth)
@@ -289,6 +293,11 @@ export async function GET() {
         hasOpenaiKey: !!envConfig.OPENAI_API_KEY,
         hasAnthropicKey: !!envConfig.ANTHROPIC_API_KEY,
         hasSerperKey: !!envConfig.SERPER_API_KEY,
+        // Adapter keys
+        hasOpenweatherKey: !!envConfig.OPENWEATHER_API_KEY,
+        hasClashRoyaleKey: !!envConfig.CLASH_ROYALE_API_KEY,
+        hasClashRoyalePlayerTag: !!envConfig.CLASH_ROYALE_PLAYER_TAG,
+        hasGoogleCalendarToken: !!envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN,
         // LIDM delegation
         delegationEnabled: (envConfig.ENABLE_DELEGATION || 'false').toLowerCase() === 'true',
         lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K.gguf',
@@ -353,12 +362,15 @@ export async function POST(request: NextRequest) {
       envConfig.LLM_PROVIDER_MAX_TOKENS = envConfig.LLM_PROVIDER_MAX_TOKENS || '16384';
     }
 
-    // Update adapter keys via Admin API credential store (not .env)
+    // Write adapter keys to .env (single source of truth)
     if (adapterKeys) {
-      await storeAdapterKeysViaAdminAPI(adapterKeys);
+      if (adapterKeys.openweatherApiKey) envConfig.OPENWEATHER_API_KEY = adapterKeys.openweatherApiKey;
+      if (adapterKeys.clashroyaleApiKey) envConfig.CLASH_ROYALE_API_KEY = adapterKeys.clashroyaleApiKey;
+      if (adapterKeys.clashroyalePlayerTag) envConfig.CLASH_ROYALE_PLAYER_TAG = adapterKeys.clashroyalePlayerTag;
+      if (adapterKeys.googleCalendarAccessToken) envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN = adapterKeys.googleCalendarAccessToken;
     }
 
-    // Write provider/LLM config back to .env (infrastructure config only, no adapter keys)
+    // Write all config back to .env
     const content = serializeEnvFile(envConfig);
     writeFileSync(ENV_PATH, content, 'utf-8');
 
