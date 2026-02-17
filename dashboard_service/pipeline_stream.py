@@ -75,19 +75,17 @@ async def _check_service(client: httpx.AsyncClient, name: str, url: str) -> dict
         return {"name": name, "state": "error", "latency_ms": 0, "status_code": 0}
 
 
-def _build_adapter_list(loader) -> list:
+def _build_adapter_list(module_list: list, all_adapters: list) -> list:
     """Build adapter list with health status from registry."""
     adapters = []
-    all_flat = adapter_registry.list_all_flat()
 
-    # Loader-based credential check
+    # Build module info lookup from pre-queried module list
     module_info = {}
-    if loader:
-        for m in loader.list_modules():
-            mid = f"{m.get('category', '?')}/{m.get('platform', '?')}"
-            module_info[mid] = m
+    for m in module_list:
+        mid = f"{m.get('category', '?')}/{m.get('platform', '?')}"
+        module_info[mid] = m
 
-    for info in all_flat:
+    for info in all_adapters:
         adapter_id = f"{info.category}/{info.platform}"
         m_info = module_info.get(adapter_id, {})
         adapters.append({
@@ -102,14 +100,14 @@ def _build_adapter_list(loader) -> list:
     return adapters
 
 
-def _build_tool_list() -> list:
+def _build_tool_list(all_adapters: list) -> list:
     """Build tool list with stage and adapter connections."""
     tools = []
     for tool_name, stage in TOOL_STAGE_MAP.items():
         connected_categories = TOOL_ADAPTER_MAP.get(tool_name, [])
         # Resolve categories to actual adapter IDs
         connected_adapters = []
-        for info in adapter_registry.list_all_flat():
+        for info in all_adapters:
             if info.category in connected_categories:
                 connected_adapters.append(f"{info.category}/{info.platform}")
         tools.append({
@@ -123,39 +121,46 @@ def _build_tool_list() -> list:
 async def _build_pipeline_state(app) -> dict:
     """Build current pipeline state by probing services."""
     async with httpx.AsyncClient() as client:
-        # Probe internal services
+        # Probe orchestrator only (dashboard is self-evidently running)
         checks = await asyncio.gather(
-            _check_service(client, "dashboard", "http://localhost:8001/health"),
             _check_service(client, "orchestrator_admin", "http://orchestrator:8003/admin/health"),
             return_exceptions=True,
         )
 
     services = {}
+    # Dashboard is always running if this SSE generator is executing
+    services["dashboard"] = {
+        "name": "dashboard",
+        "state": "running",
+        "latency_ms": 0,
+        "status_code": 200,
+    }
     for check in checks:
         if isinstance(check, dict):
             services[check["name"]] = check
 
-    # Static service entries (gRPC services can't be HTTP-probed easily)
+    # gRPC services cannot be HTTP-probed — state is genuinely unknown
     for svc in ["llm_service", "chroma_service", "sandbox_service"]:
-        services[svc] = {"name": svc, "state": "idle", "latency_ms": 0}
+        services[svc] = {"name": svc, "state": "unknown", "latency_ms": 0}
 
-    # Module info from loader
+    # Query data sources ONCE per cycle
     loader = getattr(app.state, "module_loader", None)
+    module_list = loader.list_modules() if loader else []
+    all_adapters = adapter_registry.list_all_flat()
+
+    # Build module entries
     modules = []
-    if loader:
-        for m in loader.list_modules():
-            modules.append({
-                "id": f"{m.get('category', '?')}/{m.get('platform', '?')}",
-                "name": m.get("name", "unknown"),
-                "state": "running" if m.get("is_loaded") else "disabled",
-                "category": m.get("category"),
-            })
+    for m in module_list:
+        modules.append({
+            "id": f"{m.get('category', '?')}/{m.get('platform', '?')}",
+            "name": m.get("name", "unknown"),
+            "state": "running" if m.get("is_loaded") else "disabled",
+            "category": m.get("category"),
+        })
 
-    # Adapter list with details
-    adapters = _build_adapter_list(loader)
-
-    # Tool list with stage mappings
-    tools = _build_tool_list()
+    # Pass cached data to helper functions
+    adapters = _build_adapter_list(module_list, all_adapters)
+    tools = _build_tool_list(all_adapters)
 
     # Stage → tool mapping
     stage_tools = {}

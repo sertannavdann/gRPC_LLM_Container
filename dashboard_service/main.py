@@ -41,7 +41,11 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    _HAS_FASTAPI_INSTRUMENTOR = True
+except ImportError:
+    _HAS_FASTAPI_INSTRUMENTOR = False
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
@@ -340,8 +344,9 @@ app.add_middleware(
     ],
 )
 
-# Instrument FastAPI with OpenTelemetry
-FastAPIInstrumentor.instrument_app(app)
+# Instrument FastAPI with OpenTelemetry (if available)
+if _HAS_FASTAPI_INSTRUMENTOR:
+    FastAPIInstrumentor.instrument_app(app)
 
 # CORS middleware for frontend access
 app.add_middleware(

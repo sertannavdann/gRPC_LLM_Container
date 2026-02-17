@@ -71,32 +71,8 @@ def _get_mgr() -> ConfigManager:
     return _config_manager
 
 
-def _dashboard_auth_headers(forwarded_api_key: Optional[str] = None) -> Dict[str, str]:
-    """Build auth headers for orchestrator->dashboard proxy calls."""
-    api_key = forwarded_api_key or os.getenv("DASHBOARD_API_KEY") or os.getenv("INTERNAL_API_KEY")
-    if not api_key:
-        return {}
-    return {"X-API-Key": api_key}
-
-
 def _check_module_credentials(module_id: str, forwarded_api_key: Optional[str] = None) -> bool:
-    """Check if a module has credentials stored in the dashboard credential store."""
-    import requests as http_req
-    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
-    try:
-        parts = module_id.split("/", 1)
-        if len(parts) != 2:
-            return False
-        resp = http_req.get(
-            f"{dashboard_url}/admin/module-credentials/{parts[0]}/{parts[1]}/status",
-            headers=_dashboard_auth_headers(forwarded_api_key),
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("has_credentials", False)
-    except Exception:
-        pass
-    # Fallback: check local credential store if dashboard unreachable
+    """Check if a module has credentials in the local credential store."""
     if _credential_store:
         return _credential_store.has_credentials(module_id)
     return False
@@ -415,17 +391,12 @@ def uninstall_module(
         _module_loader.unload_module(module_id)
         if _module_registry:
             _module_registry.uninstall(module_id)
-        # Delete credentials via dashboard proxy
-        import requests as http_req
-        dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
-        try:
-            http_req.delete(
-                f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
-                headers=_dashboard_auth_headers(request.headers.get("X-API-Key")),
-                timeout=5,
-            )
-        except Exception:
-            pass  # Best-effort cleanup
+        # Delete credentials from local store
+        if _credential_store:
+            try:
+                _credential_store.delete(module_id)
+            except Exception:
+                pass  # Best-effort cleanup
         return ModuleActionResponse(
             success=True,
             module_id=module_id,
@@ -443,28 +414,26 @@ def store_credentials(
     http_request: Request,
     user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
 ):
-    """Store API credentials for a module — proxies to dashboard credential store."""
-    import requests as http_req
-    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
+    """Store API credentials for a module via local credential store."""
+    module_id = f"{category}/{platform}"
+    if _credential_store is None:
+        raise HTTPException(status_code=503, detail="Credential store not initialized")
 
     try:
-        resp = http_req.post(
-            f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
-            json={"credentials": request.credentials},
-            headers=_dashboard_auth_headers(http_request.headers.get("X-API-Key")),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        result = resp.json()
+        _credential_store.store(module_id, request.credentials)
 
         # Reload module to pick up credentials
         if _module_loader:
             try:
-                _module_loader.reload_module(f"{category}/{platform}")
+                _module_loader.reload_module(module_id)
             except Exception:
                 pass
 
-        return result
+        return {
+            "success": True,
+            "module_id": module_id,
+            "message": f"Credentials stored for {module_id}",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -476,18 +445,18 @@ def delete_credentials(
     request: Request,
     user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
 ):
-    """Remove stored credentials for a module — proxies to dashboard credential store."""
-    import requests as http_req
-    dashboard_url = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
+    """Remove stored credentials for a module via local credential store."""
+    module_id = f"{category}/{platform}"
+    if _credential_store is None:
+        raise HTTPException(status_code=503, detail="Credential store not initialized")
 
     try:
-        resp = http_req.delete(
-            f"{dashboard_url}/admin/module-credentials/{category}/{platform}",
-            headers=_dashboard_auth_headers(request.headers.get("X-API-Key")),
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        _credential_store.delete(module_id)
+        return {
+            "success": True,
+            "module_id": module_id,
+            "message": f"Credentials removed for {module_id}",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

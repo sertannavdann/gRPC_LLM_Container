@@ -70,10 +70,11 @@
 - ✅ **Plan 03: Unified Verify Command** — `make verify` chains 7 test tiers, latency snapshot (p50/p95/p99), structured pass/fail report (10 tests)
 - ✅ **Plan 04: Provider Lock/Unlock** — Base class + 5 provider handlers, connection test API, settings UI lock gating (12 tests)
 
-### Phase 5: Refactoring ✅ (3/3 plans complete)
+### Phase 5: Refactoring ✅ (4/4 plans complete)
 - ✅ **Plan 01: Module Deduplication** — 5 shared modules (security_policy, static_analysis, identifiers, hashing, validation_types), eliminated 6 areas of code duplication, 40 tests, zero regressions
 - ✅ **Plan 02: Agent Soul.md + Auto-Prompt Composition** — 3 soul.md agent identity files (builder, tester, monitor), auto-prompt composition pipeline, Blueprint2Code confidence scorer (threshold 0.6), bounded retry with jitter (max 5 attempts, exponential backoff), 34 tests, 6 commits, 531s execution
 - ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
+- ✅ **Plan 04: Service Dependency Cleanup** — Conditional otel-instrumentation-fastapi import (dashboard starts without it), orchestrator credential proxy eliminated (4 HTTP calls → local _credential_store), SSE pipeline self-probe removed + data deduplication (50% I/O reduction), gRPC service state "idle"→"unknown", ServiceNode UI updated
 
 ### Phase 6: UX/UI Visual Expansion ✅ (4/4 plans complete)
 - ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge (25 min, 4 tasks, 10 files)

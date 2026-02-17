@@ -276,7 +276,7 @@ Wave 2 - Unified Verification:
 
 **Goal**: Consolidate 6 areas of code redundancy, wire soul.md agent identities into the build pipeline, unify adapter lock/unlock with the provider pattern, and register DraftManager/VersionManager as orchestrator chat tools.
 
-**Plans:** 3 plans (2 waves)
+**Plans:** 4 plans (3 waves)
 
 Wave 1 — Code Dedup + Agent Wiring (parallel):
 - [x] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
@@ -284,6 +284,9 @@ Wave 1 — Code Dedup + Agent Wiring (parallel):
 
 Wave 2 — Adapter Unification + Tool Wiring:
 - [x] 05-03-PLAN.md — Adapter lock/unlock unification + tool wiring: AdapterUnlockBase, adapter registry route, finance iframe removal, DraftManager/VersionManager chat tools, .env removal
+
+Wave 3 — Service Dependency Cleanup:
+- [x] 05-04-PLAN.md — Service dependency cleanup: conditional otel import, credential proxy elimination, SSE data deduplication
 
 ### Deliverables
 
@@ -293,6 +296,7 @@ Wave 2 — Adapter Unification + Tool Wiring:
 4. **Adapter lock/unlock** — Provider pattern extended to adapters, Admin API-driven
 5. **Finance backend consolidation** — Iframe removed, single API proxy path
 6. **Orchestrator tool wiring** — DraftManager + VersionManager as chat tools with RBAC
+7. **Service dependency cleanup** — Conditional otel instrumentation, eliminated orchestrator→dashboard circular credential proxy, deduplicated SSE pipeline data collection
 
 ### Done Criteria
 

@@ -6,11 +6,11 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Server, AlertTriangle, Pause } from 'lucide-react';
+import { Server, AlertTriangle, Pause, HelpCircle } from 'lucide-react';
 
 export interface ServiceNodeData {
   label: string;
-  state: 'running' | 'error' | 'idle';
+  state: 'running' | 'error' | 'idle' | 'unknown';
   latency_ms: number;
   [key: string]: unknown;
 }
@@ -19,12 +19,14 @@ const stateColors: Record<string, string> = {
   running: 'border-green-500/60 bg-green-500/10',
   error: 'border-red-500/60 bg-red-500/10',
   idle: 'border-zinc-500/40 bg-zinc-500/10',
+  unknown: 'border-zinc-500/40 bg-zinc-500/10',
 };
 
 const stateIcons: Record<string, React.ReactNode> = {
   running: <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />,
   error: <AlertTriangle className="w-3.5 h-3.5 text-red-400" />,
   idle: <Pause className="w-3.5 h-3.5 text-zinc-400" />,
+  unknown: <HelpCircle className="w-3.5 h-3.5 text-zinc-500" />,
 };
 
 function ServiceNodeComponent({ data }: NodeProps) {

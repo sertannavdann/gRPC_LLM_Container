@@ -17,7 +17,7 @@ python-multipart==0.0.12
 opentelemetry-api>=1.29.0
 opentelemetry-sdk>=1.29.0
 opentelemetry-exporter-otlp-proto-grpc>=1.29.0
-opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-instrumentation-fastapi>=0.50b0  # optional — dashboard starts without it
 opentelemetry-exporter-prometheus>=0.50b0
 
 # Prometheus metrics endpoint
