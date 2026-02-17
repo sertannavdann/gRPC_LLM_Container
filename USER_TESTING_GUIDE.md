@@ -1,9 +1,9 @@
 # NEXUS Agent Platform — Manual Testing Guide
 
-> **Last Updated**: February 16, 2026
-> **Version**: 5.0 (NEXUS branch — Phase 3: Self-Evolution Engine)
+> **Last Updated**: February 17, 2026
+> **Version**: 6.0 (NEXUS branch — Phase 5: Refactoring)
 > **Tester**: AI-assisted manual run (Copilot + CLI evidence)
-> **Date Tested**: 2026-02-16
+> **Date Tested**: 2026-02-17
 
 ---
 
@@ -761,11 +761,227 @@ curl -s -X POST http://localhost:8003/admin/modules/test/hello/rollback \
 
 ---
 
-## 15. Admin API
+## 15. Phase 5 Refactoring — Code Dedup, Agent Souls, Adapter Lock
+
+> Phase 5 consolidates code duplication from Phase 3, creates agent identity system with soul.md files, and unifies adapter connections to use the Phase 4 lock/unlock pattern.
+
+### 15.1 Code Deduplication (Plan 05-01)
+
+#### Security Policy Single Source of Truth
+
+```bash
+export PYTHONPATH=$PWD:$PYTHONPATH
+
+# Verify FORBIDDEN_IMPORTS is defined once and imported everywhere
+python -c "
+from shared.modules.security_policy import FORBIDDEN_IMPORTS as sp
+from shared.agents.confidence import FORBIDDEN_IMPORTS as conf
+from shared.modules.contracts import FORBIDDEN_IMPORTS as cont
+print(f'security_policy: {len(sp)} items')
+print(f'Same object in confidence.py: {sp is conf}')
+"
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| FORBIDDEN_IMPORTS defined only in security_policy.py? | | |
+| confidence.py imports from security_policy (not local def)? | | |
+| contracts.py imports from security_policy? | | |
+| All 9 forbidden patterns present (os.system, os.popen, subprocess, shutil.rmtree, eval, exec, __import__, compile, importlib.import_module)? | | |
+
+#### Shared Module Extraction
+
+```bash
+# StaticImportChecker — single location
+python -c "from shared.modules.static_analysis import StaticImportChecker; print('OK')"
+
+# parse_module_id — single shared function
+python -c "from shared.modules.identifiers import parse_module_id; print(parse_module_id('test/hello'))"
+
+# SHA-256 hashing — shared functions
+python -c "from shared.modules.hashing import compute_sha256, compute_bundle_hash; print(compute_sha256(b'test'))"
+
+# ValidationReport types — unified
+python -c "from shared.modules.validation_types import ValidationResult, ValidationEntry, ValidationSeverity; print('All types importable')"
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| StaticImportChecker importable from static_analysis? | | |
+| parse_module_id handles "/" and "_" separators? | | |
+| compute_sha256 returns consistent hashes? | | |
+| ValidationResult, ValidationEntry importable? | | |
+
+#### Dedup Unit Tests
+
+```bash
+python -m pytest tests/unit/test_shared_modules_dedup.py -v
+```
+
+| Test Suite | Tests | Result | Notes |
+|------------|-------|--------|-------|
+| Security policy (FORBIDDEN_IMPORTS, SAFE_BUILTINS) | ~6 | | |
+| Static analysis (import checker) | ~8 | | |
+| Identifiers (parse, validate) | ~8 | | |
+| Hashing (sha256, bundle hash) | ~7 | | |
+| Validation types (result, entry, severity) | ~11 | | |
+
+### 15.2 Agent Souls & Auto-Prompt (Plan 05-02)
+
+#### Soul Files
+
+```bash
+# Verify all 3 soul.md files exist with required sections
+for soul in builder tester monitor; do
+  echo "=== $soul.soul.md ==="
+  head -5 agents/souls/$soul.soul.md
+  grep -c "## Mission\|## Scope\|## Guardrails\|## Output" agents/souls/$soul.soul.md
+done
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| builder.soul.md exists with Mission, Scope, Guardrails? | | |
+| tester.soul.md exists with Mission, Test Taxonomy, Quality Gates? | | |
+| monitor.soul.md exists with Mission, Fidelity checks? | | |
+
+#### Prompt Composer
+
+```bash
+python -c "
+from shared.agents.prompt_composer import compose, StageContext, load_soul
+soul = load_soul('builder')
+print(f'Builder soul loaded: {len(soul)} chars')
+ctx = StageContext(stage='repair', intent='fix import errors', repair_hints=['check import paths'])
+prompt = compose(soul, ctx)
+print(f'Composed prompt: {len(prompt)} chars')
+print('Contains stage:', 'repair' in prompt)
+"
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| load_soul() loads builder soul from file? | | |
+| compose() interpolates stage context? | | |
+| Repair hints included in composed prompt? | | |
+| Soul caching works (second load is instant)? | | |
+
+#### Confidence Scorer
+
+```bash
+python -c "
+from shared.agents.confidence import Blueprint2CodeScorer, ScaffoldScore
+scorer = Blueprint2CodeScorer()
+print(f'Threshold: {scorer.threshold}')
+score = ScaffoldScore(completeness=0.8, feasibility=0.7, edge_case_handling=0.6, efficiency=0.9, overall=0.75)
+print(f'Passes threshold: {scorer.passes_threshold(score)}')
+low_score = ScaffoldScore(completeness=0.3, feasibility=0.4, edge_case_handling=0.2, efficiency=0.5, overall=0.35)
+print(f'Low score passes: {scorer.passes_threshold(low_score)}')
+"
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| Blueprint2CodeScorer threshold is 0.6? | | |
+| Score > 0.6 passes threshold? | | |
+| Score < 0.6 fails threshold? | | |
+
+#### Agent Soul + Prompt Tests
+
+```bash
+python -m pytest tests/unit/test_prompt_composer.py tests/unit/test_confidence_scorer.py -v
+```
+
+| Test Suite | Tests | Result | Notes |
+|------------|-------|--------|-------|
+| Prompt composer (load, compose, cache) | ~18 | | |
+| Confidence scorer (scoring, threshold, forbidden imports) | ~16 | | |
+
+### 15.3 Adapter Lock/Unlock & Draft Tools (Plan 05-03)
+
+#### Adapter Lock Classes
+
+| Test | Result | Notes |
+|------|--------|-------|
+| AdapterUnlockBase class in lib/adapter-lock/base.ts? | | |
+| 4 adapter subclasses (Weather, Calendar, Finance, Gaming)? | | |
+| fetchCredentials() reads from Admin API? | | |
+| storeCredentials() writes to Admin API? | | |
+| No .env file manipulation in adapter-lock? | | |
+
+#### Adapter Routes — No .env Manipulation
+
+```bash
+# Verify dashboard/adapters route has no .env I/O
+echo "--- dashboard/adapters route ---"
+grep -c 'readFileSync\|writeFileSync' ui_service/src/app/api/dashboard/adapters/route.ts
+# Should output: 0
+
+echo "--- settings route (adapter keys) ---"
+grep -c 'OPENWEATHER_API_KEY\|CLASH_ROYALE_API_KEY\|GOOGLE_CALENDAR' ui_service/src/app/api/settings/route.ts
+# Should output: 0
+
+echo "--- adapter-lock imports ---"
+grep 'adapter-lock' ui_service/src/app/api/dashboard/adapters/route.ts ui_service/src/app/api/settings/route.ts
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| dashboard/adapters/route.ts has zero readFileSync/writeFileSync? | | |
+| settings/route.ts has zero adapter env var references? | | |
+| Both routes import from adapter-lock? | | |
+| api/adapters/route.ts uses Admin API (not .env)? | | |
+
+#### DraftManager & VersionManager Chat Tools
+
+```bash
+python -c "
+import sys; sys.path.insert(0, '.')
+from shared.modules.drafts import DraftManager, DraftState
+from shared.modules.versioning import VersionManager
+print('DraftManager methods:', [m for m in dir(DraftManager) if not m.startswith('_')])
+print('DraftState values:', [s.value for s in DraftState])
+"
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| DraftManager importable with create/edit/diff/validate/promote? | | |
+| VersionManager importable with list/rollback? | | |
+| 7 tools registered in orchestrator_service.py? | | |
+
+#### Draft/Version Tools Tests
+
+```bash
+python -m pytest tests/unit/test_draft_version_tools.py -v
+```
+
+| Test Suite | Tests | Result | Notes |
+|------------|-------|--------|-------|
+| DraftManager tools (create, edit, diff, validate) | ~7 | | |
+| VersionManager tools (list, rollback) | ~3 | | |
+| Tool registration (callable, docstrings) | ~2 | | |
+
+### 15.4 Full Phase 5 Regression
+
+```bash
+export PYTHONPATH=$PWD:$PYTHONPATH
+python -m pytest tests/unit/test_shared_modules_dedup.py tests/unit/test_prompt_composer.py tests/unit/test_confidence_scorer.py tests/unit/test_draft_version_tools.py -v
+```
+
+| Test | Result | Notes |
+|------|--------|-------|
+| All 86+ Phase 5 tests pass? | | |
+| No warnings (except pydantic deprecation)? | | |
+| Test suite runs in < 1s? | | |
+
+---
+
+## 16. Admin API
 
 **URL**: http://localhost:8003
 
-### 15.1 Health & System Info
+### 16.1 Health & System Info
 
 ```bash
 curl -s http://localhost:8003/admin/health | jq
@@ -779,7 +995,7 @@ curl -s http://localhost:8003/admin/providers | jq
 | `/admin/system-info` (routing categories, tiers, module counts) | PASS | Returned module/routing info (auth required in current setup) |
 | `/admin/providers` (provider/model lists) | PASS | Returned provider/model keys (auth required) |
 
-### 15.2 Routing Config
+### 16.2 Routing Config
 
 ```bash
 curl -s http://localhost:8003/admin/routing-config | jq '.categories | keys'
@@ -791,7 +1007,7 @@ curl -s http://localhost:8003/admin/routing-config | jq '.categories | keys'
 | Categories include: greeting, math, coding, weather, finance, etc.? | PASS | Core categories present in keys list |
 | Tier configuration (standard, heavy) present? | PASS | Present in routing config payload |
 
-### 15.3 Module CRUD
+### 16.3 Module CRUD
 
 ```bash
 # List all modules
@@ -814,7 +1030,7 @@ curl -s -X POST http://localhost:8003/admin/modules/test/hello/reload | jq
 | Enable returns success? | PASS | API returned `true` |
 | Reload returns success? | PASS | API returned `true` |
 
-### 15.4 Credential Management
+### 16.4 Credential Management
 
 ```bash
 # Store credentials
@@ -838,11 +1054,11 @@ curl -s -X DELETE http://localhost:8003/admin/modules/test/hello/credentials | j
 
 ---
 
-## 16. Dashboard Service API
+## 17. Dashboard Service API
 
 **URL**: http://localhost:8001
 
-### 16.1 Core Endpoints
+### 17.1 Core Endpoints
 
 ```bash
 curl -s http://localhost:8001/health | jq
@@ -858,7 +1074,7 @@ curl -s http://localhost:8001/modules | jq
 | `/adapters` (lists adapter categories?) | PASS | Returned 8 categories (auth required) |
 | `/modules` (lists dynamic modules?) | PASS | `total=4`, `loaded=3` |
 
-### 16.2 Context Endpoints
+### 17.2 Context Endpoints
 
 ```bash
 curl -s http://localhost:8001/context | jq 'keys'
@@ -876,7 +1092,7 @@ curl -s http://localhost:8001/alerts/default | jq
 | `/context/gaming` (requires API key) | PARTIAL | Endpoint works; data quality depends on external API key |
 | `/alerts/default` | PASS | Returned alerts/count payload |
 
-### 16.3 SSE Pipeline Stream
+### 17.3 SSE Pipeline Stream
 
 ```bash
 # Should receive JSON events every ~2s
@@ -892,11 +1108,11 @@ curl -N http://localhost:8001/stream/pipeline-state
 
 ---
 
-## 17. MCP Bridge Service
+## 18. MCP Bridge Service
 
 **URL**: http://localhost:8100
 
-### 17.1 Endpoints
+### 18.1 Endpoints
 
 ```bash
 curl -s http://localhost:8100/health | jq
@@ -910,7 +1126,7 @@ curl -s http://localhost:8100/metrics | jq
 | `/tools` (lists MCP tools?) | PASS | Returned 8 tools |
 | `/metrics` | PASS | JSON metrics payload returned |
 
-### 17.2 Tool Invocation
+### 18.2 Tool Invocation
 
 ```bash
 curl -s -X POST http://localhost:8100/tools/query_agent \
@@ -926,7 +1142,7 @@ curl -s -X POST http://localhost:8100/tools/query_agent \
 
 ---
 
-## 18. Context Compaction
+## 19. Context Compaction
 
 > Triggers when conversation history exceeds token window.
 
@@ -940,9 +1156,9 @@ curl -s -X POST http://localhost:8100/tools/query_agent \
 
 ---
 
-## 19. Observability Stack
+## 20. Observability Stack
 
-### 19.1 Grafana Dashboards
+### 20.1 Grafana Dashboards
 
 **URL**: http://localhost:3001 (admin / admin)
 
@@ -954,7 +1170,7 @@ curl -s -X POST http://localhost:8100/tools/query_agent \
 | Provider Comparison (`provider-comparison`) | PARTIAL | SKIP | Grafana reachable (HTTP 200), dashboard-by-dashboard UI not validated |
 | Tool Execution (`tool-execution`) | PARTIAL | SKIP | Grafana reachable (HTTP 200), dashboard-by-dashboard UI not validated |
 
-### 19.2 Prometheus
+### 20.2 Prometheus
 
 **URL**: http://localhost:9090
 
@@ -965,7 +1181,7 @@ curl -s -X POST http://localhost:8100/tools/query_agent \
 | Query `up` returns results? | PASS | Query API returned non-empty vector (`result length=5`) |
 | Query `grpc_llm_request_duration_seconds_count` returns data? | FAIL | Query API reachable but no samples in current run (`result length=0`) |
 
-### 19.3 Monitoring Page (UI)
+### 20.3 Monitoring Page (UI)
 
 **URL**: http://localhost:5001/monitoring
 
@@ -975,7 +1191,7 @@ curl -s -X POST http://localhost:8100/tools/query_agent \
 | Grafana iframe renders dashboards? | SKIP | Browser visual verification not executed |
 | Tab switching between dashboards works? | SKIP | Browser interaction not executed |
 
-### 19.4 Logs
+### 20.4 Logs
 
 ```bash
 make logs-orchestrator  # Tail orchestrator logs
@@ -991,9 +1207,9 @@ make logs-debug         # Show debug-level logs
 
 ---
 
-## 20. Automated Tests
+## 21. Automated Tests
 
-### 20.1 Unit Tests
+### 21.1 Unit Tests
 
 ```bash
 export PYTHONPATH=$PWD:$PYTHONPATH
@@ -1005,7 +1221,7 @@ pytest tests/unit/ -v
 | All unit tests pass? | PARTIAL | Targeted unit suites passed; full `tests/unit/` not executed |
 | Failures (list any): | N/A | No failures in executed unit subsets |
 
-### 20.2 Integration Tests
+### 21.2 Integration Tests
 
 ```bash
 pytest tests/integration/ -v
@@ -1016,7 +1232,7 @@ pytest tests/integration/ -v
 | All integration tests pass? | PARTIAL | Many integration suites passed; full `tests/integration/` not executed |
 | Failures (list any): | FAILURES PRESENT | `tests/integration/sandbox/test_import_allowlist.py` had 3 failures |
 
-### 20.3 Self-Evolution Engine Tests
+### 21.3 Self-Evolution Engine Tests
 
 ```bash
 make test-self-evolution
@@ -1027,7 +1243,7 @@ make test-self-evolution
 | All contract/feature/scenario tests pass? | PASS | `make test-self-evolution` succeeded |
 | Test count >= 93? | PASS | Combined Phase 3 suites exceed threshold |
 
-### 20.4 Showroom Integration
+### 21.4 Showroom Integration
 
 ```bash
 make showroom
@@ -1038,7 +1254,7 @@ make showroom
 | All showroom checks pass? | SKIP | `make showroom` not executed in this run |
 | Total passed / total tests? | SKIP | `make showroom` not executed in this run |
 
-### 20.5 Full Demo
+### 21.5 Full Demo
 
 ```bash
 make nexus-demo
@@ -1052,7 +1268,7 @@ make nexus-demo
 
 ---
 
-## 21. Docker Rebuild Reference
+## 22. Docker Rebuild Reference
 
 ### When to Rebuild
 
@@ -1081,7 +1297,7 @@ make nexus-demo
 
 ---
 
-## 22. Overall Assessment
+## 23. Overall Assessment
 
 ### Feature Status Matrix
 
