@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional, Set, ClassVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from shared.modules.security_policy import FORBIDDEN_IMPORTS
+from shared.modules.static_analysis import check_imports as static_check_imports
 
 
 class ErrorCode(str, Enum):
@@ -56,33 +57,21 @@ class AdapterContractSpec:
         Returns:
             List of forbidden import names found
         """
-        try:
-            tree = ast.parse(source_code)
-        except SyntaxError as e:
-            return [f"syntax_error: {e}"]
+        # Delegate to shared static analysis module
+        violations = static_check_imports(source_code, FORBIDDEN_IMPORTS)
 
+        # Extract just the forbidden import names from violation messages
+        # Violations format: "Line N: Import 'name' ..."
         forbidden_found = []
-
-        for node in ast.walk(tree):
-            # Check direct imports: import subprocess
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name in FORBIDDEN_IMPORTS:
-                        forbidden_found.append(alias.name)
-
-            # Check from imports: from os import system
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    for alias in node.names:
-                        full_name = f"{node.module}.{alias.name}"
-                        if full_name in FORBIDDEN_IMPORTS:
-                            forbidden_found.append(full_name)
-
-            # Check eval/exec calls
-            elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in {"eval", "exec", "compile", "__import__"}:
-                        forbidden_found.append(node.func.id)
+        for violation in violations:
+            # Parse import name from violation message
+            if "Import '" in violation:
+                import_name = violation.split("Import '")[1].split("'")[0]
+                if import_name not in forbidden_found:
+                    forbidden_found.append(import_name)
+            elif "Dynamic __import__" in violation:
+                if "__import__" not in forbidden_found:
+                    forbidden_found.append("__import__")
 
         return forbidden_found
 

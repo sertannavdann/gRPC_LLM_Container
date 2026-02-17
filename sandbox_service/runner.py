@@ -7,7 +7,6 @@ Provides:
 - Structured execution results with stdout/stderr/junit capture
 - Resource usage tracking
 """
-import ast
 import sys
 import time
 import logging
@@ -16,6 +15,7 @@ from typing import Dict, Any, List, Optional, Set
 from pathlib import Path
 
 from sandbox_service.policy import ExecutionPolicy, ImportPolicy
+from shared.modules.static_analysis import StaticImportChecker
 
 logger = logging.getLogger(__name__)
 
@@ -110,82 +110,80 @@ class ExecutionResult:
         }
 
 
-class StaticImportChecker:
+def _check_imports_with_policy(source_code: str, policy: ImportPolicy) -> List[ImportViolation]:
     """
-    AST-based static import checker.
+    Check source code for forbidden imports using the shared StaticImportChecker.
 
-    Analyzes Python source code before execution to detect forbidden imports.
+    Adapts the shared checker to work with ImportPolicy and return ImportViolation objects.
+
+    Args:
+        source_code: Python source code to check
+        policy: ImportPolicy to enforce
+
+    Returns:
+        List of ImportViolation found
     """
+    violations = []
 
-    @staticmethod
-    def check_imports(source_code: str, policy: ImportPolicy) -> List[ImportViolation]:
-        """
-        Check source code for forbidden imports using AST analysis.
+    # Get all forbidden imports for this policy
+    # We need to check against what's NOT allowed
+    import ast
 
-        Args:
-            source_code: Python source code to check
-            policy: ImportPolicy to enforce
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError as e:
+        # Syntax errors will be caught during execution
+        logger.debug(f"Syntax error during static import check: {e}")
+        return violations
 
-        Returns:
-            List of ImportViolation found
-        """
-        violations = []
-
-        try:
-            tree = ast.parse(source_code)
-        except SyntaxError as e:
-            # Syntax errors will be caught during execution
-            logger.debug(f"Syntax error during static import check: {e}")
-            return violations
-
-        # Walk the AST and check all imports
-        for node in ast.walk(tree):
-            # Check "import module"
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if not policy.is_import_allowed(alias.name):
-                        violations.append(ImportViolation(
-                            module_name=alias.name,
-                            location="static",
-                            line_number=node.lineno,
-                            policy_rule=f"Import '{alias.name}' not in allowed list"
-                        ))
-
-            # Check "from module import name"
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    # Check base module
-                    if not policy.is_import_allowed(node.module):
-                        violations.append(ImportViolation(
-                            module_name=node.module,
-                            location="static",
-                            line_number=node.lineno,
-                            policy_rule=f"Import '{node.module}' not in allowed list"
-                        ))
-
-                    # Check specific imports like "from os import system"
-                    for alias in node.names:
-                        full_name = f"{node.module}.{alias.name}"
-                        if not policy.is_import_allowed(full_name):
-                            violations.append(ImportViolation(
-                                module_name=full_name,
-                                location="static",
-                                line_number=node.lineno,
-                                policy_rule=f"Import '{full_name}' is forbidden"
-                            ))
-
-            # Check for dynamic import calls: __import__('module')
-            elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "__import__":
-                    # Can't statically determine module name, but flag it
+    # Walk the AST and check all imports
+    for node in ast.walk(tree):
+        # Check "import module"
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if not policy.is_import_allowed(alias.name):
                     violations.append(ImportViolation(
-                        module_name="__import__",
+                        module_name=alias.name,
                         location="static",
                         line_number=node.lineno,
-                        policy_rule="Dynamic __import__ call detected"
+                        policy_rule=f"Import '{alias.name}' not in allowed list"
                     ))
 
-        return violations
+        # Check "from module import name"
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                # Check base module
+                if not policy.is_import_allowed(node.module):
+                    violations.append(ImportViolation(
+                        module_name=node.module,
+                        location="static",
+                        line_number=node.lineno,
+                        policy_rule=f"Import '{node.module}' not in allowed list"
+                    ))
+
+                # Check specific imports like "from os import system"
+                for alias in node.names:
+                    full_name = f"{node.module}.{alias.name}"
+                    if not policy.is_import_allowed(full_name):
+                        violations.append(ImportViolation(
+                            module_name=full_name,
+                            location="static",
+                            line_number=node.lineno,
+                            policy_rule=f"Import '{full_name}' is forbidden"
+                        ))
+
+        # Check for dynamic import calls: __import__('module')
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+                # Can't statically determine module name, but flag it
+                violations.append(ImportViolation(
+                    module_name="__import__",
+                    location="static",
+                    line_number=node.lineno,
+                    policy_rule="Dynamic __import__ call detected"
+                ))
+
+    return violations
 
 
 class RuntimeImportHook:
@@ -282,7 +280,7 @@ class SandboxRunner:
         start_time = time.time()
 
         # Step 1: Static import check
-        static_violations = StaticImportChecker.check_imports(code, self.policy.imports)
+        static_violations = _check_imports_with_policy(code, self.policy.imports)
         if static_violations:
             result.exit_code = 1
             result.import_violations = static_violations
