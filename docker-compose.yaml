@@ -126,6 +126,7 @@ services:
       - ADMIN_API_PORT=8003
       - MODULES_DIR=/app/modules
       - AUTH_DB_PATH=/app/data/api_keys.db
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -167,6 +168,7 @@ services:
       - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
       - CLASH_ROYALE_PLAYER_TAG=${CLASH_ROYALE_PLAYER_TAG:-}
       - MODULES_DIR=/app/modules
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
     volumes:
       - ./dashboard_service/data:/app/data
       - ./data:/app/shared_data

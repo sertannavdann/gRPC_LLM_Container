@@ -332,6 +332,8 @@ app.add_middleware(
         "/redoc",
         "/metrics",
         "/stream/pipeline-state",
+        "/context",
+        "/adapter-health",
         "/static",
         "/",
     ],
