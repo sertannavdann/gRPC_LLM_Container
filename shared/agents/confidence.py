@@ -130,22 +130,23 @@ class Blueprint2CodeScorer:
         logger.info(f"Scaffold scored: {score}")
         return score
 
-    def passes_threshold(self, score: ScaffoldScore) -> bool:
+    def passes_threshold(self, score: "ScaffoldScore | float") -> bool:
         """
         Check if score meets threshold.
 
         Args:
-            score: ScaffoldScore to check
+            score: ScaffoldScore object or raw float (0.0-1.0)
 
         Returns:
-            True if score.overall >= self.threshold
+            True if overall score >= self.threshold
         """
-        passes = score.overall >= self.threshold
+        overall = score.overall if isinstance(score, ScaffoldScore) else float(score)
+        passes = overall >= self.threshold
         if passes:
-            logger.info(f"Scaffold PASSED threshold ({score.overall:.2f} >= {self.threshold})")
+            logger.info(f"Scaffold PASSED threshold ({overall:.2f} >= {self.threshold})")
         else:
             logger.warning(
-                f"Scaffold FAILED threshold ({score.overall:.2f} < {self.threshold})"
+                f"Scaffold FAILED threshold ({overall:.2f} < {self.threshold})"
             )
         return passes
 

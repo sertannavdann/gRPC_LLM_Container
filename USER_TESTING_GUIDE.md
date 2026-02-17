@@ -852,7 +852,7 @@ python -c "
 from shared.agents.prompt_composer import compose, StageContext, load_soul
 soul = load_soul('builder')
 print(f'Builder soul loaded: {len(soul)} chars')
-ctx = StageContext(stage='repair', intent='fix import errors', repair_hints=['check import paths'])
+ctx = StageContext(stage='repair', attempt=1, intent='fix import errors', repair_hints=['check import paths'])
 prompt = compose(soul, ctx)
 print(f'Composed prompt: {len(prompt)} chars')
 print('Contains stage:', 'repair' in prompt)
