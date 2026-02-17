@@ -31,7 +31,9 @@
       "WebSearch",
       "WebFetch(domain:deepwiki.com)",
       "Skill(gsd:update)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(chmod:*)",
+      "Bash(node ./.claude/get-shit-done/bin/gsd-tools.cjs:*)"
     ]
   }
 }

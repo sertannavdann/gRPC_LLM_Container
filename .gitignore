@@ -102,7 +102,7 @@ config/.env
 # Ignore conversation data
 ui_servicedata/conversations/
 data/logs/
-
+data/
 # Bank data (real financial data - local only)
 dashboard_service/Bank/*.csv
 

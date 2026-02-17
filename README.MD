@@ -122,6 +122,30 @@ make build && make up
 make logs
 ```
 
+### Use NVIDIA NIM (Kimi K2.5)
+
+Set these in `.env` (or your shell) before starting services:
+
+```bash
+LLM_PROVIDER=nvidia
+NIM_API_KEY=your_nvidia_api_key
+NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+LLM_PROVIDER_MODEL=moonshotai/kimi-k2.5
+LLM_PROVIDER_TOP_P=0.95
+LLM_PROVIDER_THINKING=true   # true=Thinking mode, false=Instant mode
+LLM_PROVIDER_MAX_TOKENS=16384
+```
+
+NVIDIA guidance: recommended temperature is 1.0 for Thinking mode and 0.6 for Instant mode; recommended top_p is 0.95.
+
+Then restart orchestrator (or full stack):
+
+```bash
+make restart-orchestrator
+# or
+make restart-all
+```
+
 ### Usage Example
 
 **Via Web UI:**
