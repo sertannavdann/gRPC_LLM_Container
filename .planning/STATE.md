@@ -6,9 +6,9 @@
 
 ## Current Phase
 
-**Phase 6 (UX/UI Visual Expansion)** — **complete**. 5/5 plans executed (Wave 4 stabilization completed).
+**Phase 6 (UX/UI Visual Expansion)** — **complete**. 6/6 plans executed (Wave 4 stabilization + adapter credential unification).
 
-**Progress**: Phase 5 complete (4/4 plans, 98+ new tests, zero regressions). Phase 6 complete (5/5 plans including Wave 4 runtime stability extension) with deterministic capability fallback and synchronization guards shipped.
+**Progress**: Phase 5 complete (4/4 plans, 98+ new tests, zero regressions). Phase 6 complete (6/6 plans including Wave 4 runtime stability and adapter credential unification) with deterministic capability fallback, synchronization guards, and .env-based adapter key management shipped.
 **Current Focus**: Begin Phase 7 (Audit Trail) planning and execution.
 
 ---
@@ -76,12 +76,13 @@
 - ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
 - ✅ **Plan 04: Service Dependency Cleanup** — Conditional otel-instrumentation-fastapi import (dashboard starts without it), orchestrator credential proxy eliminated (4 HTTP calls → local _credential_store), SSE pipeline self-probe removed + data deduplication (50% I/O reduction), gRPC service state "idle"→"unknown", ServiceNode UI updated
 
-### Phase 6: UX/UI Visual Expansion ✅ (5/5 plans complete)
+### Phase 6: UX/UI Visual Expansion ✅ (6/6 plans complete)
 - ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge (25 min, 4 tasks, 10 files)
 - ✅ **Plan 02: Dashboard + Adapter Cards** — Dashboard page with XState-backed adapter cards, Framer Motion animations, DataSourceIndicator (30 min, 2 tasks, 4 files)
 - ✅ **Plan 03: Finance Dashboard + Chat Actions** — XState financePageMachine with hierarchical states, Recharts LineChart/PieChart, TransactionTable with pagination, ActionCard with Framer Motion, Zustand -> XState refresh (5 min, 2 tasks, 6 files)
 - ✅ **Plan 04: Monitoring + Error Taxonomy + Preferences** — XState monitoringPageMachine with parallel regions, React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart with P99 target, error taxonomy (5 types), Framer Motion error components, SQLite user prefs with optimistic concurrency, 6-page navigation (21 min, 3 tasks, 13 files)
 - ✅ **Plan 05: Runtime Stability Hardening** — Same-origin admin read consolidation, centralized runtime params, reason-coded capability fallback contract (`snapshot_source`, `fallback_reason`), deterministic auth/degraded/network/empty state mapping, monitoring latency stable shape route, synchronization guard tests (3 tasks, 11 files)
+- ✅ **Plan 06: Unify Adapter Credentials to .env + Settings UI** — Env-var-based adapter lock checks in orchestrator, adapter key fields in Settings page, .env persistence for adapter keys, admin proxy path fix (3 tasks, 5 files)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -199,6 +200,12 @@
 - **Runtime parameters are centralized**: Polling, timeout, retry, and fallback-related constants are sourced from one shared module.
 - **Drift guards added for contract/render sync**: Python and TypeScript tests validate fallback shape, classification mapping, and latency endpoint stability.
 
+### Phase 6 Plan 06 (Unify Adapter Credentials)
+- **Adapter keys in .env as single source of truth**: Replaces CredentialStore SQLite for adapter keys; .env is bind-mounted and readable by orchestrator.
+- **Env-var-based lock check before CredentialStore fallback**: `_has_adapter_env_credentials()` checks `os.getenv()` for known adapter env var mappings before falling back to `_check_module_credentials()`.
+- **Settings API writes adapter keys alongside provider keys**: Single POST flow persists both provider and adapter keys to .env.
+- **Admin proxy path must include /admin prefix**: BFF proxy at `/api/admin/[...path]` must prepend `/admin` to upstream path for correct routing to orchestrator.
+
 ---
 
 ## Known Gaps
@@ -239,16 +246,16 @@ Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine complete      2             2     0
 Phase 4: Release-Quality       complete      4             4     0
 Phase 5: Refactoring           complete      —             —     —
-Phase 6: UX/UI Expansion       complete      5             5     0
+Phase 6: UX/UI Expansion       complete      6             6     0
 Phase 7: Audit Trail           not-started   3             0     3
 Phase 8: Co-Evolution          not-started   4             0     4
 Phase 9: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        33            18    18
+TOTAL                                        34            19    18
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
 **Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
 
-**Phase 6 detail:** 5/5 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard): XState-backed adapter cards + DataSourceIndicator. Plan 03 (finance + chat): XState financePageMachine + Recharts + ActionCard + Zustand refresh. Plan 04 (monitoring + errors + prefs): XState parallel regions + React Flow topology + Recharts latency + error taxonomy + user prefs + navigation. Plan 05 (runtime stability): centralized runtime params, same-origin admin BFF reads, reason-coded fallback metadata, deterministic auth/degraded/network/empty rendering, and sync-guard tests. Total: ~89 min, 14 tasks, 47 files.
+**Phase 6 detail:** 6/6 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard): XState-backed adapter cards + DataSourceIndicator. Plan 03 (finance + chat): XState financePageMachine + Recharts + ActionCard + Zustand refresh. Plan 04 (monitoring + errors + prefs): XState parallel regions + React Flow topology + Recharts latency + error taxonomy + user prefs + navigation. Plan 05 (runtime stability): centralized runtime params, same-origin admin BFF reads, reason-coded fallback metadata, deterministic auth/degraded/network/empty rendering, and sync-guard tests. Plan 06 (adapter credentials): env-var-based adapter lock checks, Settings page adapter key fields, .env persistence, admin proxy path fix. Total: ~109 min, 17 tasks, 52 files.
