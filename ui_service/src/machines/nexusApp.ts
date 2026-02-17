@@ -16,7 +16,6 @@ import { setup, fromPromise } from 'xstate';
 import { adminApi, CapabilityEnvelope } from '../lib/adminClient';
 import { classifyError, NexusErrorType as ClassifiedError } from '../lib/errors';
 import {
-  CAPABILITY_POLL_INTERVAL_MS,
   CAPABILITY_RETRY_DELAY_MS,
   CONFIG_POLL_INTERVAL_MS,
 } from '../lib/runtime-params';
@@ -208,7 +207,6 @@ export const nexusAppMachine = setup({
 
         current: {
           after: {
-            [CAPABILITY_POLL_INTERVAL_MS]: 'polling',
             [CONFIG_POLL_INTERVAL_MS]: 'polling',
           },
         },

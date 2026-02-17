@@ -59,6 +59,42 @@ def test_capability_envelope_serializes_to_json():
     assert "features" in data
     assert "config_version" in data
     assert "timestamp" in data
+    assert "snapshot_source" in data
+    assert "fallback_reason" in data
+
+
+def test_capability_envelope_defaults_to_live_snapshot():
+    """Capability envelope should default to live source with no fallback reason."""
+    envelope = CapabilityEnvelope(
+        tools=[],
+        modules=[],
+        providers=[],
+        adapters=[],
+        features=[],
+        config_version="v1",
+        timestamp="2026-01-01T00:00:00Z",
+    )
+
+    assert envelope.snapshot_source == "live"
+    assert envelope.fallback_reason is None
+
+
+def test_capability_envelope_accepts_reason_coded_fallback():
+    """Fallback envelope must be contract-valid and include reason metadata."""
+    envelope = CapabilityEnvelope(
+        tools=[],
+        modules=[],
+        providers=[],
+        adapters=[],
+        features=[],
+        config_version="local-dev-fallback",
+        timestamp="2026-01-01T00:00:00Z",
+        snapshot_source="fallback",
+        fallback_reason="admin_auth_required",
+    )
+
+    assert envelope.snapshot_source == "fallback"
+    assert envelope.fallback_reason == "admin_auth_required"
 
 
 def test_adapter_capability_with_locked():
