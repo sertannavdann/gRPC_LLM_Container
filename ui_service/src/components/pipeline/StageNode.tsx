@@ -34,6 +34,7 @@ function StageNodeComponent({ data }: NodeProps) {
         <p className="text-[11px] text-zinc-400 mt-1">{d.description}</p>
       )}
       <Handle type="source" position={Position.Right} className="!bg-orange-400" />
+      <Handle type="source" position={Position.Bottom} id="bottom" className="!bg-amber-400" />
     </div>
   );
 }

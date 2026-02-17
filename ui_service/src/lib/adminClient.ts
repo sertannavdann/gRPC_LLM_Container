@@ -31,10 +31,40 @@ export interface ModuleState {
   category?: string;
 }
 
+export interface AdapterState {
+  id: string;
+  name: string;
+  category: string;
+  platform: string;
+  state: 'running' | 'error' | 'disabled';
+  requires_auth: boolean;
+  has_credentials: boolean;
+}
+
+export interface ToolState {
+  name: string;
+  stage: string;
+  connected_adapters: string[];
+}
+
+export interface TestRunResult {
+  module_id: string;
+  exit_code: number;
+  tests_total: number;
+  tests_passed: number;
+  tests_failed: number;
+  stdout: string;
+  stderr: string;
+  duration_ms: number;
+}
+
 export interface PipelineState {
   services: Record<string, ServiceState>;
   modules: ModuleState[];
+  adapters: AdapterState[];
   adapters_count: number;
+  tools: ToolState[];
+  stage_tools: Record<string, string[]>;
   timestamp: number;
   error?: string;
 }
@@ -179,6 +209,9 @@ export const adminApi = {
 
   uninstallModule: (category: string, platform: string) =>
     adminFetch<ModuleActionResult>(`/admin/modules/${category}/${platform}`, { method: 'DELETE' }),
+
+  runModuleTests: (category: string, platform: string) =>
+    adminFetch<TestRunResult>(`/admin/modules/${category}/${platform}/run-tests`, { method: 'POST' }),
 
   // Routing config
   getRoutingConfig: () => adminFetch<Record<string, unknown>>('/admin/routing-config'),

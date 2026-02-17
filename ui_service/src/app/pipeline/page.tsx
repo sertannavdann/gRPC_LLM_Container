@@ -1,8 +1,12 @@
 /**
- * Pipeline Page
+ * Pipeline Page — Hierarchical Tree
  *
- * React Flow visualization of the NEXUS decision pipeline.
- * SSE-driven live state, custom service/module/stage nodes.
+ * Three-tier React Flow visualization of the NEXUS decision pipeline:
+ *   Row 0: Pipeline stages (Intent → Routing → Tools → Synthesis)
+ *   Row 1: Tools connected to stages
+ *   Row 2: Adapters connected to tools
+ *
+ * SSE-driven live state with interactive node detail panel.
  */
 'use client';
 
@@ -21,24 +25,27 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Zap, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 
-import { ServiceNode, type ServiceNodeData } from '@/components/pipeline/ServiceNode';
-import { ModuleNode, type ModuleNodeData } from '@/components/pipeline/ModuleNode';
+import { ServiceNode } from '@/components/pipeline/ServiceNode';
 import { StageNode, type StageNodeData } from '@/components/pipeline/StageNode';
+import { ToolNode } from '@/components/pipeline/ToolNode';
+import { AdapterNode } from '@/components/pipeline/AdapterNode';
+import { NodeDetailPanel } from '@/components/pipeline/NodeDetailPanel';
 import { useNexusStore } from '@/store/nexusStore';
 
 // ── Node types ──
 const nodeTypes = {
   service: ServiceNode,
-  module: ModuleNode,
   stage: StageNode,
+  tool: ToolNode,
+  adapter: AdapterNode,
 };
 
-// ── Static pipeline stages ──
+// ── Static pipeline stages (Row 0) ──
 const STAGE_NODES: Node[] = [
-  { id: 'stage-intent', type: 'stage', position: { x: 60, y: 200 }, data: { label: 'Intent Detection', description: 'Pattern matching + NLU' } satisfies StageNodeData },
-  { id: 'stage-routing', type: 'stage', position: { x: 300, y: 200 }, data: { label: 'LIDM Routing', description: 'Tier selection & delegation' } satisfies StageNodeData },
-  { id: 'stage-tools', type: 'stage', position: { x: 540, y: 200 }, data: { label: 'Tool Execution', description: 'Function calls & RAG' } satisfies StageNodeData },
-  { id: 'stage-synth', type: 'stage', position: { x: 780, y: 200 }, data: { label: 'Synthesis', description: 'Response generation' } satisfies StageNodeData },
+  { id: 'stage-intent', type: 'stage', position: { x: 60, y: 50 }, data: { label: 'Intent Detection', description: 'Pattern matching + NLU' } satisfies StageNodeData },
+  { id: 'stage-routing', type: 'stage', position: { x: 300, y: 50 }, data: { label: 'LIDM Routing', description: 'Tier selection & delegation' } satisfies StageNodeData },
+  { id: 'stage-tools', type: 'stage', position: { x: 540, y: 50 }, data: { label: 'Tool Execution', description: 'Function calls & RAG' } satisfies StageNodeData },
+  { id: 'stage-synth', type: 'stage', position: { x: 780, y: 50 }, data: { label: 'Synthesis', description: 'Response generation' } satisfies StageNodeData },
 ];
 
 const STAGE_EDGES: Edge[] = [
@@ -47,8 +54,42 @@ const STAGE_EDGES: Edge[] = [
   { id: 'e-s3-s4', source: 'stage-tools', target: 'stage-synth', animated: true, style: { stroke: '#f97316', strokeWidth: 2 } },
 ];
 
+// Edge style helpers
+const stageToToolEdge = (source: string, target: string): Edge => ({
+  id: `e-${source}-${target}`,
+  source,
+  sourceHandle: 'bottom',
+  target,
+  style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '6 3' },
+});
+
+const stateEdgeColor: Record<string, string> = {
+  running: '#22c55e',
+  error: '#ef4444',
+  disabled: '#71717a',
+};
+
+const toolToAdapterEdge = (source: string, target: string, state: string): Edge => ({
+  id: `e-${source}-${target}`,
+  source,
+  target,
+  style: { stroke: stateEdgeColor[state] ?? '#71717a', strokeWidth: 1.5 },
+});
+
 export default function PipelinePage() {
-  const { pipeline, connected, startSSE, stopSSE, fetchModules, enableModule, disableModule } = useNexusStore();
+  const {
+    pipeline,
+    connected,
+    startSSE,
+    stopSSE,
+    fetchModules,
+    selectedNode,
+    selectNode,
+    testRunning,
+    testResult,
+    runModuleTests,
+  } = useNexusStore();
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([...STAGE_NODES]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([...STAGE_EDGES]);
 
@@ -59,14 +100,16 @@ export default function PipelinePage() {
     return () => stopSSE();
   }, [startSSE, stopSSE, fetchModules]);
 
-  // Module toggle handler
-  const handleModuleToggle = useCallback(
-    (moduleId: string, enable: boolean) => {
-      const [cat, plat] = moduleId.split('/');
-      if (enable) enableModule(cat, plat);
-      else disableModule(cat, plat);
+  // Node click handler
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      selectNode({
+        type: node.type ?? 'stage',
+        id: node.id,
+        data: node.data as Record<string, unknown>,
+      });
     },
-    [enableModule, disableModule],
+    [selectNode],
   );
 
   // Rebuild nodes when pipeline state updates
@@ -76,52 +119,155 @@ export default function PipelinePage() {
     const dynamicNodes: Node[] = [...STAGE_NODES];
     const dynamicEdges: Edge[] = [...STAGE_EDGES];
 
-    // Service nodes (above pipeline)
+    // ── Row -1: Service nodes (y=-80, above stages) ──
     const services = Object.values(pipeline.services);
     services.forEach((svc, i) => {
       const id = `svc-${svc.name}`;
       dynamicNodes.push({
         id,
         type: 'service',
-        position: { x: 60 + i * 220, y: 30 },
-        data: { label: svc.name, state: svc.state, latency_ms: svc.latency_ms } satisfies ServiceNodeData,
+        position: { x: 60 + i * 220, y: -80 },
+        data: { label: svc.name, state: svc.state, latency_ms: svc.latency_ms },
       });
-      // Connect first service to intent stage
       if (i === 0) {
-        dynamicEdges.push({ id: `e-${id}-intent`, source: id, target: 'stage-intent', style: { stroke: '#71717a' } });
+        dynamicEdges.push({
+          id: `e-${id}-intent`,
+          source: id,
+          target: 'stage-intent',
+          style: { stroke: '#71717a' },
+        });
       }
     });
 
-    // Module nodes (below pipeline)
-    pipeline.modules.forEach((mod, i) => {
-      const id = `mod-${mod.id}`;
-      dynamicNodes.push({
-        id,
-        type: 'module',
-        position: { x: 60 + i * 220, y: 380 },
-        data: {
-          label: mod.name,
-          category: mod.category ?? 'unknown',
-          state: mod.state,
-          moduleId: mod.id,
-          onToggle: handleModuleToggle,
-        } satisfies ModuleNodeData,
+    // ── Row 1: Tool nodes (y=230) ──
+    const tools = pipeline.tools ?? [];
+    // Group tools by stage for positioning
+    const toolsByStage: Record<string, typeof tools> = {};
+    tools.forEach((t) => {
+      const stage = t.stage ?? 'tools';
+      if (!toolsByStage[stage]) toolsByStage[stage] = [];
+      toolsByStage[stage].push(t);
+    });
+
+    // Stage x-positions for aligning tools beneath
+    const stageX: Record<string, number> = {
+      intent: 60,
+      routing: 300,
+      tools: 540,
+      synth: 780,
+    };
+
+    Object.entries(toolsByStage).forEach(([stage, stageTools]) => {
+      const baseX = stageX[stage] ?? 540;
+      const totalWidth = stageTools.length * 170;
+      const startX = baseX - totalWidth / 2 + 85;
+
+      stageTools.forEach((tool, i) => {
+        const toolId = `tool-${tool.name}`;
+        dynamicNodes.push({
+          id: toolId,
+          type: 'tool',
+          position: { x: startX + i * 170, y: 230 },
+          data: {
+            label: tool.name,
+            connectedAdapters: tool.connected_adapters ?? [],
+            stage,
+          },
+        });
+
+        // Stage → Tool edge
+        const stageNodeId = `stage-${stage}`;
+        dynamicEdges.push(stageToToolEdge(stageNodeId, toolId));
       });
-      // Connect modules to tool stage
-      dynamicEdges.push({ id: `e-${id}-tools`, source: id, target: 'stage-tools', style: { stroke: '#3b82f6', strokeDasharray: '5 3' } });
+    });
+
+    // ── Row 2: Adapter nodes (y=420) ──
+    const adapters = pipeline.adapters ?? [];
+    // Track adapter positions to avoid overlap
+    const adapterPositions: Map<string, { x: number; y: number }> = new Map();
+    let adapterX = 0;
+
+    // First, compute x-positions per tool based on their connected adapters
+    tools.forEach((tool) => {
+      const connectedAdapters = tool.connected_adapters ?? [];
+      if (connectedAdapters.length === 0) return;
+
+      // Find tool node position
+      const toolId = `tool-${tool.name}`;
+      const toolNode = dynamicNodes.find((n) => n.id === toolId);
+      if (!toolNode) return;
+
+      const toolBaseX = toolNode.position.x;
+      const totalWidth = connectedAdapters.length * 160;
+      const startX = toolBaseX - totalWidth / 2 + 80;
+
+      connectedAdapters.forEach((adapterId, i) => {
+        if (!adapterPositions.has(adapterId)) {
+          adapterPositions.set(adapterId, { x: startX + i * 160, y: 420 });
+        }
+      });
+    });
+
+    // Add any unconnected adapters at the end
+    adapters.forEach((adapter) => {
+      if (!adapterPositions.has(adapter.id)) {
+        adapterPositions.set(adapter.id, { x: adapterX, y: 420 });
+        adapterX += 160;
+      }
+    });
+
+    adapters.forEach((adapter) => {
+      const adapterId = `adapter-${adapter.id}`;
+      const pos = adapterPositions.get(adapter.id) ?? { x: 0, y: 420 };
+      const locked = adapter.requires_auth && !adapter.has_credentials;
+
+      dynamicNodes.push({
+        id: adapterId,
+        type: 'adapter',
+        position: pos,
+        data: {
+          label: adapter.name,
+          adapterId: adapter.id,
+          category: adapter.category,
+          platform: adapter.platform,
+          state: adapter.state,
+          requiresAuth: adapter.requires_auth,
+          hasCredentials: adapter.has_credentials,
+        },
+      });
+
+      // Tool → Adapter edges
+      tools.forEach((tool) => {
+        if (tool.connected_adapters?.includes(adapter.id)) {
+          dynamicEdges.push(
+            toolToAdapterEdge(
+              `tool-${tool.name}`,
+              adapterId,
+              locked ? 'disabled' : adapter.state,
+            ),
+          );
+        }
+      });
     });
 
     setNodes(dynamicNodes);
     setEdges(dynamicEdges);
-  }, [pipeline, handleModuleToggle, setNodes, setEdges]);
+  }, [pipeline, setNodes, setEdges]);
 
   const ago = useMemo(() => {
     if (!pipeline?.timestamp) return '';
     return `${Math.round((Date.now() / 1000 - pipeline.timestamp))}s ago`;
   }, [pipeline?.timestamp]);
 
+  const handleRunTests = useCallback(
+    (category: string, platform: string) => {
+      runModuleTests(category, platform);
+    },
+    [runModuleTests],
+  );
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/60 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -130,17 +276,25 @@ export default function PipelinePage() {
           {pipeline && (
             <span className="text-xs text-zinc-500">
               {Object.keys(pipeline.services).length} services
-              {pipeline.modules.length > 0 && ` · ${pipeline.modules.length} modules`}
-              {pipeline.adapters_count > 0 && ` · ${pipeline.adapters_count} adapters`}
+              {(pipeline.tools?.length ?? 0) > 0 && ` · ${pipeline.tools.length} tools`}
+              {(pipeline.adapters?.length ?? 0) > 0 && ` · ${pipeline.adapters.length} adapters`}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {ago && <span className="text-[11px] text-zinc-500">{ago}</span>}
           <span className="flex items-center gap-1.5 text-xs">
-            {connected
-              ? <><Wifi className="w-3.5 h-3.5 text-green-400" /><span className="text-green-400">Live</span></>
-              : <><WifiOff className="w-3.5 h-3.5 text-red-400" /><span className="text-red-400">Disconnected</span></>}
+            {connected ? (
+              <>
+                <Wifi className="w-3.5 h-3.5 text-green-400" />
+                <span className="text-green-400">Live</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3.5 h-3.5 text-red-400" />
+                <span className="text-red-400">Disconnected</span>
+              </>
+            )}
           </span>
           <button
             onClick={() => fetchModules()}
@@ -159,6 +313,7 @@ export default function PipelinePage() {
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.3 }}
@@ -170,7 +325,8 @@ export default function PipelinePage() {
           <MiniMap
             nodeColor={(n) => {
               if (n.type === 'service') return '#22c55e';
-              if (n.type === 'module') return '#3b82f6';
+              if (n.type === 'tool') return '#f59e0b';
+              if (n.type === 'adapter') return '#3b82f6';
               return '#f97316';
             }}
             className="!bg-zinc-900 !border-zinc-700"
@@ -178,6 +334,15 @@ export default function PipelinePage() {
           />
         </ReactFlow>
       </div>
+
+      {/* Node detail panel */}
+      <NodeDetailPanel
+        node={selectedNode}
+        onClose={() => selectNode(null)}
+        testRunning={testRunning}
+        testResult={testResult}
+        onRunTests={handleRunTests}
+      />
     </div>
   );
 }
