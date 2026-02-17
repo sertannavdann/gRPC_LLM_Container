@@ -1,4 +1,4 @@
 # Calendar Adapters
-from .mock import MockCalendarAdapter
+from .google_calendar import GoogleCalendarAdapter
 
-__all__ = ["MockCalendarAdapter"]
+__all__ = ["GoogleCalendarAdapter"]

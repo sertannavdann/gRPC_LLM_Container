@@ -195,6 +195,14 @@ class ClashRoyaleAdapter(BaseAdapter[GamingProfile]):
             },
         )
 
+    @classmethod
+    def normalize_category_for_tools(cls, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize gaming data for tool consumption."""
+        return {
+            "profiles": raw_category_data.get("profiles", []),
+            "platforms": raw_category_data.get("platforms", []),
+        }
+
     def get_capabilities(self) -> Dict[str, bool]:
         return {
             "read": True,

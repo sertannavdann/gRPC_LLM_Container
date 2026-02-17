@@ -176,6 +176,15 @@ class OpenWeatherAdapter(BaseAdapter[WeatherData]):
             platform="openweather",
         )
 
+    @classmethod
+    def normalize_category_for_tools(cls, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize weather data for tool consumption."""
+        return {
+            "current": raw_category_data.get("current"),
+            "forecasts": raw_category_data.get("forecasts", [])[:8],
+            "platforms": raw_category_data.get("platforms", []),
+        }
+
     def get_capabilities(self) -> Dict[str, bool]:
         return {
             "read": True,

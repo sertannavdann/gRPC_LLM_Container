@@ -1,4 +1,4 @@
 # Navigation Adapters
-from .mock import MockNavigationAdapter
+# No real adapters configured yet
 
-__all__ = ["MockNavigationAdapter"]
+__all__ = []

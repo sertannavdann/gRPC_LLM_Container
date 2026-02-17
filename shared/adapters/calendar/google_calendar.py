@@ -252,6 +252,18 @@ class GoogleCalendarAdapter(BaseAdapter[CalendarEvent]):
             logger.warning("Google Calendar token refresh error: %s", e)
             return ""
 
+    @classmethod
+    def normalize_category_for_tools(cls, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize calendar data for tool consumption."""
+        events = raw_category_data.get("events", [])
+        for event in events:
+            if "urgency" not in event:
+                event["urgency"] = "MEDIUM"
+        return {
+            "events": events,
+            "today_count": raw_category_data.get("today_count", len(events)),
+        }
+
     def get_capabilities(self) -> Dict[str, bool]:
         return {
             "read": True,

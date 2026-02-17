@@ -1,6 +1,8 @@
 """
-Bridge between tool layer and dashboard service.
-Fetches real context data via HTTP from the dashboard REST API.
+ContextBridge - Service object bridging tool layer and dashboard service.
+
+Fetches real context data via HTTP from the dashboard REST API and delegates
+normalization to each adapter's normalize_category_for_tools() classmethod.
 
 The orchestrator runs in a separate container from the dashboard service,
 so we use HTTP calls instead of direct Python imports.
@@ -13,176 +15,154 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://dashboard:8001")
-_REQUEST_TIMEOUT = 10  # seconds
+
+class ContextBridge:
+    """
+    Service object injected into tools that need context data.
+
+    Replaces the former module-level functions (fetch_context_sync,
+    _normalize_context_for_tools) with an injectable class that
+    delegates per-category normalization to adapter classmethods.
+    """
+
+    def __init__(
+        self,
+        dashboard_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: int = 10,
+    ):
+        self.dashboard_url = dashboard_url or os.getenv(
+            "DASHBOARD_URL", "http://dashboard:8001"
+        )
+        self.api_key = api_key or os.getenv("DASHBOARD_API_KEY") or os.getenv(
+            "INTERNAL_API_KEY"
+        )
+        self.timeout = timeout
+
+    @property
+    def _headers(self) -> Optional[Dict[str, str]]:
+        """Build auth headers for dashboard requests."""
+        return {"X-API-Key": self.api_key} if self.api_key else None
+
+    def fetch(
+        self,
+        categories: Optional[List[str]] = None,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """
+        Fetch unified context from the dashboard service via HTTP.
+
+        Args:
+            categories: Optional list of categories to fetch
+            user_id: User identifier
+
+        Returns:
+            Dict with context data or empty dict on failure
+        """
+        if os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true":
+            logger.debug("Using mock context (USE_MOCK_CONTEXT=true)")
+            return {}
+
+        if categories:
+            result = {}
+            for category in categories:
+                try:
+                    resp = requests.get(
+                        f"{self.dashboard_url}/context/{category}",
+                        params={"user_id": user_id},
+                        headers=self._headers,
+                        timeout=self.timeout,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        result[category] = data.get("data", {})
+                    else:
+                        logger.warning(
+                            f"Dashboard returned {resp.status_code} for {category}"
+                        )
+                except requests.RequestException as e:
+                    logger.warning(f"Failed to fetch {category} context: {e}")
+            return self.normalize(result)
+
+        # Fetch full unified context
+        try:
+            resp = requests.get(
+                f"{self.dashboard_url}/context",
+                params={"user_id": user_id},
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            if resp.status_code == 200:
+                raw_dict = resp.json()
+                context_data = raw_dict.get("context", raw_dict)
+                return self.normalize(context_data)
+            else:
+                logger.warning(
+                    f"Dashboard returned {resp.status_code} for unified context"
+                )
+                return {}
+        except requests.RequestException as e:
+            logger.warning(f"Dashboard unreachable at {self.dashboard_url}: {e}")
+            return {}
+
+    def normalize(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Delegate normalization to each adapter's normalize_category_for_tools().
+
+        Replaces the former hardcoded 6-category switch in
+        _normalize_context_for_tools(). Each adapter knows its own data shape.
+        """
+        from shared.adapters.finance.cibc import CIBCAdapter
+        from shared.adapters.weather.openweather import OpenWeatherAdapter
+        from shared.adapters.calendar.google_calendar import GoogleCalendarAdapter
+        from shared.adapters.gaming.clashroyale import ClashRoyaleAdapter
+
+        adapter_map: Dict[str, type] = {
+            "finance": CIBCAdapter,
+            "weather": OpenWeatherAdapter,
+            "calendar": GoogleCalendarAdapter,
+            "gaming": ClashRoyaleAdapter,
+        }
+
+        result: Dict[str, Any] = {}
+
+        for category, data in raw.items():
+            if not data:
+                continue
+            adapter_cls = adapter_map.get(category)
+            if adapter_cls:
+                result[category] = adapter_cls.normalize_category_for_tools(data)
+            else:
+                # Categories without a real adapter (health, navigation)
+                result[category] = {"status": "no adapter configured", "raw": data}
+
+        return result
+
+    def fetch_and_normalize(
+        self,
+        categories: Optional[List[str]] = None,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Convenience method: fetch + normalize in one call."""
+        raw = self.fetch(categories=categories, user_id=user_id)
+        return raw  # Already normalized inside fetch()
+
+    @staticmethod
+    def is_mock_mode() -> bool:
+        """Check if mock mode is enabled."""
+        return os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true"
 
 
+# Backward-compat module-level functions for gradual migration
 def fetch_context_sync(
     categories: Optional[List[str]] = None,
     user_id: str = "default",
 ) -> Dict[str, Any]:
-    """
-    Fetch unified context from the dashboard service via HTTP.
-
-    Args:
-        categories: Optional list of categories to fetch (e.g., ["calendar", "navigation"])
-        user_id: User identifier
-
-    Returns:
-        Dict with context data or empty dict on failure
-    """
-    # Check for mock mode
-    if os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true":
-        logger.debug("Using mock context (USE_MOCK_CONTEXT=true)")
-        return {}
-
-    api_key = os.getenv("DASHBOARD_API_KEY") or os.getenv("INTERNAL_API_KEY")
-    headers = {"X-API-Key": api_key} if api_key else None
-
-    # If specific categories requested, fetch each one
-    if categories:
-        result = {}
-        for category in categories:
-            try:
-                resp = requests.get(
-                    f"{DASHBOARD_URL}/context/{category}",
-                    params={"user_id": user_id},
-                    headers=headers,
-                    timeout=_REQUEST_TIMEOUT,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # /context/{category} returns {"category": ..., "data": {...}}
-                    result[category] = data.get("data", {})
-                else:
-                    logger.warning(f"Dashboard returned {resp.status_code} for {category}")
-            except requests.RequestException as e:
-                logger.warning(f"Failed to fetch {category} context: {e}")
-        return _normalize_context_for_tools(result)
-
-    # Fetch full unified context
-    try:
-        resp = requests.get(
-            f"{DASHBOARD_URL}/context",
-            params={"user_id": user_id},
-            headers=headers,
-            timeout=_REQUEST_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            raw_dict = resp.json()
-            # /context returns {"user_id": ..., "context": {...}, ...}
-            context_data = raw_dict.get("context", raw_dict)
-            return _normalize_context_for_tools(context_data)
-        else:
-            logger.warning(f"Dashboard returned {resp.status_code} for unified context")
-            return {}
-    except requests.RequestException as e:
-        logger.warning(f"Dashboard unreachable at {DASHBOARD_URL}: {e}")
-        return {}
-
-
-def _normalize_context_for_tools(context_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize dashboard API response to match the format expected by
-    user_context.py's _build_*_summary functions.
-    """
-    result = {}
-
-    # Calendar
-    calendar_data = context_dict.get("calendar", {})
-    if calendar_data:
-        events = calendar_data.get("events", [])
-        for event in events:
-            if "urgency" not in event:
-                event["urgency"] = "MEDIUM"
-        result["calendar"] = {
-            "events": events,
-            "today_count": calendar_data.get("today_count", len(events)),
-        }
-
-    # Finance
-    finance_data = context_dict.get("finance", {})
-    if finance_data:
-        result["finance"] = {
-            "transactions": finance_data.get("transactions", []),
-            "total_expenses_period": finance_data.get("total_expenses_period", 0),
-            "total_income_period": finance_data.get("total_income_period", 0),
-            "net_cashflow": finance_data.get("net_cashflow", 0),
-        }
-
-    # Health
-    health_data = context_dict.get("health", {})
-    if health_data:
-        result["health"] = {
-            "steps": health_data.get("steps", 0),
-            "steps_goal": health_data.get("steps_goal", 10000),
-            "steps_progress": health_data.get("steps_progress", 0),
-            "heart_rate": health_data.get("heart_rate"),
-            "hrv": health_data.get("hrv"),
-            "sleep_hours": health_data.get("sleep_hours"),
-            "sleep_score": health_data.get("sleep_score"),
-            "readiness": health_data.get("readiness"),
-            "calories_burned": health_data.get("calories_burned"),
-            "active_minutes": health_data.get("active_minutes"),
-        }
-
-    # Navigation
-    nav_data = context_dict.get("navigation", {})
-    if nav_data:
-        primary_route = nav_data.get("primary_route", {})
-        saved_destinations = {}
-        for route in nav_data.get("routes", []):
-            if isinstance(route, dict):
-                dest = route.get("destination", {})
-                if dest:
-                    name = dest.get("name")
-                    if not isinstance(name, str) or not name.strip():
-                        name = "Unknown"
-                    key = name.lower().replace(" ", "_")
-                    saved_destinations[key] = {
-                        "name": name,
-                        "address": dest.get("address", ""),
-                        "eta_minutes": route.get("duration_minutes", 0),
-                    }
-
-        formatted_route = {}
-        if primary_route:
-            origin = primary_route.get("origin", {})
-            destination = primary_route.get("destination", {})
-            formatted_route = {
-                "origin": origin.get("address", "") if isinstance(origin, dict) else str(origin),
-                "destination": destination.get("address", "") if isinstance(destination, dict) else str(destination),
-                "destination_name": destination.get("name", "Work") if isinstance(destination, dict) else "Work",
-                "duration_minutes": primary_route.get("duration_minutes", 0),
-                "traffic_level": primary_route.get("traffic_level", "unknown"),
-                "distance_km": primary_route.get("distance_km", 0),
-            }
-
-        result["navigation"] = {
-            "primary_route": formatted_route,
-            "saved_destinations": saved_destinations,
-        }
-
-    # Weather
-    weather_data = context_dict.get("weather", {})
-    if weather_data:
-        result["weather"] = {
-            "current": weather_data.get("current"),
-            "forecasts": weather_data.get("forecasts", [])[:8],
-            "platforms": weather_data.get("platforms", []),
-        }
-
-    # Gaming
-    gaming_data = context_dict.get("gaming", {})
-    if gaming_data:
-        result["gaming"] = {
-            "profiles": gaming_data.get("profiles", []),
-            "platforms": gaming_data.get("platforms", []),
-        }
-
-    return result
+    """Legacy wrapper — creates a temporary ContextBridge instance."""
+    bridge = ContextBridge()
+    return bridge.fetch(categories=categories, user_id=user_id)
 
 
 def is_mock_mode() -> bool:
-    """Check if mock mode is enabled."""
-    return os.getenv("USE_MOCK_CONTEXT", "false").lower() == "true"
+    """Legacy wrapper."""
+    return ContextBridge.is_mock_mode()

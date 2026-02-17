@@ -244,6 +244,26 @@ class BaseAdapter(ABC, Generic[T]):
                 return len(raw_data[key])
         return 1 if raw_data else 0
     
+    def normalize_for_tools(self, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform adapter data for tool consumption. Override in subclasses.
+
+        Each concrete adapter implements this to reshape its raw API response
+        into the format expected by the tool layer. Default: pass-through.
+        """
+        return raw_category_data
+
+    @classmethod
+    def normalize_category_for_tools(cls, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Class-level normalization for tool consumption.
+
+        Called by ContextBridge.normalize() without needing an adapter instance.
+        Override in subclasses to provide category-specific normalization.
+        Default: pass-through.
+        """
+        return raw_category_data
+
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} category={self.category} platform={self.platform}>"
 

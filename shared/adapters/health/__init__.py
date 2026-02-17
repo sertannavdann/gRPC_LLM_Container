@@ -1,4 +1,4 @@
 # Health Adapters
-from .mock import MockHealthAdapter
+# No real adapters configured yet
 
-__all__ = ["MockHealthAdapter"]
+__all__ = []

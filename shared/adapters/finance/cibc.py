@@ -163,6 +163,16 @@ class CIBCAdapter(BaseAdapter[FinancialTransaction]):
         except (ValueError, KeyError):
             return None
 
+    @classmethod
+    def normalize_category_for_tools(cls, raw_category_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize finance data for tool consumption."""
+        return {
+            "transactions": raw_category_data.get("transactions", []),
+            "total_expenses_period": raw_category_data.get("total_expenses_period", 0),
+            "total_income_period": raw_category_data.get("total_income_period", 0),
+            "net_cashflow": raw_category_data.get("net_cashflow", 0),
+        }
+
     def get_capabilities(self) -> Dict[str, bool]:
         return {
             "read": True,
