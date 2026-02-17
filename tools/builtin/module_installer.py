@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
-from shared.modules.artifacts import verify_bundle_hash, ArtifactBundleBuilder
+from shared.modules.artifacts import ArtifactBundleBuilder
 from shared.modules.identifiers import parse_module_id
 
 logger = logging.getLogger(__name__)

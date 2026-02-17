@@ -7,12 +7,13 @@ Provides deterministic artifact bundling with SHA-256 content addressing:
 - Self-check: verifies bundle determinism
 - Diff: compares two bundles to identify changes
 """
-import hashlib
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set
+
+from shared.modules.hashing import compute_sha256, compute_bundle_hash
 
 
 @dataclass
@@ -102,7 +103,7 @@ class ArtifactBundleBuilder:
         Returns:
             Hex-encoded SHA-256 hash
         """
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+        return compute_sha256(content.encode('utf-8'))
 
     @staticmethod
     def hash_file(file_path: Path) -> str:
@@ -115,11 +116,9 @@ class ArtifactBundleBuilder:
         Returns:
             Hex-encoded SHA-256 hash
         """
-        hasher = hashlib.sha256()
         with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b''):
-                hasher.update(chunk)
-        return hasher.hexdigest()
+            content = f.read()
+        return compute_sha256(content)
 
     @staticmethod
     def build_from_dict(
@@ -163,7 +162,7 @@ class ArtifactBundleBuilder:
 
         # Create bundle hash from sorted file hashes
         bundle_content = "".join(file_hashes)
-        bundle_hash = hashlib.sha256(bundle_content.encode('utf-8')).hexdigest()
+        bundle_hash = compute_sha256(bundle_content.encode('utf-8'))
 
         # Create index
         return ArtifactIndex(
@@ -316,6 +315,6 @@ def verify_bundle_hash(index: ArtifactIndex, files: Dict[str, str]) -> bool:
         file_hashes.append(file_hash)
 
     bundle_content = "".join(file_hashes)
-    computed_hash = hashlib.sha256(bundle_content.encode('utf-8')).hexdigest()
+    computed_hash = compute_sha256(bundle_content.encode('utf-8'))
 
     return computed_hash == index.bundle_sha256

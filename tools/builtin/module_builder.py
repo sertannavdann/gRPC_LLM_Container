@@ -14,7 +14,6 @@ Features:
     - Terminal failure detection (policy/security violations stop immediately)
 """
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -29,6 +28,7 @@ from shared.modules.templates.adapter_template import generate_adapter_code
 from shared.modules.templates.test_template import generate_test_code
 from shared.modules.artifacts import ArtifactBundleBuilder, ArtifactIndex
 from shared.modules.identifiers import parse_module_id
+from shared.modules.hashing import compute_sha256
 from shared.modules.audit import (
     BuildAuditLog,
     AttemptRecord,
@@ -159,7 +159,7 @@ class BuildSession:
     def create_job_id(cls, module_id: str, spec: Dict[str, Any]) -> str:
         """Create deterministic job ID from module ID and spec."""
         spec_json = json.dumps(spec, sort_keys=True)
-        spec_hash = hashlib.sha256(spec_json.encode()).hexdigest()[:8]
+        spec_hash = compute_sha256(spec_json.encode())[:8]
         return f"{module_id.replace('/', '_')}_{spec_hash}"
 
 
