@@ -12,8 +12,8 @@
 | 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
 | 3 | Self-Evolution Engine | **complete** | REQ-013, REQ-016 | Q2 2026 |
 | 4 | Release-Quality Verification | **complete** | REQ-019, REQ-028 | Q3 2026 |
-| 5 | Refactoring | not-started | — | Q3 2026 |
-| 6 | UX/UI Visual Expansion | not-started | REQ-031, REQ-032 | Q3 2026 |
+| 5 | Refactoring | **complete** | — | Q3 2026 |
+| 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032 | Q3 2026 |
 | 7 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
 | 8 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
@@ -279,11 +279,11 @@ Wave 2 - Unified Verification:
 **Plans:** 3 plans (2 waves)
 
 Wave 1 — Code Dedup + Agent Wiring (parallel):
-- [ ] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
-- [ ] 05-02-PLAN.md — Soul.md agent identities + auto-prompt composition: builder/tester/monitor soul.md files, compose() function, Blueprint2Code confidence gate, bounded retry with jitter
+- [x] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
+- [x] 05-02-PLAN.md — Soul.md agent identities + auto-prompt composition: builder/tester/monitor soul.md files, compose() function, Blueprint2Code confidence gate, bounded retry with jitter
 
 Wave 2 — Adapter Unification + Tool Wiring:
-- [ ] 05-03-PLAN.md — Adapter lock/unlock unification + tool wiring: AdapterUnlockBase, adapter registry route, finance iframe removal, DraftManager/VersionManager chat tools, .env removal
+- [x] 05-03-PLAN.md — Adapter lock/unlock unification + tool wiring: AdapterUnlockBase, adapter registry route, finance iframe removal, DraftManager/VersionManager chat tools, .env removal
 
 ### Deliverables
 
@@ -308,37 +308,45 @@ Wave 2 — Adapter Unification + Tool Wiring:
 
 **Milestone**: "Capability-Driven UI — Sync UI with Backend Truth"
 
-**Goal**: Build a designed UX/UI that renders entirely from backend capability contracts. Dashboard shows adapter connectivity. Finance is a native page. Chat triggers adapter actions. Monitoring shows P99 observability. Error states are visible, not silent.
+**Goal**: Build a designed UX/UI that renders entirely from backend capability contracts, using XState v5 statecharts for deterministic page state control, React Flow v12 for service topology, Recharts for data visualization, and Framer Motion for animated transitions. Dashboard shows adapter connectivity. Finance is a native page. Chat triggers adapter actions. Monitoring shows P99 observability. Error states are visible, not silent.
+
+**Visualization Toolkit**: XState v5 (~12 KB) + React Flow v12 (~60 KB) + Recharts v2.15+ (~40 KB) + Framer Motion v11+ (~32 KB) = ~144 KB gzip total
 
 **Plans:** 4 plans (3 waves)
 
-Wave 1 — Backend Capability Contract (Cursor only):
-- [ ] 06-01-PLAN.md — Capability schema + BFF endpoints: Pydantic CapabilityEnvelope, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + TypeScript docs
+Wave 1 — Backend Capability Contract + XState Infrastructure (Cursor only):
+- [x] 06-01-PLAN.md — Capability schema + BFF endpoints + XState root machine: Pydantic CapabilityEnvelope, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + TypeScript docs, nexusAppMachine (3 parallel regions: capability, dataSource, auth), useNexusApp hook, Zustand bridge, npm package installation (xstate, @xstate/react, recharts, framer-motion)
 
 Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
-- [ ] 06-02-PLAN.md — Dashboard + adapter connectivity: useCapabilities hook with ETag polling, adminClient extension, dashboard adapter cards with connect/disconnect flow
-- [ ] 06-03-PLAN.md — Finance page native rewrite + chat bidirectional actions: transaction table, spending charts, lock/unlock gating, chat action cards, dashboard refresh on tool calls
+- [x] 06-02-PLAN.md — Dashboard + adapter connectivity: XState-backed useNexusApp hook, Framer Motion DataSourceIndicator (Live/Mock/Offline), adapter cards with layout animations, Zustand → XState event bridge
+- [x] 06-03-PLAN.md — Finance page + chat actions: XState financePageMachine (hierarchical locked/unlocked), Recharts LineChart + PieChart, Framer Motion AnimatePresence transitions, chat action cards with Framer Motion states, Zustand → XState refresh bridge
 
 Wave 3 — Monitoring + Polish:
-- [ ] 06-04-PLAN.md — Monitoring + P99 observability + user prefs + QA: P99/P95/P50 latency, error taxonomy, error state components, user preferences, navigation update
+- [x] 06-04-PLAN.md — Monitoring + observability + error taxonomy + prefs + QA: XState monitoringPageMachine (parallel health/latency/tabs), React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart P99/P95/P50 with ReferenceLine, error taxonomy with XState guards, Framer Motion error components, user preferences (SQLite), navigation update
 
 ### Deliverables
 
 1. **Backend capability contract** (REQ-031) — CapabilityEnvelope Pydantic model, three BFF endpoints with ETag
-2. **Capability-driven UI pages** (REQ-032) — Dashboard, Finance, Monitoring, Chat actions
-3. **UI infrastructure** — useCapabilities, error taxonomy, error state components, useUserPrefs
-4. **Per-user preference persistence** — SQLite + optimistic concurrency
+2. **XState statechart infrastructure** — nexusAppMachine (root), financePageMachine, monitoringPageMachine, useNexusApp hook, Zustand bridge
+3. **Capability-driven UI pages** (REQ-032) — Dashboard, Finance, Monitoring, Chat actions — all rendered from XState state via `state.matches()`
+4. **Visualization components** — React Flow service topology + pipeline flow, Recharts finance charts + latency bars, Framer Motion transitions + animations
+5. **UI infrastructure** — Error taxonomy (5 types) with XState guards, error state components (DegradedBanner, EmptyState, TimeoutSkeleton) with Framer Motion
+6. **Per-user preference persistence** — SQLite + optimistic concurrency
 
 ### Tool Usage (v0 Premium + Cursor Pro)
 
 | Tool | Role | Cost |
 |------|------|------|
 | v0 Premium | Visual shell generation | $20/mo |
-| Cursor Pro | Repo-aware multi-file wiring | $20/mo |
+| Cursor Pro | Repo-aware multi-file wiring + XState machines | $20/mo |
 
 ### Done Criteria
 
-- Every page renders from capability contract data — no hardcoded assumptions
+- Every page renders from capability contract via XState machines — no hardcoded assumptions
+- XState statecharts manage all page state (no scattered useState/useEffect)
+- React Flow v12 renders interactive service topology and pipeline stage flow
+- Recharts renders finance charts and latency percentile bars
+- Framer Motion animates all state transitions, error states, and layout changes
 - Error states visible: 401 → degraded banner, invalid JSON → warning, timeout → skeleton
 - User preferences persist across page refreshes
 - P99 latency < 500ms for all active service endpoints
