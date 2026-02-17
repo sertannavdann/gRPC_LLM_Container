@@ -8,6 +8,8 @@ import { ConversationHistory } from '../history/ConversationHistory';
 import { Dashboard } from '../dashboard';
 import { Message, ChatResponse } from '@/types/chat';
 import { Bot, Settings, Save, FileText, LayoutDashboard, PanelRightClose, PanelRight, Maximize2 } from 'lucide-react';
+import { ActionCard, type ToolCall } from './ActionCard';
+import { nexusStore } from '@/stores/nexusStore';
 
 // Auto-save debounce delay in ms
 const AUTO_SAVE_DELAY = 2000;
@@ -26,6 +28,7 @@ export function ChatContainer() {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [summary, setSummary] = useState<string | undefined>(undefined);
+  const [pendingToolCalls, setPendingToolCalls] = useState<Map<string, { call: ToolCall; status: 'pending' | 'executing' | 'completed' | 'failed'; result?: string; error?: string }>>(new Map());
 
   // Auto-save conversation when messages change
   useEffect(() => {
@@ -135,6 +138,96 @@ export function ChatContainer() {
     setLastSaved(null);
   };
 
+  const handleApproveToolCall = async (toolCallId: string) => {
+    const toolCallData = pendingToolCalls.get(toolCallId);
+    if (!toolCallData) return;
+
+    // Update status to executing
+    setPendingToolCalls((prev) => {
+      const updated = new Map(prev);
+      updated.set(toolCallId, { ...toolCallData, status: 'executing' });
+      return updated;
+    });
+
+    try {
+      // Execute the tool call via orchestrator
+      const response = await fetch('/api/orchestrator', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'execute_tool',
+          tool_call_id: toolCallId,
+          tool_name: toolCallData.call.name,
+          arguments: toolCallData.call.arguments,
+          threadId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Tool execution failed');
+      }
+
+      // Update status to completed
+      setPendingToolCalls((prev) => {
+        const updated = new Map(prev);
+        updated.set(toolCallId, {
+          ...toolCallData,
+          status: 'completed',
+          result: data.result || 'Action completed',
+        });
+        return updated;
+      });
+
+      // Trigger capability refresh via Zustand -> XState bridge
+      nexusStore.getState().triggerCapabilityRefresh();
+
+      // Add result message to chat
+      const resultMessage: Message = {
+        id: `tool-result-${Date.now()}`,
+        role: 'assistant',
+        content: data.result || 'Tool action completed successfully.',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, resultMessage]);
+    } catch (error) {
+      console.error('Tool execution error:', error);
+
+      // Update status to failed
+      setPendingToolCalls((prev) => {
+        const updated = new Map(prev);
+        updated.set(toolCallId, {
+          ...toolCallData,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        return updated;
+      });
+    }
+  };
+
+  const handleRejectToolCall = (toolCallId: string) => {
+    const toolCallData = pendingToolCalls.get(toolCallId);
+    if (!toolCallData) return;
+
+    // Remove from pending
+    setPendingToolCalls((prev) => {
+      const updated = new Map(prev);
+      updated.delete(toolCallId);
+      return updated;
+    });
+
+    // Add rejection message to chat
+    const rejectionMessage: Message = {
+      id: `rejection-${Date.now()}`,
+      role: 'assistant',
+      content: 'Tool action rejected by user.',
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, rejectionMessage]);
+  };
+
   const handleSendMessage = async (content: string) => {
     // Add user message
     const userMessage: Message = {
@@ -168,6 +261,32 @@ export function ChatContainer() {
         setThreadId(data.threadId);
       }
 
+      // Check for tool calls in response
+      if ((data as any).tool_calls && Array.isArray((data as any).tool_calls)) {
+        const toolCalls = (data as any).tool_calls as Array<{
+          id: string;
+          function: { name: string; arguments: string };
+        }>;
+
+        // Add action cards for each tool call
+        const newPendingCalls = new Map(pendingToolCalls);
+        toolCalls.forEach((tc) => {
+          const parsedArgs = typeof tc.function.arguments === 'string'
+            ? JSON.parse(tc.function.arguments)
+            : tc.function.arguments;
+
+          newPendingCalls.set(tc.id, {
+            call: {
+              id: tc.id,
+              name: tc.function.name,
+              arguments: parsedArgs,
+            },
+            status: 'pending',
+          });
+        });
+        setPendingToolCalls(newPendingCalls);
+      }
+
       // Add assistant message
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
@@ -180,7 +299,7 @@ export function ChatContainer() {
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
-      
+
       // Add error message
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
@@ -274,6 +393,23 @@ export function ChatContainer() {
 
         {/* Messages */}
         <MessageList messages={messages} isLoading={isLoading} />
+
+        {/* Action Cards for pending tool calls */}
+        {pendingToolCalls.size > 0 && (
+          <div className="px-4 pb-4 space-y-3">
+            {Array.from(pendingToolCalls.entries()).map(([id, data]) => (
+              <ActionCard
+                key={id}
+                toolCall={data.call}
+                onApprove={handleApproveToolCall}
+                onReject={handleRejectToolCall}
+                status={data.status}
+                result={data.result}
+                error={data.error}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Input */}
         <ChatInput onSend={handleSendMessage} disabled={isLoading} />
