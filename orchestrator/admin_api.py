@@ -684,6 +684,365 @@ def list_module_versions(
     }
 
 
+# =============================================================================
+# CAPABILITY CONTRACT ENDPOINTS (Phase 6)
+# =============================================================================
+
+import hashlib
+from shared.contracts.ui_capability_schema import (
+    CapabilityEnvelope,
+    ToolCapability,
+    ModuleCapability,
+    ProviderCapability,
+    AdapterCapability,
+    FeatureHealth,
+    FeatureStatus,
+)
+
+
+def _compute_etag(data: Any) -> str:
+    """Compute ETag from JSON-serialized data."""
+    if isinstance(data, str):
+        content = data
+    else:
+        import json
+        content = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def _get_config_version() -> str:
+    """Compute config version hash from routing config."""
+    mgr = _get_mgr()
+    config = mgr.get_config()
+    return _compute_etag(config.model_dump())
+
+
+def _gather_tool_capabilities() -> list[ToolCapability]:
+    """Query tool registry for available tools."""
+    # TODO: Wire to orchestrator tool registry when available
+    # For now, return empty list - will be populated when tool registry is exposed
+    return []
+
+
+def _gather_module_capabilities() -> list[ModuleCapability]:
+    """Query module registry for installed and draft modules."""
+    if not _module_registry:
+        return []
+
+    modules = []
+    # Query all modules from registry (installed + draft)
+    # Using raw SQL since registry doesn't expose list_all method yet
+    try:
+        with _module_registry._connect() as conn:
+            rows = conn.execute("""
+                SELECT module_id, name, category, platform, status,
+                       failure_count, success_count
+                FROM modules
+            """).fetchall()
+
+            for row in rows:
+                module_id, name, category, platform, status, failure_count, success_count = row
+                # Determine version from active_versions if available
+                version = None
+                # Check if module has test suite by looking for test files
+                has_tests = False  # TODO: Check artifacts for test presence
+
+                modules.append(ModuleCapability(
+                    id=module_id,
+                    name=name,
+                    category=category,
+                    platform=platform,
+                    status=status,
+                    version=version,
+                    has_tests=has_tests,
+                ))
+    except Exception as e:
+        logger.warning(f"Failed to gather module capabilities: {e}")
+
+    return modules
+
+
+def _gather_provider_capabilities() -> list[ProviderCapability]:
+    """Query provider config for LLM providers with lock status."""
+    providers = []
+
+    try:
+        mgr = _get_mgr()
+        config = mgr.get_config()
+
+        # Read raw JSON for provider metadata
+        import json
+        raw_data = json.loads(mgr._config_path.read_text())
+        providers_config = raw_data.get("providers", {})
+
+        for tier_name, tier_config in config.tiers.items():
+            # Determine if locked based on missing endpoint or disabled
+            locked = not tier_config.enabled or not tier_config.endpoint
+
+            providers.append(ProviderCapability(
+                id=tier_name,
+                name=tier_name.replace("_", " ").title(),
+                tier=tier_name,
+                locked=locked,
+                connection_tested=False,
+                last_test_ok=None,
+            ))
+    except Exception as e:
+        logger.warning(f"Failed to gather provider capabilities: {e}")
+
+    return providers
+
+
+def _gather_adapter_capabilities() -> list[AdapterCapability]:
+    """Query adapter registry for installed adapters with lock status."""
+    adapters = []
+
+    try:
+        from shared.adapters.registry import adapter_registry
+
+        all_adapters = adapter_registry.list_all_flat()
+
+        for adapter_info in all_adapters:
+            # Check if adapter has credentials via module credential store
+            module_id = f"{adapter_info.category}/{adapter_info.platform}"
+            has_credentials = _check_module_credentials(module_id)
+
+            # Adapter is locked if it requires auth and has no credentials
+            locked = adapter_info.requires_auth and not has_credentials
+
+            # Determine missing fields (simplified - assumes API key for now)
+            missing_fields = []
+            if locked:
+                if adapter_info.auth_type == "api_key":
+                    missing_fields = ["api_key"]
+                elif adapter_info.auth_type == "oauth2":
+                    missing_fields = ["oauth_token"]
+
+            adapters.append(AdapterCapability(
+                id=module_id,
+                name=adapter_info.display_name,
+                category=adapter_info.category,
+                locked=locked,
+                missing_fields=missing_fields,
+                last_data_timestamp=None,
+                connection_tested=False,
+                last_test_ok=None,
+            ))
+    except Exception as e:
+        logger.warning(f"Failed to gather adapter capabilities: {e}")
+
+    return adapters
+
+
+def _derive_feature_health(
+    modules: list[ModuleCapability],
+    providers: list[ProviderCapability],
+    adapters: list[AdapterCapability],
+) -> list[FeatureHealth]:
+    """Derive per-feature health status from capability data."""
+    features = []
+
+    # Feature: modules
+    module_status = FeatureStatus.HEALTHY
+    module_reasons = []
+    disabled_count = sum(1 for m in modules if m.status == "disabled")
+    draft_count = sum(1 for m in modules if m.status == "draft")
+    if disabled_count > 0:
+        module_status = FeatureStatus.DEGRADED
+        module_reasons.append(f"{disabled_count} module(s) disabled")
+    if draft_count > 0 and module_status == FeatureStatus.HEALTHY:
+        module_status = FeatureStatus.DEGRADED
+        module_reasons.append(f"{draft_count} module(s) in draft state")
+
+    features.append(FeatureHealth(
+        feature="modules",
+        status=module_status,
+        degraded_reasons=module_reasons,
+        dependencies=["module_registry", "module_loader"],
+    ))
+
+    # Feature: providers
+    unlocked_providers = [p for p in providers if not p.locked]
+    if len(unlocked_providers) == 0:
+        provider_status = FeatureStatus.DEGRADED
+        provider_reasons = ["All LLM providers locked"]
+    else:
+        provider_status = FeatureStatus.HEALTHY
+        provider_reasons = []
+
+    features.append(FeatureHealth(
+        feature="providers",
+        status=provider_status,
+        degraded_reasons=provider_reasons,
+        dependencies=["routing_config"],
+    ))
+
+    # Feature: adapters
+    locked_adapters = [a for a in adapters if a.locked]
+    if len(locked_adapters) > 0:
+        adapter_status = FeatureStatus.DEGRADED
+        adapter_reasons = [f"{a.name} locked (missing: {', '.join(a.missing_fields)})" for a in locked_adapters]
+    else:
+        adapter_status = FeatureStatus.HEALTHY
+        adapter_reasons = []
+
+    features.append(FeatureHealth(
+        feature="adapters",
+        status=adapter_status,
+        degraded_reasons=adapter_reasons,
+        dependencies=["credential_store"],
+    ))
+
+    # Feature: billing (check quota usage)
+    billing_status = FeatureStatus.UNKNOWN
+    billing_reasons = []
+    if _quota_manager:
+        try:
+            # Check default org for now (TODO: per-user org)
+            result = _quota_manager.check_quota("default")
+            usage_pct = (result.current_usage / result.quota_limit) * 100 if result.quota_limit > 0 else 0
+            if usage_pct >= 80:
+                billing_status = FeatureStatus.DEGRADED
+                billing_reasons.append(f"Quota usage at {usage_pct:.1f}%")
+            else:
+                billing_status = FeatureStatus.HEALTHY
+        except Exception:
+            billing_status = FeatureStatus.UNKNOWN
+
+    features.append(FeatureHealth(
+        feature="billing",
+        status=billing_status,
+        degraded_reasons=billing_reasons,
+        dependencies=["quota_manager", "usage_store"],
+    ))
+
+    return features
+
+
+@_app.get("/admin/capabilities")
+def get_capabilities(
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """
+    Get full capability envelope (tools, modules, providers, adapters, features).
+
+    Supports ETag-based conditional requests via If-None-Match header.
+    Returns 304 Not Modified if ETag matches current state.
+
+    RBAC: viewer+ role required.
+    """
+    from datetime import datetime
+
+    # Gather data from all registries
+    tools = _gather_tool_capabilities()
+    modules = _gather_module_capabilities()
+    providers = _gather_provider_capabilities()
+    adapters = _gather_adapter_capabilities()
+    features = _derive_feature_health(modules, providers, adapters)
+
+    # Build envelope
+    envelope = CapabilityEnvelope(
+        tools=tools,
+        modules=modules,
+        providers=providers,
+        adapters=adapters,
+        features=features,
+        config_version=_get_config_version(),
+        timestamp=datetime.utcnow().isoformat() + "Z",
+    )
+
+    # Compute ETag
+    envelope_json = envelope.model_dump_json(exclude_none=True)
+    etag = _compute_etag(envelope_json)
+
+    # Check If-None-Match header
+    if_none_match = request.headers.get("If-None-Match", "").strip('"')
+    if if_none_match and if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": f'"{etag}"'})
+
+    # Return full envelope with ETag
+    return Response(
+        content=envelope_json,
+        media_type="application/json",
+        headers={"ETag": f'"{etag}"'},
+    )
+
+
+@_app.get("/admin/feature-health")
+def get_feature_health(user: User = Depends(get_current_user)):
+    """
+    Get per-feature health status.
+
+    Returns health status for modules, providers, adapters, billing, sandbox, pipeline.
+
+    RBAC: viewer+ role required.
+    """
+    import json
+
+    # Gather minimal data needed for health derivation
+    modules = _gather_module_capabilities()
+    providers = _gather_provider_capabilities()
+    adapters = _gather_adapter_capabilities()
+    features = _derive_feature_health(modules, providers, adapters)
+
+    # Add sandbox feature (check if reachable)
+    sandbox_status = FeatureStatus.UNKNOWN
+    sandbox_reasons = []
+    try:
+        import requests
+        sandbox_url = os.getenv("SANDBOX_URL", "http://sandbox:50052")
+        # Quick health check (HTTP if available, otherwise assume gRPC)
+        # For now, mark as unknown since sandbox is gRPC-only
+        sandbox_status = FeatureStatus.UNKNOWN
+        sandbox_reasons = ["Health check not implemented"]
+    except Exception as e:
+        sandbox_status = FeatureStatus.UNAVAILABLE
+        sandbox_reasons = [str(e)]
+
+    features.append(FeatureHealth(
+        feature="sandbox",
+        status=sandbox_status,
+        degraded_reasons=sandbox_reasons,
+        dependencies=["sandbox_service"],
+    ))
+
+    # Add pipeline feature (check last build status)
+    # TODO: Wire to actual pipeline status when available
+    features.append(FeatureHealth(
+        feature="pipeline",
+        status=FeatureStatus.UNKNOWN,
+        degraded_reasons=["Pipeline status tracking not yet implemented"],
+        dependencies=["builder", "validator"],
+    ))
+
+    return JSONResponse(content=[f.model_dump() for f in features])
+
+
+@_app.get("/admin/config/version")
+def get_config_version(request: Request, user: User = Depends(get_current_user)):
+    """
+    Get config version hash (lightweight polling endpoint).
+
+    Supports ETag-based conditional requests.
+    Clients poll this endpoint cheaply to detect changes, then fetch full /capabilities.
+
+    RBAC: viewer+ role required.
+    """
+    config_version = _get_config_version()
+    etag = _compute_etag({"config_version": config_version})
+
+    # Check If-None-Match header
+    if_none_match = request.headers.get("If-None-Match", "").strip('"')
+    if if_none_match and if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": f'"{etag}"'})
+
+    return JSONResponse(
+        content={"config_version": config_version, "etag": etag},
+        headers={"ETag": f'"{etag}"'},
+    )
+
+
 # ── Server launcher ──────────────────────────────────────────────────────────
 
 
