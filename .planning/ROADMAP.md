@@ -12,10 +12,11 @@
 | 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
 | 3 | Self-Evolution Engine | **complete** | REQ-013, REQ-016 | Q2 2026 |
 | 4 | Release-Quality Verification | **complete** | REQ-019, REQ-028 | Q3 2026 |
-| 5 | UI Contract Alignment | not-started | REQ-031, REQ-032 | Q3 2026 |
-| 6 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
-| 7 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
-| 8 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
+| 5 | Refactoring | not-started | — | Q3 2026 |
+| 6 | UX/UI Visual Expansion | not-started | REQ-031, REQ-032 | Q3 2026 |
+| 7 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
+| 8 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
+| 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
 
@@ -269,97 +270,83 @@ Wave 2 - Unified Verification:
 
 ---
 
-## Phase 5: UI Contract Alignment
+## Phase 5: Refactoring
 
-**Milestone**: "Capability-Driven UI — Sync UI with Backend Truth"
+**Milestone**: "Clean Codebase — Eliminate Tech Debt Before UI Work"
 
-**Goal**: Eliminate UI fragility by making every page render from a backend capability contract. The UI never assumes what features/modules/providers exist — it asks the backend and renders truthfully. Error states are visible, not silent. User preferences persist across sessions.
+**Goal**: Consolidate 6 areas of code redundancy, wire soul.md agent identities into the build pipeline, unify adapter lock/unlock with the provider pattern, and register DraftManager/VersionManager as orchestrator chat tools.
 
-**Plans:** 5 plans (3 waves)
+**Plans:** 3 plans (2 waves)
 
-Wave 1 — Backend Capability Contract (Cursor only):
-- [ ] 05-01-PLAN.md — Capability schema + BFF endpoints: Pydantic models, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + docs
+Wave 1 — Code Dedup + Agent Wiring (parallel):
+- [ ] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
+- [ ] 05-02-PLAN.md — Soul.md agent identities + auto-prompt composition: builder/tester/monitor soul.md files, compose() function, Blueprint2Code confidence gate, bounded retry with jitter
 
-Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
-- [ ] 05-02-PLAN.md — UI infrastructure + first pages: adminClient ETag extension, useCapabilities hook, error taxonomy, /capabilities dashboard, /modules browser
-- [ ] 05-03-PLAN.md — Provider settings + monitoring: /settings/providers with lock/unlock, /monitoring with service health + agent runs + Grafana tabs
-- [ ] 05-04-PLAN.md — Pipeline viewer rewrite: build job list, attempt timeline, validation report, SSE indicator
-
-Wave 3 — Persistence + Polish:
-- [ ] 05-05-PLAN.md — User preferences (SQLite + API + hook), error resilience fixes (401/JSON/timeout), navigation updates, full QA checkpoint
+Wave 2 — Adapter Unification + Tool Wiring:
+- [ ] 05-03-PLAN.md — Adapter lock/unlock unification + tool wiring: AdapterUnlockBase, adapter registry route, finance iframe removal, DraftManager/VersionManager chat tools, .env removal
 
 ### Deliverables
 
-1. **Backend capability contract** (REQ-031)
-   - `shared/contracts/ui_capability_schema.py` — Pydantic models for CapabilityEnvelope
-   - `GET /admin/capabilities` — typed envelope with tools, modules, providers, features + ETag
-   - `GET /admin/feature-health` — per-feature readiness with degraded reasons
-   - `GET /admin/config/version` — ETag-based lightweight polling
-   - Contract tests + TypeScript type documentation
+1. **Code deduplication** — 6 redundancy areas consolidated into 5 shared modules
+2. **Soul.md agent identities** — Builder, Tester, Monitor agents wired into build pipeline with auto-prompt composition
+3. **Bounded retry with jitter** — LLM Gateway transient failure resilience (EDMO doc T4)
+4. **Adapter lock/unlock** — Provider pattern extended to adapters, Admin API-driven
+5. **Finance backend consolidation** — Iframe removed, single API proxy path
+6. **Orchestrator tool wiring** — DraftManager + VersionManager as chat tools with RBAC
 
-2. **Capability-driven UI pages** (REQ-032)
-   - `/capabilities` — system capabilities dashboard with health cards
-   - `/modules` — module browser with lifecycle panel (draft/validate/promote/rollback)
-   - `/settings/providers` — provider settings with lock/unlock and connection test
-   - `/monitoring` — service health cards + agent runs table + Grafana tabs
-   - `/pipeline` — build job list + attempt timeline + validation report + SSE indicator
+### Done Criteria
 
-3. **UI infrastructure**
-   - `useCapabilities` hook with 30s ETag-based polling
-   - Error taxonomy (NOT_AUTHORIZED, NOT_CONFIGURED, DEGRADED_PROVIDER, TOOL_SCHEMA_MISMATCH, TIMEOUT)
-   - Error state components (DegradedBanner, EmptyState, TimeoutSkeleton)
-   - `useUserPrefs` hook with optimistic concurrency
+- `grep -rn "FORBIDDEN_IMPORTS\\s*=" --include="*.py" | wc -l` returns exactly 1
+- `ls agents/souls/*.soul.md | wc -l` returns 3
+- `grep -rn "readFileSync.*env" ui_service/ | wc -l` returns 0
+- `grep -rn "iframe" ui_service/src/app/finance/ | wc -l` returns 0
+- `make test-self-evolution` passes with zero regressions
 
-4. **Per-user preference persistence**
-   - SQLite `user_prefs` table with optimistic concurrency (version check)
-   - `GET/PUT /admin/user/prefs` endpoints
-   - Theme, provider ordering, module favorites, tab positions persisted
+---
+
+## Phase 6: UX/UI Visual Expansion
+
+**Milestone**: "Capability-Driven UI — Sync UI with Backend Truth"
+
+**Goal**: Build a designed UX/UI that renders entirely from backend capability contracts. Dashboard shows adapter connectivity. Finance is a native page. Chat triggers adapter actions. Monitoring shows P99 observability. Error states are visible, not silent.
+
+**Plans:** 4 plans (3 waves)
+
+Wave 1 — Backend Capability Contract (Cursor only):
+- [ ] 06-01-PLAN.md — Capability schema + BFF endpoints: Pydantic CapabilityEnvelope, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + TypeScript docs
+
+Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
+- [ ] 06-02-PLAN.md — Dashboard + adapter connectivity: useCapabilities hook with ETag polling, adminClient extension, dashboard adapter cards with connect/disconnect flow
+- [ ] 06-03-PLAN.md — Finance page native rewrite + chat bidirectional actions: transaction table, spending charts, lock/unlock gating, chat action cards, dashboard refresh on tool calls
+
+Wave 3 — Monitoring + Polish:
+- [ ] 06-04-PLAN.md — Monitoring + P99 observability + user prefs + QA: P99/P95/P50 latency, error taxonomy, error state components, user preferences, navigation update
+
+### Deliverables
+
+1. **Backend capability contract** (REQ-031) — CapabilityEnvelope Pydantic model, three BFF endpoints with ETag
+2. **Capability-driven UI pages** (REQ-032) — Dashboard, Finance, Monitoring, Chat actions
+3. **UI infrastructure** — useCapabilities, error taxonomy, error state components, useUserPrefs
+4. **Per-user preference persistence** — SQLite + optimistic concurrency
 
 ### Tool Usage (v0 Premium + Cursor Pro)
 
-**Workflow**: v0 generates visual TSX shell → paste into repo → Cursor wires to real APIs.
-
-| Tool | Role | Best For |
-|------|------|----------|
-| v0 Premium ($20/mo) | Visual shell generation | Page layouts, card grids, tables, status badges, dark mode |
-| Cursor Pro ($20/mo) | Repo-aware multi-file wiring | API wiring, ETag caching, error handling, RBAC, adminClient |
-
-Plans 02-04 include v0 prompts for each page. Plan 01 and Plan 05 are backend-only (Cursor).
-
-### Files to Create/Modify
-
-- `shared/contracts/__init__.py` — new package
-- `shared/contracts/ui_capability_schema.py` — Pydantic capability models
-- `shared/auth/user_prefs.py` — user preferences SQLite store
-- `orchestrator/admin_api.py` — capability + user prefs endpoints
-- `ui_service/src/lib/adminClient.ts` — extend with capability + prefs methods
-- `ui_service/src/hooks/useCapabilities.ts` — capability polling hook
-- `ui_service/src/hooks/useUserPrefs.ts` — user preferences hook
-- `ui_service/src/lib/errors.ts` — error taxonomy
-- `ui_service/src/components/ui/error-states.tsx` — error state components
-- `ui_service/src/app/capabilities/page.tsx` — new page
-- `ui_service/src/app/modules/page.tsx` — new page (replaces placeholder)
-- `ui_service/src/app/settings/providers/page.tsx` — new page
-- `ui_service/src/app/monitoring/page.tsx` — rewrite
-- `ui_service/src/app/pipeline/page.tsx` — rewrite
-- `ui_service/src/components/pipeline/BuildJobPanel.tsx` — new component
-- `ui_service/src/components/pipeline/ValidationReport.tsx` — new component
-- `ui_service/src/components/nav/Navbar.tsx` — update
-- `ui_service/src/app/layout.tsx` — update
-- `tests/unit/test_capability_contract.py` — new tests
-- `docs/ui_contract.md` — new documentation
+| Tool | Role | Cost |
+|------|------|------|
+| v0 Premium | Visual shell generation | $20/mo |
+| Cursor Pro | Repo-aware multi-file wiring | $20/mo |
 
 ### Done Criteria
 
 - Every page renders from capability contract data — no hardcoded assumptions
 - Error states visible: 401 → degraded banner, invalid JSON → warning, timeout → skeleton
 - User preferences persist across page refreshes
-- `make verify` passes (780+ tests, zero regressions)
-- Manual QA: all 5 pages work against live orchestrator
+- P99 latency < 500ms for all active service endpoints
+- `make verify` passes with zero regressions
 
 ---
 
-## Phase 6: Audit Trail
+## Phase 7: Audit Trail
 
 **Milestone**: "Enterprise Foundation — Audit"
 
@@ -388,7 +375,7 @@ Plans 02-04 include v0 prompts for each page. Plan 01 and Plan 05 are backend-on
 
 ---
 
-## Phase 7: Co-Evolution & Approval
+## Phase 8: Co-Evolution & Approval
 
 **Milestone**: "Self-Evolving Agent — Safety Gates"
 
@@ -406,7 +393,7 @@ Plans 02-04 include v0 prompts for each page. Plan 01 and Plan 05 are backend-on
 
 ---
 
-## Phase 8: Enterprise & Marketplace (Future — Ideation Only)
+## Phase 9: Enterprise & Marketplace (Future — Ideation Only)
 
 **Milestone**: "Enterprise Scale + Revenue"
 
