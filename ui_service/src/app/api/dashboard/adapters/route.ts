@@ -2,40 +2,22 @@
  * Dashboard Adapters API
  *
  * Lists available adapters and manages adapter connections.
- * Reads .env file to determine real connected status based on API keys.
+ * Credentials flow through Admin API — no .env file manipulation.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { getAdapterLockHandler } from '@/lib/adapter-lock/adapters';
+import type { CredentialConfig } from '@/lib/adapter-lock/base';
 
-const ENV_PATH = process.env.ENV_FILE_PATH || '/app/.env';
 const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:8001';
-
-function parseEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIndex = trimmed.indexOf('=');
-    if (eqIndex === -1) continue;
-    result[trimmed.substring(0, eqIndex).trim()] = trimmed.substring(eqIndex + 1).trim();
-  }
-  return result;
-}
-
-function getEnvConfig(): Record<string, string> {
-  if (existsSync(ENV_PATH)) {
-    return parseEnvFile(readFileSync(ENV_PATH, 'utf-8'));
-  }
-  return {};
-}
 
 type AdapterDef = {
   platform: string;
   name: string;
   icon: string;
+  moduleId: string;
   auth_type: 'api_key' | 'oauth2' | 'none';
-  auth_fields: { key: string; label: string; placeholder: string; type: string; envVar: string }[];
-  isConnected: (env: Record<string, string>) => boolean;
+  auth_fields: { key: string; label: string; placeholder: string; type: string; credentialKey: string }[];
+  alwaysConnected?: boolean;
 };
 
 const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
@@ -44,9 +26,10 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'cibc',
       name: 'CIBC',
       icon: '🏛️',
+      moduleId: 'finance/cibc',
       auth_type: 'none',
       auth_fields: [],
-      isConnected: () => true, // CSV-based, always available
+      alwaysConnected: true,
     },
   ],
   calendar: [
@@ -54,22 +37,23 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'mock',
       name: 'Mock Calendar',
       icon: '📅',
+      moduleId: 'calendar/mock',
       auth_type: 'none',
       auth_fields: [],
-      isConnected: () => true,
+      alwaysConnected: true,
     },
     {
       platform: 'google_calendar',
       name: 'Google Calendar',
       icon: '📆',
+      moduleId: 'calendar/google_calendar',
       auth_type: 'oauth2',
       auth_fields: [
-        { key: 'googleCalendarClientId', label: 'Client ID', placeholder: 'xxxx.apps.googleusercontent.com', type: 'text', envVar: 'GOOGLE_CALENDAR_CLIENT_ID' },
-        { key: 'googleCalendarClientSecret', label: 'Client Secret', placeholder: 'GOCSPX-...', type: 'api_key', envVar: 'GOOGLE_CALENDAR_CLIENT_SECRET' },
-        { key: 'googleCalendarAccessToken', label: 'Access Token', placeholder: 'ya29...', type: 'oauth_token', envVar: 'GOOGLE_CALENDAR_ACCESS_TOKEN' },
-        { key: 'googleCalendarRefreshToken', label: 'Refresh Token', placeholder: '1//...', type: 'oauth_token', envVar: 'GOOGLE_CALENDAR_REFRESH_TOKEN' },
+        { key: 'googleCalendarClientId', label: 'Client ID', placeholder: 'xxxx.apps.googleusercontent.com', type: 'text', credentialKey: 'client_id' },
+        { key: 'googleCalendarClientSecret', label: 'Client Secret', placeholder: 'GOCSPX-...', type: 'api_key', credentialKey: 'client_secret' },
+        { key: 'googleCalendarAccessToken', label: 'Access Token', placeholder: 'ya29...', type: 'oauth_token', credentialKey: 'oauth_token' },
+        { key: 'googleCalendarRefreshToken', label: 'Refresh Token', placeholder: '1//...', type: 'oauth_token', credentialKey: 'refresh_token' },
       ],
-      isConnected: (env) => !!(env.GOOGLE_CALENDAR_ACCESS_TOKEN && env.GOOGLE_CALENDAR_REFRESH_TOKEN),
     },
   ],
   health: [
@@ -77,9 +61,10 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'mock',
       name: 'Mock Health',
       icon: '❤️',
+      moduleId: 'health/mock',
       auth_type: 'none',
       auth_fields: [],
-      isConnected: () => true,
+      alwaysConnected: true,
     },
   ],
   navigation: [
@@ -87,9 +72,10 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'mock',
       name: 'Mock Navigation',
       icon: '🗺️',
+      moduleId: 'navigation/mock',
       auth_type: 'none',
       auth_fields: [],
-      isConnected: () => true,
+      alwaysConnected: true,
     },
   ],
   weather: [
@@ -97,12 +83,12 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'openweather',
       name: 'OpenWeather',
       icon: '🌤️',
+      moduleId: 'weather/openweather',
       auth_type: 'api_key',
       auth_fields: [
-        { key: 'openweatherApiKey', label: 'API Key', placeholder: 'Your OpenWeather API key', type: 'api_key', envVar: 'OPENWEATHER_API_KEY' },
-        { key: 'openweatherCity', label: 'City', placeholder: 'Toronto,CA', type: 'text', envVar: 'OPENWEATHER_CITY' },
+        { key: 'openweatherApiKey', label: 'API Key', placeholder: 'Your OpenWeather API key', type: 'api_key', credentialKey: 'api_key' },
+        { key: 'openweatherCity', label: 'City', placeholder: 'Toronto,CA', type: 'text', credentialKey: 'base_url' },
       ],
-      isConnected: (env) => !!env.OPENWEATHER_API_KEY,
     },
   ],
   gaming: [
@@ -110,12 +96,12 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       platform: 'clashroyale',
       name: 'Clash Royale',
       icon: '⚔️',
+      moduleId: 'gaming/clashroyale',
       auth_type: 'api_key',
       auth_fields: [
-        { key: 'clashroyaleApiKey', label: 'API Key', placeholder: 'Your Clash Royale API key', type: 'api_key', envVar: 'CLASH_ROYALE_API_KEY' },
-        { key: 'clashroyalePlayerTag', label: 'Player Tag', placeholder: '#ABC123', type: 'text', envVar: 'CLASH_ROYALE_PLAYER_TAG' },
+        { key: 'clashroyaleApiKey', label: 'API Key', placeholder: 'Your Clash Royale API key', type: 'api_key', credentialKey: 'api_key' },
+        { key: 'clashroyalePlayerTag', label: 'Player Tag', placeholder: '#ABC123', type: 'text', credentialKey: 'player_tag' },
       ],
-      isConnected: (env) => !!(env.CLASH_ROYALE_API_KEY && env.CLASH_ROYALE_PLAYER_TAG),
     },
   ],
 };
@@ -129,38 +115,53 @@ const CATEGORY_ICONS: Record<string, string> = {
   gaming: '🎮',
 };
 
-// GET - List available adapters with real connected status
+// GET - List available adapters with real connected status from Admin API
 export async function GET(request: NextRequest) {
   try {
-    const env = getEnvConfig();
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get('category');
 
-    const buildAdapters = (defs: AdapterDef[]) =>
-      defs.map((d) => ({
-        platform: d.platform,
-        name: d.name,
-        icon: d.icon,
-        connected: d.isConnected(env),
-        status: d.isConnected(env) ? ('active' as const) : ('available' as const),
-        auth_type: d.auth_type,
-        auth_fields: d.auth_fields,
-      }));
+    const buildAdapters = async (defs: AdapterDef[]) => {
+      const results = [];
+      for (const d of defs) {
+        let connected = false;
+        if (d.alwaysConnected) {
+          connected = true;
+        } else {
+          const handler = getAdapterLockHandler(d.moduleId);
+          if (handler) {
+            const credentials = await handler.fetchCredentials();
+            connected = !handler.isLocked(credentials);
+          }
+        }
+        results.push({
+          platform: d.platform,
+          name: d.name,
+          icon: d.icon,
+          connected,
+          status: connected ? ('active' as const) : ('available' as const),
+          auth_type: d.auth_type,
+          auth_fields: d.auth_fields,
+        });
+      }
+      return results;
+    };
 
     if (category && category in ADAPTER_DEFINITIONS) {
-      const adapters = buildAdapters(ADAPTER_DEFINITIONS[category]);
+      const adapters = await buildAdapters(ADAPTER_DEFINITIONS[category]);
       return NextResponse.json({ category, adapters });
     }
 
-    const allCategories = Object.entries(ADAPTER_DEFINITIONS).map(([cat, defs]) => {
-      const adapters = buildAdapters(defs);
-      return {
+    const allCategories = [];
+    for (const [cat, defs] of Object.entries(ADAPTER_DEFINITIONS)) {
+      const adapters = await buildAdapters(defs);
+      allCategories.push({
         category: cat,
         icon: CATEGORY_ICONS[cat] || '📦',
         adapters,
         connected_count: adapters.filter((a) => a.connected).length,
-      };
-    });
+      });
+    }
 
     return NextResponse.json({
       categories: allCategories,
@@ -173,7 +174,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Connect/disconnect adapter by updating .env keys
+// POST - Connect/disconnect adapter via Admin API credential store
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -200,44 +201,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Unknown adapter: ${platform}` }, { status: 400 });
     }
 
-    if (action === 'connect' && credentials) {
-      // Write credentials to .env
-      let envConfig: Record<string, string> = {};
-      if (existsSync(ENV_PATH)) {
-        envConfig = parseEnvFile(readFileSync(ENV_PATH, 'utf-8'));
-      }
+    const handler = getAdapterLockHandler(adapterDef.moduleId);
 
+    if (action === 'connect' && credentials) {
+      // Map UI credential keys to Admin API credential keys
+      const credentialMap: Record<string, string> = {};
       for (const field of adapterDef.auth_fields) {
         const value = credentials[field.key];
         if (value !== undefined && value !== '') {
-          envConfig[field.envVar] = value;
+          credentialMap[field.credentialKey] = value;
         }
       }
 
-      // Write back
-      const lines = ['# gRPC LLM Agent Framework - Environment Configuration', '# Auto-generated by UI settings', ''];
-      for (const [k, v] of Object.entries(envConfig)) {
-        if (v) lines.push(`${k}=${v}`);
+      // Store credentials via Admin API
+      if (handler) {
+        const stored = await handler.storeCredentials(credentialMap);
+        if (!stored) {
+          console.warn(`[Adapters API] Admin API store failed for ${platform}, falling back to hot-reload`);
+        }
       }
-      writeFileSync(ENV_PATH, lines.join('\n') + '\n', 'utf-8');
 
-      console.log(`[Adapters API] Connected ${category}/${platform}`);
+      console.log(`[Adapters API] Connected ${category}/${platform} via Admin API`);
 
       // Hot-reload credentials to dashboard_service (no container restart needed)
       let hotReloadOk = false;
       try {
-        // Build credential/settings maps matching dashboard_service env var naming
         const credMap: Record<string, string> = {};
         const settingsMap: Record<string, string> = {};
         for (const field of adapterDef.auth_fields) {
           const value = credentials[field.key];
           if (!value) continue;
           if (field.type === 'text') {
-            settingsMap[field.key.replace(/^[a-z]+/, '').replace(/^[A-Z]/, c => c.toLowerCase())] = value;
+            settingsMap[field.credentialKey] = value;
           } else {
-            // Derive short key: openweatherApiKey -> api_key, clashroyalePlayerTag -> player_tag
-            const shortKey = field.envVar.split('_').slice(field.envVar.startsWith('GOOGLE') ? 2 : 1).join('_').toLowerCase();
-            credMap[shortKey] = value;
+            credMap[field.credentialKey] = value;
           }
         }
 
@@ -271,21 +268,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'disconnect') {
-      // Remove credentials from .env
-      let envConfig: Record<string, string> = {};
-      if (existsSync(ENV_PATH)) {
-        envConfig = parseEnvFile(readFileSync(ENV_PATH, 'utf-8'));
+      // Remove credentials via Admin API
+      if (handler) {
+        try {
+          const ADMIN_API_BASE = process.env.ADMIN_API_URL || 'http://localhost:8003';
+          await fetch(
+            `${ADMIN_API_BASE}/admin/modules/${encodeURIComponent(adapterDef.moduleId)}/credentials`,
+            { method: 'DELETE' }
+          );
+        } catch (err) {
+          console.warn(`[Adapters API] Admin API delete failed for ${platform}:`, (err as Error).message);
+        }
       }
-
-      for (const field of adapterDef.auth_fields) {
-        delete envConfig[field.envVar];
-      }
-
-      const lines = ['# gRPC LLM Agent Framework - Environment Configuration', '# Auto-generated by UI settings', ''];
-      for (const [k, v] of Object.entries(envConfig)) {
-        if (v) lines.push(`${k}=${v}`);
-      }
-      writeFileSync(ENV_PATH, lines.join('\n') + '\n', 'utf-8');
 
       console.log(`[Adapters API] Disconnected ${category}/${platform}`);
 
