@@ -68,6 +68,80 @@ export interface SystemInfo {
   adapters: { count: number };
 }
 
+// ── Capability Contract Types (Phase 6) ─────────────────────────────────────
+
+export enum FeatureStatus {
+  HEALTHY = 'healthy',
+  DEGRADED = 'degraded',
+  UNAVAILABLE = 'unavailable',
+  UNKNOWN = 'unknown',
+}
+
+export interface ToolCapability {
+  name: string;
+  description: string;
+  registered: boolean;
+  category: 'builtin' | 'custom';
+}
+
+export interface ModuleCapability {
+  id: string;
+  name: string;
+  category: string;
+  platform: string;
+  status: 'installed' | 'draft' | 'disabled';
+  version: number | null;
+  has_tests: boolean;
+}
+
+export interface ProviderCapability {
+  id: string;
+  name: string;
+  tier: 'standard' | 'heavy' | 'ultra';
+  locked: boolean;
+  connection_tested: boolean;
+  last_test_ok: boolean | null;
+}
+
+export interface AdapterCapability {
+  id: string;
+  name: string;
+  category: string;
+  locked: boolean;
+  missing_fields: string[];
+  last_data_timestamp: string | null;
+  connection_tested: boolean;
+  last_test_ok: boolean | null;
+}
+
+export interface FeatureHealth {
+  feature: string;
+  status: FeatureStatus;
+  degraded_reasons: string[];
+  dependencies: string[];
+}
+
+export interface CapabilityEnvelope {
+  tools: ToolCapability[];
+  modules: ModuleCapability[];
+  providers: ProviderCapability[];
+  adapters: AdapterCapability[];
+  features: FeatureHealth[];
+  config_version: string;
+  timestamp: string;
+}
+
+export interface CapabilityResponse {
+  data: CapabilityEnvelope | null;
+  etag: string;
+  notModified: boolean;
+}
+
+export interface ConfigVersionResponse {
+  config_version: string;
+  etag: string;
+}
+
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
 async function adminFetch<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -112,6 +186,56 @@ export const adminApi = {
 
   // System
   systemInfo: () => adminFetch<SystemInfo>('/admin/system-info'),
+
+  // Capability Contract (Phase 6)
+  getCapabilities: async (etag?: string): Promise<CapabilityResponse> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (etag) {
+      headers['If-None-Match'] = `"${etag}"`;
+    }
+
+    const res = await fetch(`${ADMIN_BASE}/admin/capabilities`, { headers });
+
+    if (res.status === 304) {
+      return { data: null, etag: etag!, notModified: true };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Admin API ${res.status}: ${body}`);
+    }
+
+    const data = await res.json();
+    const responseEtag = res.headers.get('ETag')?.replace(/"/g, '') || '';
+
+    return { data, etag: responseEtag, notModified: false };
+  },
+
+  getFeatureHealth: () => adminFetch<FeatureHealth[]>('/admin/feature-health'),
+
+  getConfigVersion: async (etag?: string): Promise<ConfigVersionResponse> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (etag) {
+      headers['If-None-Match'] = `"${etag}"`;
+    }
+
+    const res = await fetch(`${ADMIN_BASE}/admin/config/version`, { headers });
+
+    if (res.status === 304) {
+      // On 304, return current etag (unchanged)
+      return { config_version: '', etag: etag! };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Admin API ${res.status}: ${body}`);
+    }
+
+    const data = await res.json();
+    const responseEtag = res.headers.get('ETag')?.replace(/"/g, '') || '';
+
+    return { config_version: data.config_version, etag: responseEtag };
+  },
 };
 
 // ── SSE stream ───────────────────────────────────────────────────────────────
