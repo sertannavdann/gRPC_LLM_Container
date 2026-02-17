@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, ClassVar
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from shared.modules.security_policy import FORBIDDEN_IMPORTS
+
 
 class ErrorCode(str, Enum):
     """Standard error codes for contract violations."""
@@ -40,17 +42,6 @@ class AdapterContractSpec:
         "get_schema"
     }
 
-    # Forbidden imports (security baseline)
-    FORBIDDEN_IMPORTS = {
-        "os.system",
-        "subprocess",
-        "eval",
-        "exec",
-        "__import__",
-        "compile",
-        "importlib.import_module",
-    }
-
     # Required decorator import
     REQUIRED_DECORATOR_IMPORT = "register_adapter"
 
@@ -76,7 +67,7 @@ class AdapterContractSpec:
             # Check direct imports: import subprocess
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name in AdapterContractSpec.FORBIDDEN_IMPORTS:
+                    if alias.name in FORBIDDEN_IMPORTS:
                         forbidden_found.append(alias.name)
 
             # Check from imports: from os import system
@@ -84,7 +75,7 @@ class AdapterContractSpec:
                 if node.module:
                     for alias in node.names:
                         full_name = f"{node.module}.{alias.name}"
-                        if full_name in AdapterContractSpec.FORBIDDEN_IMPORTS:
+                        if full_name in FORBIDDEN_IMPORTS:
                             forbidden_found.append(full_name)
 
             # Check eval/exec calls

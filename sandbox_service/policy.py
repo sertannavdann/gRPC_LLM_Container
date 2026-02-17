@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Set, List, Dict, Optional
 import re
 
+from shared.modules.security_policy import FORBIDDEN_IMPORTS
+
 
 class NetworkMode(str, Enum):
     """Network access modes for sandbox execution."""
@@ -43,17 +45,6 @@ IMPORT_ALLOWLISTS: Dict[ImportCategory, Set[str]] = {
     ImportCategory.DATA_PROCESSING: {
         "csv", "pydantic"
     }
-}
-
-# Forbidden imports from AdapterContractSpec
-FORBIDDEN_IMPORTS: Set[str] = {
-    "os.system",
-    "subprocess",
-    "eval",
-    "exec",
-    "__import__",
-    "compile",
-    "importlib.import_module",
 }
 
 # Blocked domains (always denied even in integration mode)
