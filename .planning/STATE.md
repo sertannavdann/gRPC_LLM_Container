@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 4 (Release-Quality Verification)** — complete. All 4 plans executed.
+**Phase 5 (Refactoring)** — in progress. 1/3 plans executed.
 
-**Progress**: 4/4 plans complete, 105+ new tests passing
-**Current Focus**: Phase 5 (Audit Trail)
+**Progress**: 1/3 plans complete, 40+ new dedup tests passing, zero regressions
+**Current Focus**: Code quality and architecture cleanup
 
 ---
 
@@ -70,6 +70,9 @@
 - ✅ **Plan 03: Unified Verify Command** — `make verify` chains 7 test tiers, latency snapshot (p50/p95/p99), structured pass/fail report (10 tests)
 - ✅ **Plan 04: Provider Lock/Unlock** — Base class + 5 provider handlers, connection test API, settings UI lock gating (12 tests)
 
+### Phase 5: Refactoring 🔄 (1/3 plans complete)
+- ✅ **Plan 01: Module Deduplication** — 5 shared modules (security_policy, static_analysis, identifiers, hashing, validation_types), eliminated 6 areas of code duplication, 40 tests, zero regressions
+
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
 - ✅ Unified orchestrator (replaced supervisor-worker mesh, Jan 2026)
@@ -91,7 +94,7 @@
 
 ---
 
-## Open Risks
+## Open Risksz
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
@@ -155,8 +158,8 @@
 ## Known Gaps
 
 1. ~~Phase 3 wiring closure~~ — ✅ All gaps closed: DraftManager/VersionManager wired to admin API, usage_store/quota_manager passed to admin server, datetime deprecations fixed. 134 tests passing.
-2. **Auth + metering complete, audit/marketplace pending** — auth implemented in Phase 1; metering implemented in Phase 2; audit (Phase 5) and marketplace (Phase 7) remain.
-3. **Track C (Co-Evolution)** — Curriculum Agent, Executor Agent, approval gates: 0% complete, planned for Phase 6.
+2. **Auth + metering complete, audit/marketplace pending** — auth implemented in Phase 1; metering implemented in Phase 2; audit (Phase 7) and marketplace (Phase 9) remain.
+3. **Track C (Co-Evolution)** — Curriculum Agent, Executor Agent, approval gates: 0% complete, planned for Phase 8.
 4. **Multi-tenant isolation** — org_id scoping implemented in Phase 1 (registry, credentials, state); full multi-tenant deployment not yet tested at scale.
 5. **No E2E tests** for Pipeline UI SSE reconnection.
 6. **No centralized logging** — logs are per-container, searched via `docker-compose logs`.
@@ -187,15 +190,17 @@ Phase                          Status        Requirements  Done  Remaining
 Phase 0: Foundation            complete      —             —     —
 Phase 1: Auth Boundary         complete      3             3     0
 Phase 2: Run-Unit Metering     complete      4             4     0
-Phase 3: Self-Evolution Engine complete        2             2     0
-Phase 4: Release-Quality       in-progress   4             2     2
-Phase 5: Audit Trail           not-started   3             0     3
-Phase 6: Co-Evolution          not-started   4             0     4
-Phase 7: Enterprise & Market   not-started   12            0     12
+Phase 3: Self-Evolution Engine complete      2             2     0
+Phase 4: Release-Quality       complete      4             4     0
+Phase 5: Refactoring           not-started   —             0     —
+Phase 6: UX/UI Expansion       not-started   2             0     2
+Phase 7: Audit Trail           not-started   3             0     3
+Phase 8: Co-Evolution          not-started   4             0     4
+Phase 9: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
 TOTAL                                        30            11    19
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
-**Phase 4 detail:** 2/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
+**Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
