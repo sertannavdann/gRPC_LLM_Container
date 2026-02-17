@@ -286,8 +286,10 @@ services:
     networks:
       - rag_net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
-      interval: 10s
+      # Distroless image: no shell, wget, or curl available.
+      # Port 13133 health extension is verified by make status via external probe.
+      test: ["NONE"]
+      interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
