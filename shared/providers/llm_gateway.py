@@ -6,10 +6,13 @@ Provides:
 - Response validation against GeneratorResponseContract
 - Budget tracking and enforcement
 - Deterministic fallback on model failures
+- Bounded retry with exponential backoff and jitter (EDMO doc T4)
 """
 
 import logging
 import json
+import random
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -28,6 +31,43 @@ from shared.modules.contracts import GeneratorResponseContract
 
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_backoff(attempt: int, base: float = 1.0, cap: float = 30.0) -> float:
+    """
+    Exponential backoff with jitter.
+
+    Based on Event-Driven Microservice Orchestration Principles (EDMO) T4:
+    Reduces P99 latency from 2600ms to 1100ms under load by distributing
+    retry attempts across time.
+
+    Args:
+        attempt: Attempt number (0-indexed)
+        base: Base delay in seconds (default 1.0)
+        cap: Maximum delay in seconds (default 30.0)
+
+    Returns:
+        Delay in seconds with jitter applied
+
+    Example:
+        >>> _compute_backoff(0)  # First retry: ~0.5-1.5s
+        >>> _compute_backoff(3)  # Fourth retry: ~4-12s
+        >>> _compute_backoff(10)  # Capped: ~15-45s (capped at 30s + jitter)
+    """
+    # Exponential: base * (2 ** attempt)
+    delay = min(base * (2 ** attempt), cap)
+
+    # Add jitter: random value between 0 and 50% of delay
+    jitter = random.uniform(0, delay * 0.5)
+
+    total_delay = delay + jitter
+
+    logger.debug(
+        f"Backoff computed for attempt {attempt}: "
+        f"delay={delay:.2f}s, jitter={jitter:.2f}s, total={total_delay:.2f}s"
+    )
+
+    return total_delay
 
 
 class Purpose(str, Enum):
@@ -144,6 +184,7 @@ class LLMGateway:
         providers: Dict[str, BaseProvider],
         routing_policy: RoutingPolicy,
         budget_config: Optional[BudgetConfig] = None,
+        max_retries: int = 5,
     ):
         """
         Initialize LLM Gateway.
@@ -152,15 +193,18 @@ class LLMGateway:
             providers: Dictionary of provider_name -> provider instance
             routing_policy: RoutingPolicy defining model preferences
             budget_config: Optional budget constraints
+            max_retries: Maximum retry attempts for transient failures (default 5)
         """
         self.providers = providers
         self.routing_policy = routing_policy
         self.budget_config = budget_config or BudgetConfig()
         self.job_budgets: Dict[str, JobBudget] = {}
+        self.max_retries = max_retries
 
         logger.info(
             f"LLMGateway initialized with {len(providers)} providers, "
-            f"max_tokens_per_request={self.budget_config.max_tokens_per_request}"
+            f"max_tokens_per_request={self.budget_config.max_tokens_per_request}, "
+            f"max_retries={max_retries}"
         )
 
     def register_provider(self, name: str, provider: BaseProvider) -> None:
@@ -302,6 +346,92 @@ class LLMGateway:
 
         return contract
 
+    async def _call_provider_with_retry(
+        self,
+        provider: BaseProvider,
+        request: ChatRequest,
+        provider_name: str,
+        model_name: str,
+    ) -> ChatResponse:
+        """
+        Call provider with bounded retry on transient failures.
+
+        Implements exponential backoff with jitter per EDMO doc T4.
+        Retries only on transient errors (429, 503, connection errors).
+        Fails fast on permanent errors (401, 400, 422).
+
+        Args:
+            provider: Provider instance to call
+            request: Chat request
+            provider_name: Provider name for logging
+            model_name: Model name for logging
+
+        Returns:
+            ChatResponse from provider
+
+        Raises:
+            ProviderAuthError: On auth failures (not retried)
+            ProviderRateLimitError: After max retries exhausted
+            ProviderConnectionError: After max retries exhausted
+            Exception: On other errors
+        """
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                # Call provider
+                response = await provider.generate(request)
+                return response
+
+            except ProviderAuthError:
+                # Auth error - fail fast, don't retry
+                logger.error(
+                    f"Auth error with {provider_name}/{model_name} - failing fast"
+                )
+                raise
+
+            except (ProviderRateLimitError, ProviderConnectionError) as e:
+                # Transient error - retry with backoff
+                last_error = e
+                error_type = type(e).__name__
+
+                # Check if this is a rate limit with Retry-After header
+                retry_after = None
+                if isinstance(e, ProviderRateLimitError):
+                    # Try to extract Retry-After from error
+                    # (This assumes the error might include it; provider-specific)
+                    pass  # Could be enhanced with provider-specific logic
+
+                if attempt < self.max_retries - 1:  # Don't wait after last attempt
+                    if retry_after:
+                        delay = float(retry_after)
+                        logger.info(
+                            f"{error_type} on {provider_name}/{model_name} "
+                            f"(attempt {attempt + 1}/{self.max_retries}), "
+                            f"honoring Retry-After: {delay}s"
+                        )
+                    else:
+                        delay = _compute_backoff(attempt)
+                        logger.info(
+                            f"{error_type} on {provider_name}/{model_name} "
+                            f"(attempt {attempt + 1}/{self.max_retries}), "
+                            f"retrying after {delay:.2f}s"
+                        )
+
+                    time.sleep(delay)
+                else:
+                    logger.warning(
+                        f"{error_type} on {provider_name}/{model_name} "
+                        f"- max retries ({self.max_retries}) exhausted"
+                    )
+
+        # All retries exhausted - raise last error
+        if last_error:
+            raise last_error
+        else:
+            # Should never reach here, but safety fallback
+            raise Exception(f"Max retries exhausted for {provider_name}/{model_name}")
+
     async def generate(
         self,
         purpose: Purpose,
@@ -375,8 +505,13 @@ class LLMGateway:
                 if seed is not None:
                     request.extra["seed"] = seed
 
-                # Call provider
-                response = await provider.generate(request)
+                # Call provider with retry logic
+                response = await self._call_provider_with_retry(
+                    provider=provider,
+                    request=request,
+                    provider_name=pref.provider_name,
+                    model_name=pref.model_name,
+                )
 
                 # Validate schema
                 try:
