@@ -93,15 +93,15 @@ class {class_name}(BaseAdapter[Dict[str, Any]]):
 '''
 
 # Default fetch body for API-key authenticated JSON APIs
-DEFAULT_FETCH_BODY = '''        headers = {{}}
+DEFAULT_FETCH_BODY = '''        headers = {}
         if config and config.credentials:
             api_key = config.credentials.get("api_key", "")
             if api_key:
-                headers["Authorization"] = f"Bearer {{api_key}}"
+                headers["Authorization"] = f"Bearer {api_key}"
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.get(
-                f"{{self._api_base}}/",
+                f"{self._api_base}/",
                 headers=headers,
             )
             response.raise_for_status()
@@ -114,13 +114,13 @@ DEFAULT_TRANSFORM_BODY = '''        items = raw_data.get("items", raw_data.get("
 
         results = []
         for item in items:
-            results.append({{
+            results.append({
                 "id": str(item.get("id", "")),
                 "name": str(item.get("name", "")),
                 "data": item,
                 "fetched_at": datetime.utcnow().isoformat(),
                 "platform": self.platform,
-            }})
+            })
         return results'''
 
 DEFAULT_CAPABILITIES = """{
@@ -157,7 +157,7 @@ def generate_adapter_code(
     if not display_name:
         display_name = module_name.replace("_", " ").title()
     if not class_name:
-        class_name = f"{platform.title().replace('_', '')}Adapter"
+        class_name = f"{platform.title().replace('_', '').replace('-', '')}Adapter"
     if not fetch_raw_body:
         fetch_raw_body = DEFAULT_FETCH_BODY
     if not transform_body:

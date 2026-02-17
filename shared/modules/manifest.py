@@ -94,7 +94,7 @@ class ModuleManifest:
         if not self.display_name:
             self.display_name = self.name.replace("_", " ").title()
         if not self.class_name:
-            self.class_name = f"{self.platform.title().replace('_', '')}Adapter"
+            self.class_name = f"{self.platform.title().replace('_', '').replace('-', '')}Adapter"
 
     @property
     def module_id(self) -> str:

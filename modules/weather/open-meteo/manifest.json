@@ -7,7 +7,7 @@
   "description": "Fetches weather data from Open-Meteo API",
   "icon": "weather",
   "entry_point": "adapter.py",
-  "class_name": "Open-MeteoAdapter",
+  "class_name": "OpenMeteoAdapter",
   "test_file": "test_adapter.py",
   "requires_api_key": false,
   "api_key_instructions": "",

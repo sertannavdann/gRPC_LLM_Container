@@ -25,7 +25,7 @@ API_BASE_URL = "https://api.open-meteo.com/v1/forecast"
     requires_auth=False,
     auth_type="none",
 )
-class Open-MeteoAdapter(BaseAdapter[Dict[str, Any]]):
+class OpenMeteoAdapter(BaseAdapter[Dict[str, Any]]):
     """
     Test Weather Module adapter.
     Fetches data from https://api.open-meteo.com/v1/forecast and transforms to canonical format.
@@ -41,15 +41,15 @@ class Open-MeteoAdapter(BaseAdapter[Dict[str, Any]]):
 
     async def fetch_raw(self, config: AdapterConfig) -> Dict[str, Any]:
         """Fetch raw data from the Test Weather Module API."""
-        headers = {{}}
+        headers = {}
         if config and config.credentials:
             api_key = config.credentials.get("api_key", "")
             if api_key:
-                headers["Authorization"] = f"Bearer {{api_key}}"
+                headers["Authorization"] = f"Bearer {api_key}"
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.get(
-                f"{{self._api_base}}/",
+                f"{self._api_base}/",
                 headers=headers,
             )
             response.raise_for_status()
@@ -63,13 +63,13 @@ class Open-MeteoAdapter(BaseAdapter[Dict[str, Any]]):
 
         results = []
         for item in items:
-            results.append({{
+            results.append({
                 "id": str(item.get("id", "")),
                 "name": str(item.get("name", "")),
                 "data": item,
                 "fetched_at": datetime.utcnow().isoformat(),
                 "platform": self.platform,
-            }})
+            })
         return results
 
     def get_capabilities(self) -> Dict[str, bool]:
