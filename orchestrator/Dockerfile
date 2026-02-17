@@ -29,6 +29,9 @@ COPY core/ ./core/
 # Tools components
 COPY tools/ ./tools/
 
+# Agent soul files (identity, prompt composition)
+COPY agents/ ./agents/
+
 # Sandbox policy modules required by module validator imports
 COPY sandbox_service/ ./sandbox_service/
 
