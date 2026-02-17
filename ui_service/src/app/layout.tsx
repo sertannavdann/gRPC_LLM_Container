@@ -4,7 +4,7 @@ import './globals.css';
 import './highlight.css';
 
 export const metadata: Metadata = {
-  title: 'gRPC LLM Agent',
+  title: 'NEXUS | gRPC LLM Agent',
   description: 'Multi-provider AI agent with finance, health & navigation dashboards',
 };
 
