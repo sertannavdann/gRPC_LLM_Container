@@ -45,6 +45,8 @@ from shared.providers.llm_gateway import (
     AllModelsFailedError,
 )
 from shared.providers.base_provider import ChatMessage
+from shared.agents.prompt_composer import compose, StageContext, load_soul
+from shared.agents.confidence import Blueprint2CodeScorer
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,10 @@ MAX_REPAIR_ATTEMPTS = 10
 
 # Global gateway reference (set by orchestrator)
 _llm_gateway: Optional[LLMGateway] = None
+
+# Load builder soul and create confidence scorer at module level
+_builder_soul = load_soul("builder")
+_scorer = Blueprint2CodeScorer(threshold=0.6)
 
 
 def set_llm_gateway(gateway: LLMGateway) -> None:
@@ -527,12 +533,35 @@ def repair_module(
             ),
         }
 
-    # Build repair prompt
+    # Build repair prompt using auto-composition
+    # Create stage context with repair hints
+    stage_context = StageContext(
+        stage="repair",
+        attempt=len(audit_log.attempts) + 1,
+        intent=f"Repair module {module_id} based on validation failures",
+        repair_hints=[
+            f"{hint.get('category', 'unknown')}: {hint.get('message', '')}"
+            for hint in fix_hints
+        ],
+        prior_artifacts={"current_files": current_files},
+        policy_profile="default",
+    )
+
+    # Compose system prompt from builder soul + stage context
+    system_prompt = compose(
+        system=_builder_soul,
+        context=stage_context,
+        output_schema=GeneratorResponseContract.model_json_schema(),
+    )
+
+    # Build user message with current files and errors
+    user_message = _build_repair_user_prompt(
+        module_id, current_files, fix_hints_text, failing_logs,
+    )
+
     messages = [
-        ChatMessage(role="system", content=REPAIR_SYSTEM_PROMPT),
-        ChatMessage(role="user", content=_build_repair_user_prompt(
-            module_id, current_files, fix_hints_text, failing_logs,
-        )),
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(role="user", content=user_message),
     ]
 
     contract_schema = GeneratorResponseContract.model_json_schema()
