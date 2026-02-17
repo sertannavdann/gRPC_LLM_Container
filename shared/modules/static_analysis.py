@@ -68,12 +68,19 @@ class StaticImportChecker:
                                 f"Line {node.lineno}: Import '{full_name}' is forbidden"
                             )
 
-            # Check for dynamic import calls: __import__('module')
+            # Check for dynamic import calls and dangerous function calls
             elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "__import__":
-                    violations.append(
-                        f"Line {node.lineno}: Dynamic __import__ call detected"
-                    )
+                if isinstance(node.func, ast.Name):
+                    if node.func.id == "__import__":
+                        violations.append(
+                            f"Line {node.lineno}: Dynamic __import__ call detected"
+                        )
+                    elif node.func.id in {"eval", "exec", "compile"}:
+                        # Check if these dangerous functions are in the forbidden set
+                        if node.func.id in forbidden:
+                            violations.append(
+                                f"Line {node.lineno}: Import '{node.func.id}' is forbidden"
+                            )
 
         return violations
 
