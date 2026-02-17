@@ -153,6 +153,9 @@ class OnlineProviderWrapper:
         provider: BaseProvider,
         model: str,
         temperature: float = 0.7,
+        top_p: float = 1.0,
+        thinking: Optional[bool] = None,
+        provider_max_tokens: Optional[int] = None,
         provider_metrics: Optional[ProviderMetrics] = None,
         provider_name: str = "unknown",
     ):
@@ -171,6 +174,9 @@ class OnlineProviderWrapper:
         self.temperature = temperature
         self.provider_metrics = provider_metrics
         self.provider_name = provider_name
+        self.top_p = top_p
+        self.thinking = thinking
+        self.provider_max_tokens = provider_max_tokens
         # Thread-local storage for event loops (thread-safe with concurrent requests)
         self._thread_local = threading.local()
         logger.info(f"OnlineProviderWrapper initialized: model={model}, temp={temperature}")
@@ -217,16 +223,24 @@ class OnlineProviderWrapper:
         temp = temperature if temperature is not None else self.temperature
         start_time = time.time()
 
+        effective_max_tokens = max_tokens
+        if self.provider_max_tokens is not None:
+            effective_max_tokens = min(max_tokens, self.provider_max_tokens)
+
         # Build ChatRequest
         request = ChatRequest(
             messages=[ChatMessage(role="user", content=prompt)],
             model=self.model,
             temperature=temp,
-            max_tokens=max_tokens,
+            max_tokens=effective_max_tokens,
+            top_p=self.top_p,
         )
 
         if response_format == "json":
             request.extra["response_format"] = {"type": "json_object"}
+
+        if self.thinking is not None:
+            request.extra["chat_template_kwargs"] = {"thinking": self.thinking}
 
         try:
             # Run async generate
@@ -262,13 +276,21 @@ class OnlineProviderWrapper:
         """
         temp = temperature if temperature is not None else self.temperature
         
+        effective_max_tokens = max_tokens
+        if self.provider_max_tokens is not None:
+            effective_max_tokens = min(max_tokens, self.provider_max_tokens)
+
         request = ChatRequest(
             messages=[ChatMessage(role="user", content=prompt)],
             model=self.model,
             temperature=temp,
-            max_tokens=max_tokens,
+            max_tokens=effective_max_tokens,
+            top_p=self.top_p,
             stream=True,
         )
+
+        if self.thinking is not None:
+            request.extra["chat_template_kwargs"] = {"thinking": self.thinking}
         
         # For streaming, we need to adapt the async iterator
         # This is a simplified implementation - yields tokens as they come
@@ -975,6 +997,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.tool_registry.register(install_module)
         self.tool_registry.register(uninstall_module)
 
+        # Register draft lifecycle and version management tools
+        self._register_draft_version_tools()
+
         # NOTE: delegate_to_worker removed - worker mesh disabled
 
         # Dynamic module loading from modules/ directory
@@ -1052,6 +1077,75 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         logger.info("Orchestrator initialization complete")
 
+    def _register_draft_version_tools(self):
+        """Register DraftManager + VersionManager operations as orchestrator chat tools."""
+
+        # We create thin wrapper functions that call the managers.
+        # The actual DraftManager/VersionManager instances are created in serve()
+        # and passed to admin_api, but we also need them here for chat tool access.
+        # For now, create lightweight instances that share the same DB/directory paths.
+        _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
+        _dm = DraftManager(
+            drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
+            modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
+            audit_log=_audit_log,
+        )
+        _vm = VersionManager(
+            db_path=os.getenv("VERSION_DB_PATH", "data/module_versions.db"),
+            audit_log=_audit_log,
+        )
+
+        def create_draft(module_id: str) -> dict:
+            """Create a new draft from an installed module for editing. Returns draft metadata with draft_id."""
+            return _dm.create_draft(module_id=module_id, actor="chat_agent")
+
+        def edit_draft(draft_id: str, file_path: str, content: str) -> dict:
+            """Edit a file in a draft workspace. file_path must be adapter.py, test_adapter.py, or manifest.json."""
+            return _dm.edit_file(draft_id=draft_id, file_path=file_path, content=content, actor="chat_agent")
+
+        def diff_draft(draft_id: str) -> dict:
+            """Show unified diff of draft changes vs the source module version."""
+            return _dm.get_diff(draft_id=draft_id, actor="chat_agent")
+
+        def validate_draft(draft_id: str) -> dict:
+            """Run validation pipeline on a draft. Returns validation result with pass/fail."""
+            return _dm.validate_draft(draft_id=draft_id, actor="chat_agent")
+
+        def promote_draft(draft_id: str) -> dict:
+            """Promote a validated draft to a new module version. Requires admin role."""
+            return _dm.promote_draft(draft_id=draft_id, actor="chat_agent")
+
+        def list_versions(module_id: str) -> list:
+            """List all versions of a module with metadata (version_id, status, created_at)."""
+            return _vm.list_versions(module_id=module_id)
+
+        def rollback_version(module_id: str, target_version_id: str) -> dict:
+            """Roll back a module to a specific prior version. Instant pointer movement."""
+            return _vm.rollback_to_version(
+                module_id=module_id,
+                target_version_id=target_version_id,
+                actor="chat_agent",
+            )
+
+        # Set proper tool metadata for LLM consumption
+        create_draft.__name__ = "create_draft"
+        edit_draft.__name__ = "edit_draft"
+        diff_draft.__name__ = "diff_draft"
+        validate_draft.__name__ = "validate_draft"
+        promote_draft.__name__ = "promote_draft"
+        list_versions.__name__ = "list_versions"
+        rollback_version.__name__ = "rollback_version"
+
+        self.tool_registry.register(create_draft)
+        self.tool_registry.register(edit_draft)
+        self.tool_registry.register(diff_draft)
+        self.tool_registry.register(validate_draft)
+        self.tool_registry.register(promote_draft)
+        self.tool_registry.register(list_versions)
+        self.tool_registry.register(rollback_version)
+
+        logger.info("Draft lifecycle + version management tools registered (7 tools)")
+
     def _initialize_llm_gateway(self) -> Optional[LLMGateway]:
         """
         Initialize LLM Gateway for purpose-based code generation and repair.
@@ -1072,6 +1166,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             provider_type_map = {
                 "perplexity": ProviderType.PERPLEXITY,
                 "openai": ProviderType.OPENAI,
+                "nvidia": ProviderType.OPENAI,
                 "anthropic": ProviderType.ANTHROPIC,
             }
 
@@ -1139,6 +1234,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         provider_type_map = {
             "perplexity": ProviderType.PERPLEXITY,
             "openai": ProviderType.OPENAI,
+            "nvidia": ProviderType.OPENAI,
             "anthropic": ProviderType.ANTHROPIC,
         }
 
@@ -1174,6 +1270,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             provider=provider,
             model=self.config.provider_model,
             temperature=self.config.temperature,
+            top_p=self.config.provider_top_p if self.config.provider_top_p is not None else 1.0,
+            thinking=self.config.provider_thinking,
+            provider_max_tokens=self.config.provider_max_tokens,
             provider_metrics=self.provider_metrics if self.observability_enabled else None,
             provider_name=provider_type,
         )
