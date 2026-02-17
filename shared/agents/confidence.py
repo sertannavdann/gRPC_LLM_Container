@@ -14,20 +14,9 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Any, List, Set
 
-logger = logging.getLogger(__name__)
+from shared.modules.security_policy import FORBIDDEN_IMPORTS
 
-# Security policy: forbidden imports that indicate policy violations
-FORBIDDEN_IMPORTS = {
-    "subprocess",
-    "os.system",
-    "os.popen",
-    "shutil.rmtree",
-    "eval",
-    "exec",
-    "__import__",
-    "importlib.import_module",
-    "compile",
-}
+logger = logging.getLogger(__name__)
 
 
 @dataclass

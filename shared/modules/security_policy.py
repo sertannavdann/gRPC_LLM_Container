@@ -11,7 +11,9 @@ from typing import Set
 # These imports are always forbidden in generated adapter code
 FORBIDDEN_IMPORTS: Set[str] = {
     "os.system",
+    "os.popen",
     "subprocess",
+    "shutil.rmtree",
     "eval",
     "exec",
     "__import__",
