@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 6 (UX/UI Visual Expansion)** — **complete**. 4/4 plans executed.
+**Phase 6 (UX/UI Visual Expansion)** — **complete**. 5/5 plans executed (Wave 4 stabilization completed).
 
-**Progress**: Phase 5 complete (4/4 plans, 98+ new tests, zero regressions). Phase 6 complete (4/4 plans: capability contract, dashboard + adapter cards, finance dashboard + chat actions, monitoring + error taxonomy + preferences).
-**Current Focus**: Phase 6 complete. Ready for Phase 7 (Audit Trail).
+**Progress**: Phase 5 complete (4/4 plans, 98+ new tests, zero regressions). Phase 6 complete (5/5 plans including Wave 4 runtime stability extension) with deterministic capability fallback and synchronization guards shipped.
+**Current Focus**: Begin Phase 7 (Audit Trail) planning and execution.
 
 ---
 
@@ -76,11 +76,12 @@
 - ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
 - ✅ **Plan 04: Service Dependency Cleanup** — Conditional otel-instrumentation-fastapi import (dashboard starts without it), orchestrator credential proxy eliminated (4 HTTP calls → local _credential_store), SSE pipeline self-probe removed + data deduplication (50% I/O reduction), gRPC service state "idle"→"unknown", ServiceNode UI updated
 
-### Phase 6: UX/UI Visual Expansion ✅ (4/4 plans complete)
+### Phase 6: UX/UI Visual Expansion ✅ (5/5 plans complete)
 - ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge (25 min, 4 tasks, 10 files)
 - ✅ **Plan 02: Dashboard + Adapter Cards** — Dashboard page with XState-backed adapter cards, Framer Motion animations, DataSourceIndicator (30 min, 2 tasks, 4 files)
 - ✅ **Plan 03: Finance Dashboard + Chat Actions** — XState financePageMachine with hierarchical states, Recharts LineChart/PieChart, TransactionTable with pagination, ActionCard with Framer Motion, Zustand -> XState refresh (5 min, 2 tasks, 6 files)
 - ✅ **Plan 04: Monitoring + Error Taxonomy + Preferences** — XState monitoringPageMachine with parallel regions, React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart with P99 target, error taxonomy (5 types), Framer Motion error components, SQLite user prefs with optimistic concurrency, 6-page navigation (21 min, 3 tasks, 13 files)
+- ✅ **Plan 05: Runtime Stability Hardening** — Same-origin admin read consolidation, centralized runtime params, reason-coded capability fallback contract (`snapshot_source`, `fallback_reason`), deterministic auth/degraded/network/empty state mapping, monitoring latency stable shape route, synchronization guard tests (3 tasks, 11 files)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -191,6 +192,13 @@
 - **Framer Motion layoutId for nav indicator**: Spring animation smoothly transitions between route changes
 - **Dynamic imports for heavy libraries**: React Flow (~60KB) and Recharts (~40KB) loaded on-demand per page via next/dynamic
 
+### Phase 6 Plan 05 (Runtime Stability Hardening)
+- **Same-origin admin BFF is mandatory for browser reads**: UI reads capabilities/config/version through `/api/admin` only, removing direct browser cross-origin admin fetches.
+- **Fallback payloads are reason-coded and contract-valid**: `CapabilityEnvelope` now includes `snapshot_source` and `fallback_reason` to distinguish live vs fallback snapshots.
+- **Machine-state interpretation is explicit**: XState capability region maps auth/degraded/network/empty states deterministically before page rendering.
+- **Runtime parameters are centralized**: Polling, timeout, retry, and fallback-related constants are sourced from one shared module.
+- **Drift guards added for contract/render sync**: Python and TypeScript tests validate fallback shape, classification mapping, and latency endpoint stability.
+
 ---
 
 ## Known Gaps
@@ -231,16 +239,16 @@ Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine complete      2             2     0
 Phase 4: Release-Quality       complete      4             4     0
 Phase 5: Refactoring           complete      —             —     —
-Phase 6: UX/UI Expansion       complete      4             4     0
+Phase 6: UX/UI Expansion       complete      5             5     0
 Phase 7: Audit Trail           not-started   3             0     3
 Phase 8: Co-Evolution          not-started   4             0     4
 Phase 9: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        32            17    19
+TOTAL                                        33            18    18
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
 **Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
 
-**Phase 6 detail:** 4/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard): XState-backed adapter cards + DataSourceIndicator. Plan 03 (finance + chat): XState financePageMachine + Recharts + ActionCard + Zustand refresh. Plan 04 (monitoring + errors + prefs): XState parallel regions + React Flow topology + Recharts latency + error taxonomy + user prefs + navigation. Total: ~81 min, 11 tasks, 36 files.
+**Phase 6 detail:** 5/5 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard): XState-backed adapter cards + DataSourceIndicator. Plan 03 (finance + chat): XState financePageMachine + Recharts + ActionCard + Zustand refresh. Plan 04 (monitoring + errors + prefs): XState parallel regions + React Flow topology + Recharts latency + error taxonomy + user prefs + navigation. Plan 05 (runtime stability): centralized runtime params, same-origin admin BFF reads, reason-coded fallback metadata, deterministic auth/degraded/network/empty rendering, and sync-guard tests. Total: ~89 min, 14 tasks, 47 files.
