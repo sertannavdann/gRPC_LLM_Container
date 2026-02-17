@@ -14,6 +14,10 @@
 
 import { setup, fromPromise } from 'xstate';
 import { adminApi, CapabilityEnvelope } from '../lib/adminClient';
+import {
+  CAPABILITY_RETRY_DELAY_MS,
+  CONFIG_POLL_INTERVAL_MS,
+} from '../lib/runtime-params';
 
 // ── Context & Events ─────────────────────────────────────────────────────────
 
@@ -169,7 +173,7 @@ export const nexusAppMachine = setup({
 
         current: {
           after: {
-            30000: 'polling', // Poll config version every 30s
+            [CONFIG_POLL_INTERVAL_MS]: 'polling',
           },
         },
 
@@ -206,7 +210,7 @@ export const nexusAppMachine = setup({
             CAPABILITY_REFRESH_REQUESTED: 'loading',
           },
           after: {
-            5000: [
+            [CAPABILITY_RETRY_DELAY_MS]: [
               {
                 guard: 'isRetryableError',
                 target: 'loading', // Auto-retry retryable errors after 5s

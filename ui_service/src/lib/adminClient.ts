@@ -5,9 +5,11 @@
  * and dashboard SSE stream (port 8001).
  */
 
+import { ADMIN_REQUEST_TIMEOUT_MS } from './runtime-params';
+
 const ADMIN_BASE =
   typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:8003`
+    ? '/api/admin'
     : 'http://localhost:8003';
 
 const DASHBOARD_BASE =
@@ -176,6 +178,7 @@ export interface ConfigVersionResponse {
 
 async function adminFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${ADMIN_BASE}${path}`, {
+    signal: opts?.signal ?? AbortSignal.timeout(ADMIN_REQUEST_TIMEOUT_MS),
     ...opts,
     headers: { 'Content-Type': 'application/json', ...opts?.headers },
   });
@@ -227,7 +230,10 @@ export const adminApi = {
       headers['If-None-Match'] = `"${etag}"`;
     }
 
-    const res = await fetch(`${ADMIN_BASE}/admin/capabilities`, { headers });
+    const res = await fetch(`${ADMIN_BASE}/admin/capabilities`, {
+      headers,
+      signal: AbortSignal.timeout(ADMIN_REQUEST_TIMEOUT_MS),
+    });
 
     if (res.status === 304) {
       return { data: null, etag: etag!, notModified: true };
@@ -252,7 +258,10 @@ export const adminApi = {
       headers['If-None-Match'] = `"${etag}"`;
     }
 
-    const res = await fetch(`${ADMIN_BASE}/admin/config/version`, { headers });
+    const res = await fetch(`${ADMIN_BASE}/admin/config/version`, {
+      headers,
+      signal: AbortSignal.timeout(ADMIN_REQUEST_TIMEOUT_MS),
+    });
 
     if (res.status === 304) {
       // On 304, return current etag (unchanged)
