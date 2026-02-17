@@ -169,9 +169,11 @@ export const financePageMachine = setup({
     },
 
     storeFinanceData: ({ context, event }) => {
-      if (event.type === 'xstate.done.actor.fetchFinanceData' && event.output) {
-        context.transactions = event.output.transactions;
-        context.summary = event.output.summary;
+      // Called from onDone handler — event.output already typed via XState actor resolution
+      const output = (event as any).output;
+      if (output) {
+        context.transactions = output.transactions;
+        context.summary = output.summary;
         context.error = null;
       }
     },
