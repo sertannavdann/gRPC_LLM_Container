@@ -73,7 +73,7 @@ function maybeFallback(upstreamPath: string, reason: FallbackReason) {
 async function handleProxy(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const params = await ctx.params;
   const pathParts = params.path || [];
-  const upstreamPath = `/${pathParts.join('/')}`;
+  const upstreamPath = `/admin/${pathParts.join('/')}`;
 
   const upstream = new URL(`${ADMIN_API_BASE}${upstreamPath}`);
   upstream.search = request.nextUrl.search;
