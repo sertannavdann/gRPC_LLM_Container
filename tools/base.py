@@ -9,18 +9,28 @@ Defines the interface for all tools following Google ADK best practices:
 - Idempotency key support for safe retries
 """
 
-from typing import Dict, Any, Protocol, runtime_checkable, Optional, Callable, TypeVar
+from typing import Dict, Any, Protocol, runtime_checkable, Optional, Callable, TypeVar, Generic
 from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
 from functools import wraps
 import hashlib
 import json
 import time
+import uuid
 import threading
 import logging
+
+try:
+    from pydantic import BaseModel, ValidationError
+except ImportError:
+    BaseModel = None  # type: ignore
+    ValidationError = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
+TRequest = TypeVar('TRequest')
+TResponse = TypeVar('TResponse')
 
 
 @runtime_checkable
@@ -60,11 +70,13 @@ class ToolResult:
     status: str  # "success" | "error"
     data: Any = None
     message: str = ""
-    
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert to dictionary format expected by LLMs.
-        
+
         Returns:
             dict: Standardized result with status key
         """
@@ -73,6 +85,10 @@ class ToolResult:
             result["data"] = self.data
         if self.message:
             result["message"] = self.message
+        if self.error is not None:
+            result["error"] = self.error
+        if self.metadata:
+            result["_metadata"] = self.metadata
         return result
 
 
@@ -112,49 +128,344 @@ class ToolError(Exception):
         return result
 
 
-class BaseTool:
+class BaseToolLegacy:
     """
-    Base class for tools requiring stateful initialization.
-    
+    Legacy base class for tools requiring stateful initialization.
+
+    Renamed from BaseTool for backward compatibility. New tools should
+    inherit from the new BaseTool ABC instead.
+
     Most tools should be simple functions decorated with @tool.
     Use this class only when you need:
     - API clients with authentication
     - Connection pooling
     - Shared configuration across calls
-    
+
     Example:
-        >>> class WebSearchTool(BaseTool):
+        >>> class WebSearchTool(BaseToolLegacy):
         ...     def __init__(self, api_key: str):
         ...         self.api_key = api_key
-        ...     
+        ...
         ...     def execute(self, query: str) -> Dict[str, Any]:
         ...         # Use self.api_key for API calls
         ...         return {"status": "success", "results": [...]}
     """
-    
+
     name: str = ""
     description: str = ""
-    
+
     def execute(self, **kwargs: Any) -> Dict[str, Any]:
         """
         Execute tool with provided arguments.
-        
+
         Must be overridden by subclasses.
-        
+
         Args:
             **kwargs: Tool-specific arguments
-        
+
         Returns:
             dict: Result with "status" key
-        
+
         Raises:
             NotImplementedError: If not overridden by subclass
         """
         raise NotImplementedError(f"{self.__class__.__name__}.execute() not implemented")
-    
+
     def __call__(self, **kwargs: Any) -> Dict[str, Any]:
         """Make tool instances callable."""
         return self.execute(**kwargs)
+
+
+# =============================================================================
+# NEW TOOL ABSTRACTIONS (Phase 05-05)
+# =============================================================================
+
+
+class BaseTool(ABC, Generic[TRequest, TResponse]):
+    """
+    Abstract base class for all tools with typed request/response lifecycle.
+
+    Mirrors the BaseAdapter[T] pattern from shared/adapters/base.py.
+    Subclasses implement validate_input, execute_internal, and format_output.
+
+    The execute() method orchestrates the full lifecycle:
+    validate_input -> execute_internal -> format_output, with timing and error handling.
+
+    Type Parameters:
+        TRequest: The validated request type (typically a Pydantic BaseModel)
+        TResponse: The response type from execute_internal
+
+    Example:
+        >>> class MyTool(BaseTool[MyRequest, MyResponse]):
+        ...     name = "my_tool"
+        ...     description = "Does something useful"
+        ...
+        ...     def validate_input(self, **kwargs) -> MyRequest:
+        ...         return MyRequest(**kwargs)
+        ...
+        ...     def execute_internal(self, request: MyRequest) -> MyResponse:
+        ...         return MyResponse(result="done")
+        ...
+        ...     def format_output(self, response: MyResponse) -> Dict[str, Any]:
+        ...         return {"result": response.result}
+    """
+
+    name: str = ""
+    description: str = ""
+    version: str = "1.0.0"
+
+    @abstractmethod
+    def validate_input(self, **kwargs) -> TRequest:
+        """
+        Validate and parse raw kwargs into a typed request object.
+
+        Args:
+            **kwargs: Raw arguments from the caller
+
+        Returns:
+            TRequest: Validated request object
+
+        Raises:
+            ValueError: If validation fails
+        """
+        ...
+
+    @abstractmethod
+    def execute_internal(self, request: TRequest) -> TResponse:
+        """
+        Execute the core tool logic with a validated request.
+
+        Args:
+            request: Validated request object from validate_input
+
+        Returns:
+            TResponse: Raw response from tool execution
+        """
+        ...
+
+    @abstractmethod
+    def format_output(self, response: TResponse) -> Dict[str, Any]:
+        """
+        Format the raw response into a dictionary for LLM consumption.
+
+        Args:
+            response: Raw response from execute_internal
+
+        Returns:
+            dict: Formatted output data
+        """
+        ...
+
+    def execute(self, **kwargs) -> Dict[str, Any]:
+        """
+        Orchestrate the full tool lifecycle: validate -> execute -> format.
+
+        Handles timing, request ID generation, and error handling.
+        Returns a dict with 'status' key and '_metadata' dict.
+
+        Args:
+            **kwargs: Raw arguments passed to the tool
+
+        Returns:
+            dict: Result with status, data, and _metadata keys
+        """
+        request_id = str(uuid.uuid4())[:8]
+        start = time.monotonic()
+
+        try:
+            request = self.validate_input(**kwargs)
+            response = self.execute_internal(request)
+            output = self.format_output(response)
+
+            duration_ms = round((time.monotonic() - start) * 1000, 2)
+
+            result = {
+                "status": "success",
+                **output,
+                "_metadata": {
+                    "tool": self.name,
+                    "version": self.version,
+                    "request_id": request_id,
+                    "duration_ms": duration_ms,
+                },
+            }
+            return result
+
+        except (ValueError, TypeError) as e:
+            duration_ms = round((time.monotonic() - start) * 1000, 2)
+            logger.warning(f"Tool {self.name} validation error: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "_metadata": {
+                    "tool": self.name,
+                    "version": self.version,
+                    "request_id": request_id,
+                    "duration_ms": duration_ms,
+                },
+            }
+
+        except Exception as e:
+            duration_ms = round((time.monotonic() - start) * 1000, 2)
+            logger.error(f"Tool {self.name} execution error: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "_metadata": {
+                    "tool": self.name,
+                    "version": self.version,
+                    "request_id": request_id,
+                    "duration_ms": duration_ms,
+                },
+            }
+
+    def __call__(self, **kwargs) -> Dict[str, Any]:
+        """Make tool instances callable, delegating to execute()."""
+        return self.execute(**kwargs)
+
+    def get_schema(self) -> Dict[str, Any]:
+        """
+        Return tool schema for LLM function-calling.
+
+        Returns:
+            dict: Schema with name, description, and parameters
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {},
+        }
+
+
+class ActionStrategy(ABC):
+    """
+    Abstract strategy for a single action within a CompositeTool.
+
+    Each strategy handles one action type (e.g., 'search', 'load', 'build').
+    Registered with a CompositeTool via _register_strategy().
+
+    Attributes:
+        action_name: Unique name for this action (used for dispatch)
+        description: Human-readable description of the action
+    """
+
+    action_name: str = ""
+    description: str = ""
+
+    @abstractmethod
+    def execute(self, **kwargs) -> Dict[str, Any]:
+        """
+        Execute the action with provided arguments.
+
+        Args:
+            **kwargs: Action-specific arguments
+
+        Returns:
+            dict: Result data (will be wrapped by CompositeTool)
+        """
+        ...
+
+
+class CompositeTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
+    """
+    Tool that dispatches to registered ActionStrategy instances.
+
+    Uses the Strategy pattern to handle multiple actions within a single tool.
+    Subclasses register strategies in __init__ via _register_strategy().
+
+    Example:
+        >>> class MyCompositeTool(CompositeTool):
+        ...     name = "my_tool"
+        ...     description = "Multi-action tool"
+        ...
+        ...     def __init__(self):
+        ...         super().__init__()
+        ...         self._register_strategy(SearchStrategy())
+        ...         self._register_strategy(LoadStrategy())
+    """
+
+    def __init__(self):
+        self._strategies: Dict[str, ActionStrategy] = {}
+
+    def _register_strategy(self, strategy: ActionStrategy) -> None:
+        """
+        Register an action strategy for dispatch.
+
+        Args:
+            strategy: ActionStrategy instance with a unique action_name
+        """
+        self._strategies[strategy.action_name] = strategy
+
+    def validate_input(self, **kwargs) -> Dict[str, Any]:
+        """
+        Validate that 'action' param exists and maps to a registered strategy.
+
+        Args:
+            **kwargs: Must include 'action' key
+
+        Returns:
+            dict: The validated kwargs
+
+        Raises:
+            ValueError: If action is missing or not registered
+        """
+        action = kwargs.get("action")
+        if not action:
+            available = list(self._strategies.keys())
+            raise ValueError(
+                f"Missing required 'action' parameter. Available actions: {available}"
+            )
+        if action not in self._strategies:
+            available = list(self._strategies.keys())
+            raise ValueError(
+                f"Unknown action '{action}'. Available actions: {available}"
+            )
+        return kwargs
+
+    def execute_internal(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Dispatch to the appropriate strategy based on the 'action' key.
+
+        Args:
+            request: Validated kwargs containing 'action' key
+
+        Returns:
+            dict: Result from the strategy's execute method
+        """
+        action = request["action"]
+        strategy = self._strategies[action]
+        # Pass all kwargs except 'action' to the strategy
+        strategy_kwargs = {k: v for k, v in request.items() if k != "action"}
+        return strategy.execute(**strategy_kwargs)
+
+    def format_output(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Pass through strategy output (strategies return complete dicts).
+
+        Args:
+            response: Dict from the strategy
+
+        Returns:
+            dict: Same dict, passed through
+        """
+        return response
+
+    def get_schema(self) -> Dict[str, Any]:
+        """
+        Return schema including available actions.
+
+        Returns:
+            dict: Schema with name, description, parameters, and actions
+        """
+        actions = {}
+        for name, strategy in self._strategies.items():
+            actions[name] = {"description": strategy.description}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {"action": {"type": "string", "enum": list(self._strategies.keys())}},
+            "actions": actions,
+        }
 
 # =============================================================================
 # IDEMPOTENCY SUPPORT
