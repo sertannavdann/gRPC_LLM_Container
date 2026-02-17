@@ -1,128 +1,127 @@
 """
-Code Executor Tool - Execute code in a sandboxed environment.
+CodeExecutorTool - Execute code in a sandboxed environment.
 
-Wraps the SandboxClient for secure code execution with:
-- Timeout enforcement
-- Memory limits
-- Import whitelisting
-
-This tool is registered with the LocalToolRegistry for LLM access.
+Wraps the SandboxClient for secure code execution.
+Refactored from function-based to BaseTool class.
 """
-
 import logging
 from typing import Dict, Any, Optional, List
 
+from tools.base import BaseTool
+
 logger = logging.getLogger(__name__)
 
-# Module-level client reference (set by orchestrator during init)
-_sandbox_client = None
+
+class CodeExecutorTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
+    """Execute code in a sandboxed environment."""
+
+    name = "execute_code"
+    description = (
+        "Execute Python code in a sandboxed environment with timeout and memory limits."
+    )
+    version = "2.0.0"
+
+    def __init__(self, sandbox_client=None):
+        self._sandbox_client = sandbox_client
+
+    def validate_input(self, **kwargs) -> Dict[str, Any]:
+        code = kwargs.get("code")
+        if not code or not str(code).strip():
+            raise ValueError("No code provided")
+
+        language = kwargs.get("language", "python").lower()
+        if language != "python":
+            raise ValueError(f"Unsupported language: {language}. Only 'python' is supported.")
+
+        timeout = max(1, min(kwargs.get("timeout_seconds", 30), 60))
+
+        return {
+            "code": code,
+            "language": language,
+            "timeout_seconds": timeout,
+            "allowed_imports": kwargs.get("allowed_imports") or [],
+        }
+
+    def execute_internal(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        if self._sandbox_client is None:
+            return {
+                "status": "error",
+                "error": "Sandbox service not available. Code execution is disabled.",
+                "data": None,
+            }
+
+        try:
+            logger.info(f"Executing code ({len(request['code'])} chars, timeout={request['timeout_seconds']}s)")
+
+            result = self._sandbox_client.execute_code(
+                code=request["code"],
+                language=request["language"],
+                timeout_seconds=request["timeout_seconds"],
+                memory_limit_mb=256,
+                allowed_imports=request["allowed_imports"],
+            )
+
+            if result.get("success"):
+                return {
+                    "status": "success",
+                    "data": {
+                        "stdout": result.get("stdout", ""),
+                        "stderr": result.get("stderr", ""),
+                        "execution_time_ms": result.get("execution_time_ms", 0),
+                    },
+                    "error": None,
+                }
+            else:
+                error_msg = result.get("error_message", "Unknown error")
+                if result.get("timed_out"):
+                    error_msg = f"Execution timed out after {request['timeout_seconds']} seconds"
+                elif result.get("memory_exceeded"):
+                    error_msg = "Memory limit exceeded"
+
+                return {
+                    "status": "error",
+                    "error": error_msg,
+                    "data": {
+                        "stdout": result.get("stdout", ""),
+                        "stderr": result.get("stderr", ""),
+                        "exit_code": result.get("exit_code", -1),
+                    },
+                }
+
+        except Exception as e:
+            logger.error(f"Code execution failed: {e}", exc_info=True)
+            return {"status": "error", "error": f"Execution failed: {str(e)}", "data": None}
+
+    def format_output(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        return response
 
 
-def set_sandbox_client(client):
-    """Set the sandbox client instance (called by orchestrator)."""
-    global _sandbox_client
-    _sandbox_client = client
+# ── Backward-compat module-level function ────────────────────────────
+
+_default_tool: Optional[CodeExecutorTool] = None
 
 
 def execute_code(
     code: str,
     language: str = "python",
     timeout_seconds: int = 30,
-    allowed_imports: Optional[List[str]] = None
+    allowed_imports: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """
-    Execute code in a sandboxed environment.
-    
-    Use this tool to run Python code snippets safely. The code runs
-    in an isolated environment with restricted imports and resource limits.
-    
-    Args:
-        code: The Python code to execute
-        language: Programming language (only 'python' supported currently)
-        timeout_seconds: Maximum execution time (default 30, max 60)
-        allowed_imports: Additional modules to allow importing (beyond safe defaults)
-    
-    Returns:
-        Dict with status, stdout/stderr, execution time, and any errors
-    
-    Examples:
-        - execute_code("print(2 + 2)")
-        - execute_code("import math; print(math.sqrt(16))")
-        - execute_code("for i in range(5): print(i)")
-    """
-    global _sandbox_client
-    
-    if _sandbox_client is None:
-        logger.error("Sandbox client not initialized")
-        return {
-            "status": "error",
-            "error": "Sandbox service not available. Code execution is disabled.",
-            "data": None
-        }
-    
-    if not code or not code.strip():
-        return {
-            "status": "error",
-            "error": "No code provided",
-            "data": None
-        }
-    
-    # Validate language
-    language = language.lower()
-    if language != "python":
-        return {
-            "status": "error",
-            "error": f"Unsupported language: {language}. Only 'python' is supported.",
-            "data": None
-        }
-    
-    # Clamp timeout
-    timeout_seconds = max(1, min(timeout_seconds, 60))
-    
-    try:
-        logger.info(f"Executing code ({len(code)} chars, timeout={timeout_seconds}s)")
-        
-        result = _sandbox_client.execute_code(
-            code=code,
-            language=language,
-            timeout_seconds=timeout_seconds,
-            memory_limit_mb=256,
-            allowed_imports=allowed_imports or []
-        )
-        
-        # Format response
-        if result.get("success"):
-            return {
-                "status": "success",
-                "data": {
-                    "stdout": result.get("stdout", ""),
-                    "stderr": result.get("stderr", ""),
-                    "execution_time_ms": result.get("execution_time_ms", 0)
-                },
-                "error": None
-            }
-        else:
-            error_msg = result.get("error_message", "Unknown error")
-            
-            if result.get("timed_out"):
-                error_msg = f"Execution timed out after {timeout_seconds} seconds"
-            elif result.get("memory_exceeded"):
-                error_msg = "Memory limit exceeded"
-            
-            return {
-                "status": "error",
-                "error": error_msg,
-                "data": {
-                    "stdout": result.get("stdout", ""),
-                    "stderr": result.get("stderr", ""),
-                    "exit_code": result.get("exit_code", -1)
-                }
-            }
-    
-    except Exception as e:
-        logger.error(f"Code execution failed: {e}", exc_info=True)
-        return {
-            "status": "error",
-            "error": f"Execution failed: {str(e)}",
-            "data": None
-        }
+    """Legacy wrapper."""
+    global _default_tool
+    if _default_tool is None:
+        _default_tool = CodeExecutorTool()
+    return _default_tool(
+        code=code, language=language,
+        timeout_seconds=timeout_seconds,
+        allowed_imports=allowed_imports,
+    )
+
+
+def set_sandbox_client(client):
+    """Legacy wrapper to set sandbox client."""
+    global _default_tool
+    if _default_tool is None:
+        _default_tool = CodeExecutorTool(sandbox_client=client)
+    else:
+        _default_tool._sandbox_client = client
