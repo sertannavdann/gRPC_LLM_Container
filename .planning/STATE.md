@@ -8,8 +8,8 @@
 
 **Phase 6 (UX/UI Visual Expansion)** — in progress. 2/4 plans executed.
 
-**Progress**: Phase 5 complete (3/3 plans, 86+ new tests, zero regressions). Phase 6 Plans 01-02 complete (capability contract + dashboard adapter cards).
-**Current Focus**: Dashboard with XState-backed adapter cards, Framer Motion animations
+**Progress**: Phase 5 complete (3/3 plans, 86+ new tests, zero regressions). Phase 6 Plans 01 and 03 complete (capability contract, finance dashboard, chat actions).
+**Current Focus**: UX/UI visual expansion — native finance page with XState, Recharts visualization, chat action cards
 
 ---
 
@@ -76,8 +76,8 @@
 - ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
 
 ### Phase 6: UX/UI Visual Expansion 🔄 (2/4 plans complete)
-- ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge
-- ✅ **Plan 02: Dashboard + Adapter Cards** — XState-backed dashboard page, AdapterCard with Framer Motion, DataSourceIndicator with pulse animations, feature health bar
+- ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge (25 min, 4 tasks, 10 files)
+- ✅ **Plan 03: Finance Dashboard + Chat Actions** — XState financePageMachine with hierarchical states, Recharts LineChart/PieChart, TransactionTable with pagination, ActionCard with Framer Motion, Zustand -> XState refresh (5 min, 2 tasks, 6 files)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -174,11 +174,11 @@
 - **ETag as SHA-256 of serialized envelope JSON**: Deterministic conditional polling for efficient updates
 - **Zustand bridge pattern**: xstateSend registered by useNexusApp, called by chat/other pages for cross-page event dispatch
 
-### Phase 6 Plan 02 (Dashboard + Adapter Cards)
-- **Dashboard driven entirely by XState capability envelope**: useNexusApp hook provides single source of truth - no ad-hoc useState/useEffect
-- **Framer Motion layout prop for animated card grid reflow**: Smooth animations on adapter add/remove without manual transitions
-- **Connect flow redirects to Settings for credential entry**: No inline modal - better separation of concerns
-- **Feature health bar aggregates healthy/degraded/unavailable counts**: System-wide readiness at a glance
+### Phase 6 Plan 03 (Finance Dashboard + Chat Actions)
+- **XState invoked actors (not ad-hoc useEffect)**: testConnection and fetchFinanceData are XState fromPromise actors with proper error handling
+- **Framer Motion AnimatePresence mode="wait"**: Exclusive state transitions — one state exits before next enters (no overlapping animations)
+- **ResponsiveContainer with initialDimension**: SSR-safe Recharts rendering (prevents hydration mismatches)
+- **Zustand bridge for capability refresh**: Tool execution in chat triggers immediate dashboard refresh via XState event dispatch (no 30s poll delay)
 
 ---
 
@@ -232,4 +232,4 @@ TOTAL                                        32            13    19
 
 **Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
 
-**Phase 6 detail:** 2/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard adapter cards): XState-driven page + AdapterCard with Framer Motion + DataSourceIndicator with pulse animations. 27 min execution, 543 lines created.
+**Phase 6 detail:** 2/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge (25 min, 4 tasks, 10 files). Plan 03 (finance dashboard + chat actions): XState financePageMachine with hierarchical states + Recharts charts + TransactionTable + ActionCard + Zustand refresh wiring (5 min, 2 tasks, 6 files). Total: 30 min, 16 files.
