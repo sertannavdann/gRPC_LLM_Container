@@ -29,7 +29,11 @@ from shared.billing import UsageStore, QuotaManager
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
-from tools.builtin.chart_validator import validate_chart, ChartValidationResult
+try:
+    from tools.builtin.chart_validator import validate_chart, ChartValidationResult
+    _HAS_CHART_VALIDATOR = True
+except ImportError:
+    _HAS_CHART_VALIDATOR = False
 
 logger = logging.getLogger(__name__)
 
@@ -1652,6 +1656,9 @@ def validate_chart_artifact(
 
     RBAC: operator+ role required (MANAGE_MODULES permission).
     """
+    if not _HAS_CHART_VALIDATOR:
+        raise HTTPException(501, "Chart validator not available")
+
     import base64
 
     try:
