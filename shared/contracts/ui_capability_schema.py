@@ -142,3 +142,11 @@ class CapabilityEnvelope(BaseModel):
         ..., description="Configuration version hash (for change detection)"
     )
     timestamp: str = Field(..., description="ISO 8601 timestamp of snapshot")
+    snapshot_source: str = Field(
+        default="live",
+        description="Snapshot source: 'live' from admin API or 'fallback' from UI proxy",
+    )
+    fallback_reason: Optional[str] = Field(
+        default=None,
+        description="Fallback reason code when snapshot_source is 'fallback'",
+    )

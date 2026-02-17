@@ -9,10 +9,11 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertCircle, RefreshCw, Activity, CheckCircle } from 'lucide-react';
+import { RefreshCw, Activity } from 'lucide-react';
 import { useNexusApp } from '@/hooks/useNexusApp';
 import { AdapterCard } from '@/components/dashboard/AdapterCard';
 import { DataSourceIndicator } from '@/components/dashboard/DataSourceIndicator';
+import { DegradedBanner, EmptyState } from '@/components/ui/error-states';
 import type { AdapterCapability, FeatureStatus } from '@/lib/adminClient';
 
 export default function DashboardPage() {
@@ -193,20 +194,22 @@ export default function DashboardPage() {
    * Error state
    */
   if (isError && !envelope) {
+    const errorType = error?.type;
+    const title =
+      errorType === 'AUTH'
+        ? 'Admin authentication required'
+        : errorType === 'NETWORK'
+          ? 'Temporary network issue'
+          : 'Dashboard temporarily degraded';
+    const description = error?.message || 'Unable to fetch capability data from the backend';
+
     return (
-      <div className="h-full flex flex-col items-center justify-center bg-background">
-        <AlertCircle className="w-12 h-12 text-destructive mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Failed to load dashboard</h2>
-        <p className="text-muted-foreground mb-6 max-w-md text-center">
-          {error?.message || 'Unable to fetch capability data from the backend'}
-        </p>
-        <button
-          onClick={handleRefresh}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Try Again
-        </button>
+      <div className="h-full flex flex-col justify-center bg-background px-6">
+        <EmptyState
+          title={title}
+          description={description}
+          action={{ label: 'Try Again', onClick: handleRefresh }}
+        />
       </div>
     );
   }
@@ -240,13 +243,23 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {error && (
+        <div className="px-6 pt-4">
+          <DegradedBanner
+            feature={error.type === 'AUTH' ? 'admin-capabilities' : 'capabilities'}
+            reasons={[error.message]}
+            onRetry={handleRefresh}
+          />
+        </div>
+      )}
+
       {/* Adapter Cards Grid */}
       <div className="flex-1 overflow-auto p-6">
         {!envelope?.adapters || envelope.adapters.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <CheckCircle className="w-12 h-12 mb-4" />
-            <p>No adapters configured</p>
-          </div>
+          <EmptyState
+            title="No adapters configured"
+            description="Configure at least one adapter in Settings to populate the dashboard cards."
+          />
         ) : (
           <AnimatePresence mode="popLayout">
             <motion.div

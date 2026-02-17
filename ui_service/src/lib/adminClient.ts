@@ -161,6 +161,8 @@ export interface CapabilityEnvelope {
   features: FeatureHealth[];
   config_version: string;
   timestamp: string;
+  snapshot_source?: 'live' | 'ui_admin_proxy';
+  fallback_reason?: 'admin_auth_required' | 'upstream_unavailable' | null;
 }
 
 export interface CapabilityResponse {

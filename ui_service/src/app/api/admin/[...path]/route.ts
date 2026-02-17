@@ -26,7 +26,7 @@ function fallbackCapabilities(reason: FallbackReason) {
     features: [],
     config_version: 'local-dev-fallback',
     timestamp: now,
-    fallback_source: FALLBACK_SOURCE,
+    snapshot_source: FALLBACK_SOURCE,
     fallback_reason: reason,
   };
 }

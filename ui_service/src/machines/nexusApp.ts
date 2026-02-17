@@ -14,7 +14,9 @@
 
 import { setup, fromPromise } from 'xstate';
 import { adminApi, CapabilityEnvelope } from '../lib/adminClient';
+import { classifyError, NexusErrorType as ClassifiedError } from '../lib/errors';
 import {
+  CAPABILITY_POLL_INTERVAL_MS,
   CAPABILITY_RETRY_DELAY_MS,
   CONFIG_POLL_INTERVAL_MS,
 } from '../lib/runtime-params';
@@ -39,6 +41,7 @@ export type NexusErrorType =
   | { type: 'DEGRADED_PROVIDER'; message: string }
   | { type: 'NETWORK'; message: string }
   | { type: 'AUTH'; message: string }
+  | { type: 'EMPTY'; message: string }
   | { type: 'UNKNOWN'; message: string };
 
 export type NexusAppEvent =
@@ -81,6 +84,10 @@ export const nexusAppMachine = setup({
       const adapters = context.envelope?.adapters || [];
       if (adapters.length === 0) return false;
       return adapters.every((a) => a.locked);
+    },
+
+    isFallbackEnvelope: ({ context }) => {
+      return context.envelope?.snapshot_source === 'ui_admin_proxy';
     },
 
     isRetryableError: ({ context }) => {
@@ -151,7 +158,25 @@ export const nexusAppMachine = setup({
                   if (!event.output.notModified && event.output.data) {
                     context.envelope = event.output.data;
                     context.etag = event.output.etag;
-                    context.error = null;
+
+                    if (event.output.data.fallback_reason === 'admin_auth_required') {
+                      context.error = {
+                        type: 'AUTH',
+                        message: 'Admin API key required for full dashboard capabilities.',
+                      };
+                    } else if (event.output.data.fallback_reason === 'upstream_unavailable') {
+                      context.error = {
+                        type: 'DEGRADED_PROVIDER',
+                        message: 'Capability snapshot is in fallback mode while upstream is unavailable.',
+                      };
+                    } else if (event.output.data.adapters.length === 0) {
+                      context.error = {
+                        type: 'EMPTY',
+                        message: 'No adapters are currently configured.',
+                      };
+                    } else {
+                      context.error = null;
+                    }
                   }
                 },
               ],
@@ -161,10 +186,20 @@ export const nexusAppMachine = setup({
               actions: [
                 ({ context, event }) => {
                   const errorMessage = (event.error as Error)?.message || 'Failed to fetch capabilities';
-                  context.error = {
-                    type: 'NETWORK',
-                    message: errorMessage,
-                  };
+                  const kind = classifyError(event.error);
+                  if (kind === ClassifiedError.NOT_AUTHORIZED) {
+                    context.error = { type: 'AUTH', message: errorMessage };
+                    return;
+                  }
+                  if (kind === ClassifiedError.DEGRADED_PROVIDER) {
+                    context.error = { type: 'DEGRADED_PROVIDER', message: errorMessage };
+                    return;
+                  }
+                  if (kind === ClassifiedError.TIMEOUT) {
+                    context.error = { type: 'NETWORK', message: errorMessage };
+                    return;
+                  }
+                  context.error = { type: 'UNKNOWN', message: errorMessage };
                 },
               ],
             },
@@ -173,6 +208,7 @@ export const nexusAppMachine = setup({
 
         current: {
           after: {
+            [CAPABILITY_POLL_INTERVAL_MS]: 'polling',
             [CONFIG_POLL_INTERVAL_MS]: 'polling',
           },
         },
@@ -184,8 +220,7 @@ export const nexusAppMachine = setup({
             onDone: [
               {
                 guard: ({ event }) => {
-                  // If config version changed (different etag), fetch full envelope
-                  return event.output.etag !== (event as any).input?.etag;
+                  return event.output.config_version !== '';
                 },
                 target: 'loading',
                 actions: [
@@ -237,6 +272,10 @@ export const nexusAppMachine = setup({
 
       on: {
         ENVELOPE_LOADED: [
+          {
+            guard: 'isFallbackEnvelope',
+            target: '.unknown',
+          },
           {
             guard: 'hasLiveAdapter',
             target: '.live',

@@ -48,7 +48,7 @@ export function classifyError(error: unknown): NexusErrorType {
       if (status === 502 || status === 503) {
         return NexusErrorType.DEGRADED_PROVIDER;
       }
-      if (status === 408 || status === 504) {
+      if (status === 408 || status === 429 || status === 504) {
         return NexusErrorType.TIMEOUT;
       }
     }
@@ -85,8 +85,16 @@ export function classifyError(error: unknown): NexusErrorType {
     }
   }
 
-  // Default: treat unknown errors as provider degradation
-  return NexusErrorType.DEGRADED_PROVIDER;
+  // Network fetch failures usually surface as TypeError("Failed to fetch")
+  if (error instanceof Error) {
+    const networkMessage = error.message.toLowerCase();
+    if (networkMessage.includes('failed to fetch') || networkMessage.includes('network')) {
+      return NexusErrorType.TIMEOUT;
+    }
+  }
+
+  // Default: unknown shape is treated as schema mismatch.
+  return NexusErrorType.TOOL_SCHEMA_MISMATCH;
 }
 
 // ── Retry Policy ────────────────────────────────────────────────────────────

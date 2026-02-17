@@ -1005,6 +1005,8 @@ def get_capabilities(
         features=features,
         config_version=_get_config_version(),
         timestamp=datetime.utcnow().isoformat() + "Z",
+        snapshot_source="live",
+        fallback_reason=None,
     )
 
     # Compute ETag
