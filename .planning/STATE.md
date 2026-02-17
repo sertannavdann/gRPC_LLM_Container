@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 6 (UX/UI Visual Expansion)** — in progress. 2/4 plans executed.
+**Phase 6 (UX/UI Visual Expansion)** — **complete**. 4/4 plans executed.
 
-**Progress**: Phase 5 complete (3/3 plans, 86+ new tests, zero regressions). Phase 6 Plans 01 and 03 complete (capability contract, finance dashboard, chat actions).
-**Current Focus**: UX/UI visual expansion — native finance page with XState, Recharts visualization, chat action cards
+**Progress**: Phase 5 complete (3/3 plans, 86+ new tests, zero regressions). Phase 6 complete (4/4 plans: capability contract, dashboard + adapter cards, finance dashboard + chat actions, monitoring + error taxonomy + preferences).
+**Current Focus**: Phase 6 complete. Ready for Phase 7 (Audit Trail).
 
 ---
 
@@ -75,9 +75,11 @@
 - ✅ **Plan 02: Agent Soul.md + Auto-Prompt Composition** — 3 soul.md agent identity files (builder, tester, monitor), auto-prompt composition pipeline, Blueprint2Code confidence scorer (threshold 0.6), bounded retry with jitter (max 5 attempts, exponential backoff), 34 tests, 6 commits, 531s execution
 - ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
 
-### Phase 6: UX/UI Visual Expansion 🔄 (2/4 plans complete)
+### Phase 6: UX/UI Visual Expansion ✅ (4/4 plans complete)
 - ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge (25 min, 4 tasks, 10 files)
+- ✅ **Plan 02: Dashboard + Adapter Cards** — Dashboard page with XState-backed adapter cards, Framer Motion animations, DataSourceIndicator (30 min, 2 tasks, 4 files)
 - ✅ **Plan 03: Finance Dashboard + Chat Actions** — XState financePageMachine with hierarchical states, Recharts LineChart/PieChart, TransactionTable with pagination, ActionCard with Framer Motion, Zustand -> XState refresh (5 min, 2 tasks, 6 files)
+- ✅ **Plan 04: Monitoring + Error Taxonomy + Preferences** — XState monitoringPageMachine with parallel regions, React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart with P99 target, error taxonomy (5 types), Framer Motion error components, SQLite user prefs with optimistic concurrency, 6-page navigation (21 min, 3 tasks, 13 files)
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -180,6 +182,14 @@
 - **ResponsiveContainer with initialDimension**: SSR-safe Recharts rendering (prevents hydration mismatches)
 - **Zustand bridge for capability refresh**: Tool execution in chat triggers immediate dashboard refresh via XState event dispatch (no 30s poll delay)
 
+### Phase 6 Plan 04 (Monitoring + Error Taxonomy + Preferences)
+- **XState parallel regions**: health (30s) + latency (60s) + activeTab run independently — no combinatorial explosion
+- **React Flow custom nodes embed shadcn/ui patterns**: ServiceNode uses Card-like styling with Badges and color-mapped status dots
+- **Error taxonomy drives XState guards**: isRetryable returns true for TIMEOUT and DEGRADED_PROVIDER, enabling auto-retry
+- **SQLite WAL mode for user prefs**: Concurrent reads during optimistic writes, version field for conflict detection
+- **Framer Motion layoutId for nav indicator**: Spring animation smoothly transitions between route changes
+- **Dynamic imports for heavy libraries**: React Flow (~60KB) and Recharts (~40KB) loaded on-demand per page via next/dynamic
+
 ---
 
 ## Known Gaps
@@ -209,7 +219,7 @@
 
 ## Progress Snapshot
 
-> Updated 2026-02-16
+> Updated 2026-02-17
 
 ```
 Phase                          Status        Requirements  Done  Remaining
@@ -220,16 +230,16 @@ Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine complete      2             2     0
 Phase 4: Release-Quality       complete      4             4     0
 Phase 5: Refactoring           complete      —             —     —
-Phase 6: UX/UI Expansion       in-progress   4             2     2
+Phase 6: UX/UI Expansion       complete      4             4     0
 Phase 7: Audit Trail           not-started   3             0     3
 Phase 8: Co-Evolution          not-started   4             0     4
 Phase 9: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        32            13    19
+TOTAL                                        32            17    19
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
 **Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
 
-**Phase 6 detail:** 2/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge (25 min, 4 tasks, 10 files). Plan 03 (finance dashboard + chat actions): XState financePageMachine with hierarchical states + Recharts charts + TransactionTable + ActionCard + Zustand refresh wiring (5 min, 2 tasks, 6 files). Total: 30 min, 16 files.
+**Phase 6 detail:** 4/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard): XState-backed adapter cards + DataSourceIndicator. Plan 03 (finance + chat): XState financePageMachine + Recharts + ActionCard + Zustand refresh. Plan 04 (monitoring + errors + prefs): XState parallel regions + React Flow topology + Recharts latency + error taxonomy + user prefs + navigation. Total: ~81 min, 11 tasks, 36 files.
