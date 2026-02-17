@@ -127,6 +127,14 @@ services:
       - MODULES_DIR=/app/modules
       - AUTH_DB_PATH=/app/data/api_keys.db
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      # Adapter credentials (read by capability lock-state check)
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
+      - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
+      - CLASH_ROYALE_PLAYER_TAG=${CLASH_ROYALE_PLAYER_TAG:-}
+      - GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CALENDAR_CLIENT_ID:-}
+      - GOOGLE_CALENDAR_CLIENT_SECRET=${GOOGLE_CALENDAR_CLIENT_SECRET:-}
+      - GOOGLE_CALENDAR_ACCESS_TOKEN=${GOOGLE_CALENDAR_ACCESS_TOKEN:-}
+      - GOOGLE_CALENDAR_REFRESH_TOKEN=${GOOGLE_CALENDAR_REFRESH_TOKEN:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -261,6 +269,7 @@ services:
       - ENV_FILE_PATH=/app/config/.env
       - CONVERSATIONS_DIR=/app/data/conversations
       - DASHBOARD_SERVICE_URL=http://dashboard:8001
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
     volumes:
       - ./.env:/app/config/.env:rw
       - ./data/conversations:/app/data/conversations:rw

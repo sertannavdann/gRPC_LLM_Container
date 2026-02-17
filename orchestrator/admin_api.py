@@ -844,6 +844,25 @@ def _gather_provider_capabilities() -> list[ProviderCapability]:
     return providers
 
 
+# Env var mapping for known adapters — checked before CredentialStore
+_ADAPTER_ENV_KEYS: dict[str, list[str]] = {
+    "weather/openweather": ["OPENWEATHER_API_KEY"],
+    "weather/open-meteo": [],  # no key required
+    "gaming/clashroyale": ["CLASH_ROYALE_API_KEY"],
+    "calendar/google_calendar": ["GOOGLE_CALENDAR_ACCESS_TOKEN"],
+}
+
+
+def _has_adapter_env_credentials(module_id: str) -> bool:
+    """Check if adapter credentials are available via environment variables."""
+    env_keys = _ADAPTER_ENV_KEYS.get(module_id)
+    if env_keys is None:
+        return False  # unknown adapter — fall through to credential store
+    if not env_keys:
+        return True  # adapter needs no key
+    return all(bool(os.getenv(k)) for k in env_keys)
+
+
 def _gather_adapter_capabilities() -> list[AdapterCapability]:
     """Query adapter registry for installed adapters with lock status."""
     adapters = []
@@ -854,9 +873,12 @@ def _gather_adapter_capabilities() -> list[AdapterCapability]:
         all_adapters = adapter_registry.list_all_flat()
 
         for adapter_info in all_adapters:
-            # Check if adapter has credentials via module credential store
             module_id = f"{adapter_info.category}/{adapter_info.platform}"
-            has_credentials = _check_module_credentials(module_id)
+
+            # Check env vars first, then fall back to credential store
+            has_env_creds = _has_adapter_env_credentials(module_id)
+            has_store_creds = _check_module_credentials(module_id) if not has_env_creds else False
+            has_credentials = has_env_creds or has_store_creds
 
             # Adapter is locked if it requires auth and has no credentials
             locked = adapter_info.requires_auth and not has_credentials
