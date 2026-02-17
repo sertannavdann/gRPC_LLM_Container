@@ -28,6 +28,7 @@ from shared.modules.manifest import ModuleManifest, ModuleStatus, ValidationResu
 from shared.modules.templates.adapter_template import generate_adapter_code
 from shared.modules.templates.test_template import generate_test_code
 from shared.modules.artifacts import ArtifactBundleBuilder, ArtifactIndex
+from shared.modules.identifiers import parse_module_id
 from shared.modules.audit import (
     BuildAuditLog,
     AttemptRecord,
@@ -267,6 +268,7 @@ def build_module(
     # Write files
     module_dir.mkdir(parents=True, exist_ok=True)
     manifest.save(MODULES_DIR)
+    manifest_file = module_dir / "manifest.json"
     (module_dir / "adapter.py").write_text(adapter_code)
     (module_dir / "test_adapter.py").write_text(test_code)
 
@@ -276,7 +278,6 @@ def build_module(
         f"{category}/{platform}/adapter.py": adapter_code,
         f"{category}/{platform}/test_adapter.py": test_code,
     }
-    manifest_file = module_dir / "manifest.json"
 
     artifact_index = ArtifactBundleBuilder.build_from_dict(
         files=scaffold_files,
@@ -295,6 +296,7 @@ def build_module(
         "module_id": module_id,
         "job_id": session.job_id,
         "stage": "scaffold",
+        "adapter_code": adapter_code,
         "module_dir": str(module_dir),
         "files_created": [
             str(module_dir / "manifest.json"),
@@ -332,11 +334,12 @@ def write_module_code(
     Returns:
         Dict with status and file paths written
     """
-    parts = module_id.split("/")
-    if len(parts) != 2:
-        return {"status": "error", "error": f"Invalid module_id: {module_id}. Expected 'category/platform'."}
+    try:
+        parsed = parse_module_id(module_id)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
-    category, platform = parts
+    category, platform = parsed.category, parsed.platform
     module_dir = MODULES_DIR / category / platform
 
     if not module_dir.exists():
@@ -416,11 +419,12 @@ def repair_module(
     Returns:
         Dict with repair status, updated files, and next steps
     """
-    parts = module_id.split("/")
-    if len(parts) != 2:
-        return {"status": "error", "error": f"Invalid module_id: {module_id}"}
+    try:
+        parsed = parse_module_id(module_id)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
-    category, platform = parts
+    category, platform = parsed.category, parsed.platform
     module_dir = MODULES_DIR / category / platform
 
     if not module_dir.exists():

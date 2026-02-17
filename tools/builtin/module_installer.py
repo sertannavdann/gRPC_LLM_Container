@@ -21,11 +21,12 @@ from typing import Dict, Any, Optional
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
 from shared.modules.artifacts import verify_bundle_hash, ArtifactBundleBuilder
+from shared.modules.identifiers import parse_module_id
 
 logger = logging.getLogger(__name__)
 
 MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
-AUDIT_DIR = Path(os.getenv("AUDIT_DIR", "/app/data/audit"))
+AUDIT_DIR = Path(os.getenv("AUDIT_DIR", "data/audit"))
 
 # References set by orchestrator at startup
 _module_loader = None
@@ -67,11 +68,12 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
         Dict with installation status, whether credentials are needed,
         and instructions for the user
     """
-    parts = module_id.split("/")
-    if len(parts) != 2:
-        return {"status": "error", "error": f"Invalid module_id: {module_id}"}
+    try:
+        parsed = parse_module_id(module_id)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
 
-    category, platform = parts
+    category, platform = parsed.category, parsed.platform
     module_dir = MODULES_DIR / category / platform
     manifest_path = module_dir / "manifest.json"
 
@@ -236,13 +238,16 @@ def uninstall_module(module_id: str) -> Dict[str, Any]:
         _module_registry.uninstall(module_id)
 
     # Update manifest on disk
-    parts = module_id.split("/")
-    if len(parts) == 2:
-        manifest_path = MODULES_DIR / parts[0] / parts[1] / "manifest.json"
+    try:
+        parsed = parse_module_id(module_id)
+        manifest_path = MODULES_DIR / parsed.category / parsed.platform / "manifest.json"
         if manifest_path.exists():
             manifest = ModuleManifest.load(manifest_path)
             manifest.status = ModuleStatus.UNINSTALLED
             manifest.save(MODULES_DIR)
+    except ValueError:
+        # Invalid module_id format, skip manifest update
+        pass
 
     logger.info(f"Module uninstalled: {module_id}")
 
