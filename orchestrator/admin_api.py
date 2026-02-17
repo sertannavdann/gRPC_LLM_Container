@@ -8,7 +8,10 @@ and managing NEXUS dynamic modules without container restarts.
 
 import logging
 import os
+import re
+import subprocess
 import threading
+import time
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -318,6 +321,81 @@ def reload_module(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class TestRunResult(BaseModel):
+    module_id: str
+    exit_code: int
+    tests_total: int
+    tests_passed: int
+    tests_failed: int
+    stdout: str
+    stderr: str
+    duration_ms: float
+
+
+@_app.post("/admin/modules/{category}/{platform}/run-tests")
+def run_module_tests(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+):
+    """Run a module's test_adapter.py and return results."""
+    module_id = f"{category}/{platform}"
+    modules_dir = os.getenv("MODULES_DIR", "modules")
+    test_file = os.path.join(modules_dir, category, platform, "test_adapter.py")
+
+    if not os.path.isfile(test_file):
+        raise HTTPException(status_code=404, detail=f"No test file found for {module_id}")
+
+    start = time.monotonic()
+    try:
+        result = subprocess.run(
+            ["python", "-m", "pytest", test_file, "-v", "--tb=short", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=os.path.dirname(os.path.dirname(modules_dir)) or ".",
+        )
+    except subprocess.TimeoutExpired:
+        return TestRunResult(
+            module_id=module_id,
+            exit_code=124,
+            tests_total=0,
+            tests_passed=0,
+            tests_failed=0,
+            stdout="",
+            stderr="Test execution timed out (60s limit)",
+            duration_ms=(time.monotonic() - start) * 1000,
+        )
+
+    elapsed = (time.monotonic() - start) * 1000
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+
+    # Parse pytest summary line (e.g. "3 passed, 1 failed")
+    passed = 0
+    failed = 0
+    for line in stdout.splitlines():
+        line_lower = line.strip().lower()
+        if "passed" in line_lower or "failed" in line_lower:
+            p = re.search(r"(\d+)\s+passed", line_lower)
+            f = re.search(r"(\d+)\s+failed", line_lower)
+            if p:
+                passed = int(p.group(1))
+            if f:
+                failed = int(f.group(1))
+
+    return TestRunResult(
+        module_id=module_id,
+        exit_code=result.returncode,
+        tests_total=passed + failed,
+        tests_passed=passed,
+        tests_failed=failed,
+        stdout=stdout,
+        stderr=stderr,
+        duration_ms=elapsed,
+    )
 
 
 @_app.delete("/admin/modules/{category}/{platform}")
@@ -847,12 +925,16 @@ def _derive_feature_health(
     module_reasons = []
     disabled_count = sum(1 for m in modules if m.status == "disabled")
     draft_count = sum(1 for m in modules if m.status == "draft")
+    failed_count = sum(1 for m in modules if m.status == "failed")
     if disabled_count > 0:
         module_status = FeatureStatus.DEGRADED
         module_reasons.append(f"{disabled_count} module(s) disabled")
     if draft_count > 0 and module_status == FeatureStatus.HEALTHY:
         module_status = FeatureStatus.DEGRADED
         module_reasons.append(f"{draft_count} module(s) in draft state")
+    if failed_count > 0:
+        module_status = FeatureStatus.DEGRADED
+        module_reasons.append(f"{failed_count} module(s) failed to load")
 
     features.append(FeatureHealth(
         feature="modules",
