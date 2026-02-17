@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getProviderUnlockHandler } from '@/lib/provider-lock/providers';
+import { getAdapterLockHandler } from '@/lib/adapter-lock/adapters';
 import type { ProviderLockStatus } from '@/lib/provider-lock/base';
 
-// Path to .env file in the root workspace
+// Path to .env file — used for provider/LLM infrastructure config only
 const ENV_PATH = process.env.ENV_FILE_PATH || '/app/.env';
 
 interface EnvConfig {
@@ -23,19 +24,44 @@ interface EnvConfig {
   ENABLE_DELEGATION?: string;
   LIDM_HEAVY_MODEL?: string;
   LIDM_STANDARD_MODEL?: string;
-  // Adapter keys
-  OPENWEATHER_API_KEY?: string;
-  OPENWEATHER_CITY?: string;
-  GOOGLE_CALENDAR_CLIENT_ID?: string;
-  GOOGLE_CALENDAR_CLIENT_SECRET?: string;
-  GOOGLE_CALENDAR_ACCESS_TOKEN?: string;
-  GOOGLE_CALENDAR_REFRESH_TOKEN?: string;
-  CLASH_ROYALE_API_KEY?: string;
-  CLASH_ROYALE_PLAYER_TAG?: string;
+  // Note: Adapter keys no longer stored in .env — they flow through Admin API
 }
 
 // Admin API for provider/model config (single source of truth)
 const ADMIN_API = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
+
+const DEFAULT_PROVIDER_CATALOG: Record<string, { models: string[]; default: string }> = {
+  local: {
+    models: [
+      'qwen2.5-3b-instruct-q5_k_m',
+      'Qwen2.5-14B-Instruct-Q4_K',
+      'Mistral-Small-24B-Instruct-2501.Q8_0',
+      'qwen2.5-0.5b-instruct-q5_k_m',
+    ],
+    default: 'qwen2.5-3b-instruct-q5_k_m',
+  },
+  perplexity: {
+    models: ['sonar-pro', 'sonar', 'sonar-deep-research'],
+    default: 'sonar-pro',
+  },
+  openai: {
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    default: 'gpt-4o-mini',
+  },
+  nvidia: {
+    models: ['moonshotai/kimi-k2.5'],
+    default: 'moonshotai/kimi-k2.5',
+  },
+  anthropic: {
+    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+    default: 'claude-3-5-sonnet-20241022',
+  },
+};
+
+const DEFAULT_LIDM_TIER_MODELS: Record<string, string[]> = {
+  heavy: ['Qwen2.5-14B-Instruct-Q4_K.gguf', 'Mistral-Small-24B-Instruct-2501.Q8_0.gguf'],
+  standard: ['qwen2.5-0.5b-instruct-q5_k_m.gguf'],
+};
 
 function loadProviderConfigFallback(): {
   providers: Record<string, { models: string[]; default: string }>;
@@ -62,8 +88,14 @@ function loadProviderConfigFallback(): {
 
       if (providers && typeof providers === 'object') {
         return {
-          providers,
-          lidmTierModels: lidmTierModels && typeof lidmTierModels === 'object' ? lidmTierModels : {},
+          providers: {
+            ...DEFAULT_PROVIDER_CATALOG,
+            ...providers,
+          },
+          lidmTierModels:
+            lidmTierModels && typeof lidmTierModels === 'object'
+              ? { ...DEFAULT_LIDM_TIER_MODELS, ...lidmTierModels }
+              : DEFAULT_LIDM_TIER_MODELS,
         };
       }
     } catch (error) {
@@ -72,13 +104,8 @@ function loadProviderConfigFallback(): {
   }
 
   return {
-    providers: {
-      local: {
-        models: ['qwen2.5-3b-instruct-q5_k_m'],
-        default: 'qwen2.5-3b-instruct-q5_k_m',
-      },
-    },
-    lidmTierModels: {},
+    providers: DEFAULT_PROVIDER_CATALOG,
+    lidmTierModels: DEFAULT_LIDM_TIER_MODELS,
   };
 }
 
@@ -135,6 +162,89 @@ function serializeEnvFile(config: Record<string, string>): string {
   return lines.join('\n') + '\n';
 }
 
+/**
+ * Fetch adapter credential status from Admin API via adapter-lock handlers.
+ * Replaces direct .env reading for adapter keys.
+ */
+async function getAdapterStatusFromAdminAPI() {
+  const adapters: Record<string, Record<string, unknown>> = {
+    openweather: { hasApiKey: false, city: 'Toronto,CA' },
+    google_calendar: { hasClientId: false, hasClientSecret: false, hasAccessToken: false, hasRefreshToken: false, connected: false },
+    clashroyale: { hasApiKey: false, playerTag: '' },
+  };
+
+  try {
+    const weatherHandler = getAdapterLockHandler('weather/openweather');
+    if (weatherHandler) {
+      const creds = await weatherHandler.fetchCredentials();
+      adapters.openweather = {
+        hasApiKey: !!creds.api_key,
+        city: (creds.base_url as string) || 'Toronto,CA',
+      };
+    }
+
+    const calendarHandler = getAdapterLockHandler('calendar/google_calendar');
+    if (calendarHandler) {
+      const creds = await calendarHandler.fetchCredentials();
+      adapters.google_calendar = {
+        hasClientId: !!creds.client_id,
+        hasClientSecret: !!creds.client_secret,
+        hasAccessToken: !!creds.oauth_token,
+        hasRefreshToken: !!creds.refresh_token,
+        connected: !!(creds.oauth_token && creds.refresh_token),
+      };
+    }
+
+    const gamingHandler = getAdapterLockHandler('gaming/clashroyale');
+    if (gamingHandler) {
+      const creds = await gamingHandler.fetchCredentials();
+      adapters.clashroyale = {
+        hasApiKey: !!creds.api_key,
+        playerTag: (creds.player_tag as string) || '',
+      };
+    }
+  } catch (err) {
+    console.warn('[Settings API] Failed to fetch adapter status from Admin API:', (err as Error).message);
+  }
+
+  return adapters;
+}
+
+/**
+ * Store adapter credentials via Admin API credential store.
+ * Maps UI field names to adapter-lock credential keys.
+ */
+async function storeAdapterKeysViaAdminAPI(adapterKeys: Record<string, string | undefined>) {
+  // Weather adapter
+  const weatherCreds: Record<string, string> = {};
+  if (adapterKeys.openweatherApiKey) weatherCreds.api_key = adapterKeys.openweatherApiKey;
+  if (adapterKeys.openweatherCity) weatherCreds.base_url = adapterKeys.openweatherCity;
+  if (Object.keys(weatherCreds).length > 0) {
+    const handler = getAdapterLockHandler('weather/openweather');
+    if (handler) await handler.storeCredentials(weatherCreds);
+  }
+
+  // Calendar adapter
+  const calendarCreds: Record<string, string> = {};
+  if (adapterKeys.googleCalendarClientId) calendarCreds.client_id = adapterKeys.googleCalendarClientId;
+  if (adapterKeys.googleCalendarClientSecret) calendarCreds.client_secret = adapterKeys.googleCalendarClientSecret;
+  if (adapterKeys.googleCalendarAccessToken) calendarCreds.oauth_token = adapterKeys.googleCalendarAccessToken;
+  if (adapterKeys.googleCalendarRefreshToken) calendarCreds.refresh_token = adapterKeys.googleCalendarRefreshToken;
+  if (Object.keys(calendarCreds).length > 0) {
+    const handler = getAdapterLockHandler('calendar/google_calendar');
+    if (handler) await handler.storeCredentials(calendarCreds);
+  }
+
+  // Gaming adapter
+  const gamingCreds: Record<string, string> = {};
+  if (adapterKeys.clashroyaleApiKey) gamingCreds.api_key = adapterKeys.clashroyaleApiKey;
+  if (adapterKeys.clashroyalePlayerTag) gamingCreds.player_tag = adapterKeys.clashroyalePlayerTag;
+  if (Object.keys(gamingCreds).length > 0) {
+    const handler = getAdapterLockHandler('gaming/clashroyale');
+    if (handler) await handler.storeCredentials(gamingCreds);
+  }
+}
+
 // GET - Read current settings
 export async function GET() {
   try {
@@ -186,23 +296,7 @@ export async function GET() {
       },
       providerLocks,
       lidmTierModels,
-      adapters: {
-        openweather: {
-          hasApiKey: !!envConfig.OPENWEATHER_API_KEY,
-          city: envConfig.OPENWEATHER_CITY || 'Toronto,CA',
-        },
-        google_calendar: {
-          hasClientId: !!envConfig.GOOGLE_CALENDAR_CLIENT_ID,
-          hasClientSecret: !!envConfig.GOOGLE_CALENDAR_CLIENT_SECRET,
-          hasAccessToken: !!envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN,
-          hasRefreshToken: !!envConfig.GOOGLE_CALENDAR_REFRESH_TOKEN,
-          connected: !!(envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN && envConfig.GOOGLE_CALENDAR_REFRESH_TOKEN),
-        },
-        clashroyale: {
-          hasApiKey: !!envConfig.CLASH_ROYALE_API_KEY,
-          playerTag: envConfig.CLASH_ROYALE_PLAYER_TAG || '',
-        },
-      },
+      adapters: await getAdapterStatusFromAdminAPI(),
       providers: availableProviders,
     });
   } catch (error: any) {
@@ -259,27 +353,12 @@ export async function POST(request: NextRequest) {
       envConfig.LLM_PROVIDER_MAX_TOKENS = envConfig.LLM_PROVIDER_MAX_TOKENS || '16384';
     }
 
-    // Update adapter keys (only non-empty values)
+    // Update adapter keys via Admin API credential store (not .env)
     if (adapterKeys) {
-      const adapterKeyMap: Record<string, string> = {
-        OPENWEATHER_API_KEY: adapterKeys.openweatherApiKey,
-        OPENWEATHER_CITY: adapterKeys.openweatherCity,
-        GOOGLE_CALENDAR_CLIENT_ID: adapterKeys.googleCalendarClientId,
-        GOOGLE_CALENDAR_CLIENT_SECRET: adapterKeys.googleCalendarClientSecret,
-        GOOGLE_CALENDAR_ACCESS_TOKEN: adapterKeys.googleCalendarAccessToken,
-        GOOGLE_CALENDAR_REFRESH_TOKEN: adapterKeys.googleCalendarRefreshToken,
-        CLASH_ROYALE_API_KEY: adapterKeys.clashroyaleApiKey,
-        CLASH_ROYALE_PLAYER_TAG: adapterKeys.clashroyalePlayerTag,
-      };
-
-      for (const [envKey, value] of Object.entries(adapterKeyMap)) {
-        if (value !== undefined && value !== '') {
-          envConfig[envKey] = value as string;
-        }
-      }
+      await storeAdapterKeysViaAdminAPI(adapterKeys);
     }
 
-    // Write back to file
+    // Write provider/LLM config back to .env (infrastructure config only, no adapter keys)
     const content = serializeEnvFile(envConfig);
     writeFileSync(ENV_PATH, content, 'utf-8');
 
