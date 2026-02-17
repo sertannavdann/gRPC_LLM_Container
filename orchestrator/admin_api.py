@@ -1047,6 +1047,100 @@ def get_config_version(request: Request, user: User = Depends(get_current_user))
 
 
 # =============================================================================
+# USER PREFERENCES ENDPOINTS (Phase 6)
+# =============================================================================
+
+
+_user_prefs_store = None
+
+
+class UserPrefsUpdateRequest(BaseModel):
+    """Request body for updating user preferences."""
+    prefs: Dict[str, Any]
+    version: int
+
+
+@_app.get("/admin/user/prefs")
+def get_user_prefs(user: User = Depends(get_current_user)):
+    """
+    Get user preferences + version.
+
+    Returns defaults if no preferences stored yet.
+    RBAC: viewer+ role required.
+    """
+    if _user_prefs_store is None:
+        # Lazy-init user prefs store
+        _init_user_prefs_store()
+
+    if _user_prefs_store is None:
+        raise HTTPException(503, "User preferences store not initialized")
+
+    prefs, version = _user_prefs_store.get_prefs(user.org_id)
+    return {
+        "prefs": prefs.model_dump(),
+        "version": version,
+    }
+
+
+@_app.put("/admin/user/prefs")
+def update_user_prefs(
+    request: UserPrefsUpdateRequest,
+    user: User = Depends(get_current_user),
+):
+    """
+    Update user preferences with optimistic concurrency.
+
+    Returns 409 on version conflict.
+    RBAC: viewer+ role required (users can only update their own prefs).
+    """
+    if _user_prefs_store is None:
+        _init_user_prefs_store()
+
+    if _user_prefs_store is None:
+        raise HTTPException(503, "User preferences store not initialized")
+
+    from shared.auth.user_prefs import UserPreferences, ConflictError
+
+    try:
+        prefs = UserPreferences(**request.prefs)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid preferences: {e}")
+
+    try:
+        new_version = _user_prefs_store.set_prefs(
+            user_id=user.org_id,
+            prefs=prefs,
+            expected_version=request.version,
+        )
+    except ConflictError as e:
+        raise HTTPException(
+            409,
+            {
+                "error": "Version conflict",
+                "current_version": e.current_version,
+                "expected_version": e.expected_version,
+            },
+        )
+
+    return {
+        "prefs": prefs.model_dump(),
+        "version": new_version,
+    }
+
+
+def _init_user_prefs_store():
+    """Lazy-initialize the user preferences store."""
+    global _user_prefs_store
+    try:
+        from shared.auth.user_prefs import UserPrefsStore
+        _user_prefs_store = UserPrefsStore(
+            db_path=os.getenv("USER_PREFS_DB_PATH", "data/user_prefs.db")
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize user prefs store: {e}")
+
+
+# =============================================================================
 # AUTH BOOTSTRAP & API KEY MANAGEMENT
 # =============================================================================
 
