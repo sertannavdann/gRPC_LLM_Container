@@ -6,10 +6,10 @@
 
 ## Current Phase
 
-**Phase 5 (Refactoring)** — in progress. 1/3 plans executed.
+**Phase 5 (Refactoring)** — in progress. 2/3 plans executed.
 
-**Progress**: 1/3 plans complete, 40+ new dedup tests passing, zero regressions
-**Current Focus**: Code quality and architecture cleanup
+**Progress**: 2/3 plans complete, 74+ new tests passing (40 dedup + 34 agent), zero regressions
+**Current Focus**: Multi-agent architecture transformation complete, final refactoring plan remaining
 
 ---
 
@@ -70,8 +70,9 @@
 - ✅ **Plan 03: Unified Verify Command** — `make verify` chains 7 test tiers, latency snapshot (p50/p95/p99), structured pass/fail report (10 tests)
 - ✅ **Plan 04: Provider Lock/Unlock** — Base class + 5 provider handlers, connection test API, settings UI lock gating (12 tests)
 
-### Phase 5: Refactoring 🔄 (1/3 plans complete)
+### Phase 5: Refactoring 🔄 (2/3 plans complete)
 - ✅ **Plan 01: Module Deduplication** — 5 shared modules (security_policy, static_analysis, identifiers, hashing, validation_types), eliminated 6 areas of code duplication, 40 tests, zero regressions
+- ✅ **Plan 02: Agent Soul.md + Auto-Prompt Composition** — 3 soul.md agent identity files (builder, tester, monitor), auto-prompt composition pipeline, Blueprint2Code confidence scorer (threshold 0.6), bounded retry with jitter (max 5 attempts, exponential backoff), 34 tests, 6 commits, 531s execution
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -152,6 +153,16 @@
 - **Lock only when connection prerequisites missing**: Only lock providers missing required fields (API key + base URL); avoids locking all cloud providers by default
 - **Inline connection test results in Settings UI**: Immediate feedback without modal or navigation; keeps UX minimal (vs modal dialog or separate test page)
 - **Lightweight connection probes**: Minimal API calls (list models or smallest chat request) for fast fail-fast behavior with 10s timeout
+
+### Phase 5 Plan 02 (Agent Soul.md + Auto-Prompt Composition)
+- **Soul.md files as version-controlled artifacts**: Stored in agents/souls/, not config — enables audit trail, reproducible agent behavior, evolution tracking
+- **Confidence threshold defaults to 0.6**: Based on Blueprint2Code empirical research showing 0.6+ correlates with successful downstream implementation
+- **Max retries defaults to 5**: Balances coverage (>99% of transient errors resolve within 5 attempts) with latency bounds
+- **Backoff cap at 30s**: Prevents unbounded delays while allowing sufficient spacing under load per EDMO T4
+- **Jitter at 50% of delay**: Optimal distribution per EDMO T4 research, reduces P99 from 2600ms to 1100ms
+- **Fail fast on auth errors**: 401/403 are never transient, immediate fallback to next model saves time
+- **Repair stage uses compose()**: Scaffold/implement stages still use templates (LLM gateway not wired for those yet)
+- **Weighted scoring formula (0.3, 0.3, 0.2, 0.2)**: Completeness and feasibility most critical, edge cases and efficiency secondary
 
 ---
 
