@@ -1,15 +1,15 @@
 # NEXUS — Current State
 
-> **GSD Canonical File** | Updated 2026-02-16
+> **GSD Canonical File** | Updated 2026-02-17
 
 ---
 
 ## Current Phase
 
-**Phase 5 (Refactoring)** — in progress. 2/3 plans executed.
+**Phase 6 (UX/UI Visual Expansion)** — in progress. 2/4 plans executed.
 
-**Progress**: 2/3 plans complete, 74+ new tests passing (40 dedup + 34 agent), zero regressions
-**Current Focus**: Multi-agent architecture transformation complete, final refactoring plan remaining
+**Progress**: Phase 5 complete (3/3 plans, 86+ new tests, zero regressions). Phase 6 Plans 01-02 complete (capability contract + dashboard adapter cards).
+**Current Focus**: Dashboard with XState-backed adapter cards, Framer Motion animations
 
 ---
 
@@ -70,9 +70,14 @@
 - ✅ **Plan 03: Unified Verify Command** — `make verify` chains 7 test tiers, latency snapshot (p50/p95/p99), structured pass/fail report (10 tests)
 - ✅ **Plan 04: Provider Lock/Unlock** — Base class + 5 provider handlers, connection test API, settings UI lock gating (12 tests)
 
-### Phase 5: Refactoring 🔄 (2/3 plans complete)
+### Phase 5: Refactoring ✅ (3/3 plans complete)
 - ✅ **Plan 01: Module Deduplication** — 5 shared modules (security_policy, static_analysis, identifiers, hashing, validation_types), eliminated 6 areas of code duplication, 40 tests, zero regressions
 - ✅ **Plan 02: Agent Soul.md + Auto-Prompt Composition** — 3 soul.md agent identity files (builder, tester, monitor), auto-prompt composition pipeline, Blueprint2Code confidence scorer (threshold 0.6), bounded retry with jitter (max 5 attempts, exponential backoff), 34 tests, 6 commits, 531s execution
+- ✅ **Plan 03: Adapter Lock/Unlock + Tool Wiring** — AdapterUnlockBase + 4 subclasses, adapter registry route via Admin API, finance iframe removed, DraftManager/VersionManager registered as 7 orchestrator chat tools, .env manipulation eliminated, 12 tests
+
+### Phase 6: UX/UI Visual Expansion 🔄 (2/4 plans complete)
+- ✅ **Plan 01: Capability Contract + XState Infrastructure** — Pydantic schema, BFF endpoints with ETag, XState v5 root machine, useNexusApp hook, Zustand bridge
+- ✅ **Plan 02: Dashboard + Adapter Cards** — XState-backed dashboard page, AdapterCard with Framer Motion, DataSourceIndicator with pulse animations, feature health bar
 
 ### Infrastructure
 - ✅ 13-container Docker Compose stack (`docker compose up` → running in <10 min)
@@ -164,6 +169,17 @@
 - **Repair stage uses compose()**: Scaffold/implement stages still use templates (LLM gateway not wired for those yet)
 - **Weighted scoring formula (0.3, 0.3, 0.2, 0.2)**: Completeness and feasibility most critical, edge cases and efficiency secondary
 
+### Phase 6 Plan 01 (Capability Contract + XState Infrastructure)
+- **XState v5 setup() API for full TypeScript typing**: Machine context, events, and guards fully typed
+- **ETag as SHA-256 of serialized envelope JSON**: Deterministic conditional polling for efficient updates
+- **Zustand bridge pattern**: xstateSend registered by useNexusApp, called by chat/other pages for cross-page event dispatch
+
+### Phase 6 Plan 02 (Dashboard + Adapter Cards)
+- **Dashboard driven entirely by XState capability envelope**: useNexusApp hook provides single source of truth - no ad-hoc useState/useEffect
+- **Framer Motion layout prop for animated card grid reflow**: Smooth animations on adapter add/remove without manual transitions
+- **Connect flow redirects to Settings for credential entry**: No inline modal - better separation of concerns
+- **Feature health bar aggregates healthy/degraded/unavailable counts**: System-wide readiness at a glance
+
 ---
 
 ## Known Gaps
@@ -203,15 +219,17 @@ Phase 1: Auth Boundary         complete      3             3     0
 Phase 2: Run-Unit Metering     complete      4             4     0
 Phase 3: Self-Evolution Engine complete      2             2     0
 Phase 4: Release-Quality       complete      4             4     0
-Phase 5: Refactoring           not-started   —             0     —
-Phase 6: UX/UI Expansion       not-started   2             0     2
+Phase 5: Refactoring           complete      —             —     —
+Phase 6: UX/UI Expansion       in-progress   4             2     2
 Phase 7: Audit Trail           not-started   3             0     3
 Phase 8: Co-Evolution          not-started   4             0     4
 Phase 9: Enterprise & Market   not-started   12            0     12
 ─────────────────────────────  ──────────    ────────────  ────  ─────────
-TOTAL                                        30            11    19
+TOTAL                                        32            13    19
 ```
 
 **Phase 3 detail:** 6/6 plans coded (19 artifacts), 134 tests passing (contract + feature + scenario + cross-feature), all wiring complete. DraftManager/VersionManager/UsageStore/QuotaManager wired to admin API. Zero datetime deprecation warnings.
 
 **Phase 4 detail:** 4/4 plans complete. OTC policy storage (5 tables, WAL-mode SQLite) + reward function (otc_tool_reward, compute_composite_reward) + provider lock/unlock (base class + 5 subclasses, connection test endpoint, lock/unlock UI). 49 tests passing (100% pass rate). 8 artifacts created (1,713 lines).
+
+**Phase 6 detail:** 2/4 plans complete. Plan 01 (capability contract): Pydantic schema + BFF endpoints with ETag + XState v5 root machine + useNexusApp hook + Zustand bridge. Plan 02 (dashboard adapter cards): XState-driven page + AdapterCard with Framer Motion + DataSourceIndicator with pulse animations. 27 min execution, 543 lines created.
