@@ -14,6 +14,7 @@ import mimetypes
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 
@@ -429,6 +430,16 @@ async def health_check():
         version="1.0.0",
         adapters_registered=len(adapters),
     )
+
+
+@app.get("/adapter-health", tags=["System"])
+async def get_adapter_health():
+    """Return health status for all adapters."""
+    aggregator = get_aggregator("default")
+    return {
+        "adapters": [h.to_dict() for h in aggregator._health_state.values()],
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 @app.get("/context", tags=["Context"])

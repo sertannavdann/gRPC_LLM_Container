@@ -23,6 +23,29 @@ from .relevance import RelevanceEngine
 
 logger = logging.getLogger(__name__)
 
+MOCK_FALLBACK_THRESHOLD = 3  # Fall back to mock after this many consecutive failures
+
+
+@dataclass
+class AdapterHealthStatus:
+    """Health status for an individual adapter."""
+    adapter_id: str
+    healthy: bool = True
+    last_checked: Optional[datetime] = None
+    last_error: Optional[str] = None
+    consecutive_failures: int = 0
+    using_mock_fallback: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "adapter_id": self.adapter_id,
+            "healthy": self.healthy,
+            "last_checked": self.last_checked.isoformat() if self.last_checked else None,
+            "last_error": self.last_error,
+            "consecutive_failures": self.consecutive_failures,
+            "using_mock_fallback": self.using_mock_fallback,
+        }
+
 
 @dataclass
 class UserConfig:
@@ -81,6 +104,9 @@ class DashboardAggregator:
         # In-memory cache (replace with Redis in production)
         self._cache: Dict[str, Any] = {}
         self._cache_timestamps: Dict[str, datetime] = {}
+
+        # Adapter health tracking
+        self._health_state: Dict[str, AdapterHealthStatus] = {}
     
     async def get_unified_context(
         self,
@@ -114,12 +140,36 @@ class DashboardAggregator:
         
         for category in all_categories:
             platforms = self.user_config.get_enabled_platforms(category)
-            
+
             for platform in platforms:
-                if not self.registry.has_adapter(category, platform):
-                    logger.warning(f"Adapter not found: {category}/{platform}")
+                adapter_id = f"{category}/{platform}"
+
+                # Check if adapter is in persistent failure — fall back to mock
+                health = self._health_state.get(adapter_id)
+                if (
+                    health
+                    and not health.healthy
+                    and health.consecutive_failures >= MOCK_FALLBACK_THRESHOLD
+                    and platform != "mock"
+                    and self.registry.has_adapter(category, "mock")
+                ):
+                    logger.info(f"Falling back to mock for {adapter_id} ({health.consecutive_failures} failures)")
+                    health.using_mock_fallback = True
+                    mock_config = AdapterConfig(
+                        category=AdapterCategory(category),
+                        platform="mock",
+                        credentials={},
+                        settings={},
+                    )
+                    mock_adapter = self.registry.create_adapter(category, "mock", mock_config)
+                    tasks.append(mock_adapter.fetch(mock_config))
+                    task_metadata.append({"category": category, "platform": "mock", "fallback_from": platform})
                     continue
-                
+
+                if not self.registry.has_adapter(category, platform):
+                    logger.warning(f"Adapter not found: {adapter_id}")
+                    continue
+
                 # Create adapter config
                 config = AdapterConfig(
                     category=AdapterCategory(category),
@@ -127,7 +177,7 @@ class DashboardAggregator:
                     credentials=self.user_config.get_credentials(platform),
                     settings=self.user_config.get_settings(platform),
                 )
-                
+
                 # Create adapter and add fetch task
                 adapter = self.registry.create_adapter(category, platform, config)
                 tasks.append(adapter.fetch(config))
@@ -171,18 +221,41 @@ class DashboardAggregator:
             meta = task_metadata[i]
             category = meta["category"]
             platform = meta["platform"]
-            
+            adapter_id = f"{category}/{platform}"
+
+            # Track health for non-mock adapters
+            if platform != "mock" and "fallback_from" not in meta:
+                if adapter_id not in self._health_state:
+                    self._health_state[adapter_id] = AdapterHealthStatus(adapter_id=adapter_id)
+                health = self._health_state[adapter_id]
+                health.last_checked = datetime.now()
+
             if isinstance(result, Exception):
-                logger.error(f"Adapter error {category}/{platform}: {result}")
+                logger.error(f"Adapter error {adapter_id}: {result}")
+                if platform != "mock" and "fallback_from" not in meta:
+                    health.healthy = False
+                    health.consecutive_failures += 1
+                    health.last_error = str(result)
                 continue
-            
+
             if not isinstance(result, AdapterResult):
-                logger.error(f"Unexpected result type from {category}/{platform}")
+                logger.error(f"Unexpected result type from {adapter_id}")
                 continue
-            
+
             if not result.success:
-                logger.warning(f"Adapter failed {category}/{platform}: {result.error}")
+                logger.warning(f"Adapter failed {adapter_id}: {result.error}")
+                if platform != "mock" and "fallback_from" not in meta:
+                    health.healthy = False
+                    health.consecutive_failures += 1
+                    health.last_error = result.error
                 continue
+
+            # Success — reset health counters
+            if platform != "mock" and "fallback_from" not in meta:
+                health.healthy = True
+                health.consecutive_failures = 0
+                health.last_error = None
+                health.using_mock_fallback = False
             
             # Add platform to list
             category_data[category]["platforms"].append(platform)
@@ -384,15 +457,54 @@ class DashboardAggregator:
     ) -> Dict[str, Any]:
         """
         Fetch data for a single category.
-        
+
         Useful for refreshing specific widgets without full context rebuild.
         """
         context = await self.get_unified_context(
             force_refresh=force_refresh,
             categories=[category],
         )
-        
+
         return getattr(context, category, {})
+
+    async def probe_all_adapters(self) -> None:
+        """Probe all registered adapters to build initial health state."""
+        all_adapters = self.registry.list_all_flat()
+        for info in all_adapters:
+            adapter_id = f"{info.category}/{info.platform}"
+            if info.platform == "mock":
+                continue
+            if adapter_id not in self._health_state:
+                self._health_state[adapter_id] = AdapterHealthStatus(adapter_id=adapter_id)
+
+            try:
+                config = AdapterConfig(
+                    category=AdapterCategory(info.category),
+                    platform=info.platform,
+                    credentials=self.user_config.get_credentials(info.platform),
+                    settings={},
+                )
+                adapter = self.registry.create_adapter(info.category, info.platform, config)
+                result = await asyncio.wait_for(adapter.fetch(config), timeout=5.0)
+                health = self._health_state[adapter_id]
+                health.last_checked = datetime.now()
+                if isinstance(result, AdapterResult) and result.success:
+                    health.healthy = True
+                    health.consecutive_failures = 0
+                    health.last_error = None
+                else:
+                    health.healthy = False
+                    health.consecutive_failures += 1
+                    health.last_error = getattr(result, "error", "Unknown error")
+            except Exception as e:
+                health = self._health_state[adapter_id]
+                health.last_checked = datetime.now()
+                health.healthy = False
+                health.consecutive_failures += 1
+                health.last_error = str(e)
+                logger.warning(f"Health probe failed for {adapter_id}: {e}")
+
+        logger.info(f"Health probe complete: {len(self._health_state)} adapters checked")
 
 
 # Convenience function for quick context retrieval
