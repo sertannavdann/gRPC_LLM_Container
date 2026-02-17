@@ -1,11 +1,13 @@
 /**
  * Dashboard Components Index
- * 
+ *
  * Exports all dashboard-related components.
  */
 
 export { Dashboard } from './Dashboard';
 export { AdaptersPanel } from './AdaptersPanel';
+export { AdapterCard } from './AdapterCard';
+export { DataSourceIndicator } from './DataSourceIndicator';
 
 // Widgets
 export { CalendarWidget } from './widgets/CalendarWidget';
