@@ -207,3 +207,58 @@ class WebTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
             return {"status": "error", "error": "Failed to connect to server", "url": url}
         except Exception as e:
             return {"status": "error", "error": f"Unexpected error: {str(e)}", "url": url}
+
+
+# ── Backward-compat module-level functions ────────────────────────────
+
+_default_tool: Optional[WebTool] = None
+
+
+def _get_default_tool() -> WebTool:
+    global _default_tool
+    if _default_tool is None:
+        _default_tool = WebTool()
+    return _default_tool
+
+
+def web_search(
+    query: str,
+    num_results: int = 10,
+    search_type: str = "search",
+) -> Dict[str, Any]:
+    """Legacy wrapper for web search."""
+    return _get_default_tool()(
+        action="search", query=query,
+        num_results=num_results, search_type=search_type,
+    )
+
+
+def load_web_page(
+    url: str,
+    max_length: int = 5000,
+    include_links: bool = False,
+    extract_links: bool = False,
+    max_chars: int = 8000,
+) -> Dict[str, Any]:
+    """Legacy wrapper for web page loading."""
+    return _get_default_tool()(
+        action="load", url=url,
+        max_length=max_length, include_links=include_links,
+        extract_links=extract_links, max_chars=max_chars,
+    )
+
+
+def extract_metadata(html_content: str) -> Dict[str, Any]:
+    """Legacy wrapper - extract metadata from HTML content."""
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html_content, re.IGNORECASE | re.DOTALL)
+    title = title_match.group(1).strip() if title_match else ""
+
+    meta_desc = ""
+    desc_match = re.search(
+        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']*)["\']',
+        html_content, re.IGNORECASE,
+    )
+    if desc_match:
+        meta_desc = desc_match.group(1).strip()
+
+    return {"title": title, "description": meta_desc}

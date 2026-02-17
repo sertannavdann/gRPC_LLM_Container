@@ -67,24 +67,23 @@ from core import AgentWorkflow, WorkflowConfig
 from core.state import create_initial_state
 from core.self_consistency import SelfConsistencyVerifier
 from tools.registry import LocalToolRegistry
-from tools.builtin.web_search import web_search
-from tools.builtin.math_solver import math_solver, set_sandbox_executor
-from tools.builtin.web_loader import load_web_page
-from tools.builtin.code_executor import execute_code, set_sandbox_client
-from tools.builtin.user_context import get_user_context, get_daily_briefing, get_commute_time
-from tools.builtin.knowledge_search import search_knowledge, store_knowledge
-from tools.builtin.finance_query import query_finance
-from tools.builtin.module_builder import build_module, write_module_code, repair_module, set_llm_gateway
-from tools.builtin.module_validator import validate_module
+from tools.builtin.context_bridge import ContextBridge
+from tools.builtin.user_context import UserContextTool
+from tools.builtin.web_tools import WebTool
+from tools.builtin.knowledge_search import KnowledgeSearchTool
+from tools.builtin.knowledge_store import KnowledgeStoreTool
+from tools.builtin.math_solver import MathSolverTool
+from tools.builtin.code_executor import CodeExecutorTool
+from tools.builtin.module_pipeline import ModulePipelineTool
+from tools.builtin.module_admin import ModuleAdminTool
+# Legacy imports still needed by module_builder/installer internals
+from tools.builtin.module_builder import set_llm_gateway
 from tools.builtin.module_validator import set_sandbox_client as set_validator_sandbox
+from tools.builtin.module_installer import set_installer_deps
 from tools.builtin.module_manager import (
-    list_modules, enable_module, disable_module, store_module_credentials,
     set_module_loader, set_module_registry, set_credential_store,
 )
 from shared.modules.registry import ModuleRegistry
-from tools.builtin.module_installer import (
-    install_module, uninstall_module, set_installer_deps,
-)
 
 # Module system for dynamic adapter loading
 from shared.modules.loader import ModuleLoader
@@ -943,38 +942,11 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         
         # Initialize Tool Registry
         self.tool_registry = LocalToolRegistry()
-        
-        # Register built-in tools
-        self.tool_registry.register(web_search)
-        self.tool_registry.register(math_solver)
-        self.tool_registry.register(load_web_page)
-        
-        # Register user context tools for personalized assistance
-        self.tool_registry.register(get_user_context)
-        self.tool_registry.register(get_daily_briefing)
-        self.tool_registry.register(get_commute_time)
 
-        # Register knowledge base (RAG) tools
-        self.tool_registry.register(search_knowledge)
-        self.tool_registry.register(store_knowledge)
-
-        # Register code executor if sandbox is available
-        if self.sandbox_client:
-            self.tool_registry.register(execute_code)
-            # Wire sandbox into math_solver for codegen→sandbox pipeline
-            set_sandbox_executor(execute_code)
-            logger.info("Code executor tool registered + math_solver sandbox wired")
-
-        # Register finance query tool (bank transaction access)
-        self.tool_registry.register(query_finance)
-
-        # Register module building tools (NEXUS self-evolution)
-        self.tool_registry.register(build_module)
-        self.tool_registry.register(write_module_code)
-        self.tool_registry.register(repair_module)
-        self.tool_registry.register(validate_module)
-        if self.sandbox_client:
-            set_validator_sandbox(self.sandbox_client)
+        # ── Create shared dependencies ───────────────────────────────
+        _context_bridge = ContextBridge(
+            dashboard_url=os.getenv("DASHBOARD_URL", "http://dashboard:8001")
+        )
 
         # Initialize LLM Gateway for module builder repair loop
         self.llm_gateway = self._initialize_llm_gateway()
@@ -983,24 +955,9 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             logger.info("LLMGateway wired to module_builder for repair loop")
         else:
             if self.config.provider_type == "local" or not self.config.provider_api_key:
-                logger.info("LLMGateway not available — repair_module will run without LLM")
+                logger.info("LLMGateway not available -- repair_module will run without LLM")
             else:
-                logger.warning("LLMGateway not available — repair_module will run without LLM")
-
-        # Register module management tools
-        self.tool_registry.register(list_modules)
-        self.tool_registry.register(enable_module)
-        self.tool_registry.register(disable_module)
-        self.tool_registry.register(store_module_credentials)
-
-        # Register module installer tools
-        self.tool_registry.register(install_module)
-        self.tool_registry.register(uninstall_module)
-
-        # Register draft lifecycle and version management tools
-        self._register_draft_version_tools()
-
-        # NOTE: delegate_to_worker removed - worker mesh disabled
+                logger.warning("LLMGateway not available -- repair_module will run without LLM")
 
         # Dynamic module loading from modules/ directory
         modules_dir = Path(os.getenv("MODULES_DIR", "/app/modules"))
@@ -1008,15 +965,88 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.module_registry = ModuleRegistry(
             db_path=os.getenv("MODULE_REGISTRY_DB", "data/module_registry.db")
         )
-        # Credentials now managed by dashboard service (unified store)
-        # Keep reference for backward compat with admin_api fallback
         self.credential_store = None
 
-        # Wire module infrastructure into manager and installer tools
+        # Wire legacy module infrastructure (needed by module_builder/installer internals)
         set_module_loader(self.module_loader)
         set_module_registry(self.module_registry)
         set_credential_store(None)
         set_installer_deps(self.module_loader, self.module_registry, None)
+        if self.sandbox_client:
+            set_validator_sandbox(self.sandbox_client)
+
+        # ── Create DraftManager + VersionManager for ModuleAdminTool ─
+        _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
+        _dm = DraftManager(
+            drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
+            modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
+            audit_log=_audit_log,
+        )
+        _vm = VersionManager(
+            db_path=os.getenv("VERSION_DB_PATH", "data/module_versions.db"),
+            audit_log=_audit_log,
+        )
+
+        # ── Create 8 tool instances with constructor injection ───────
+        _user_context_tool = UserContextTool(context_bridge=_context_bridge)
+        _web_tool = WebTool()
+        _knowledge_search_tool = KnowledgeSearchTool()
+        _knowledge_store_tool = KnowledgeStoreTool()
+        _math_tool = MathSolverTool(
+            sandbox_executor=CodeExecutorTool(sandbox_client=self.sandbox_client) if self.sandbox_client else None
+        )
+        _code_executor_tool = CodeExecutorTool(sandbox_client=self.sandbox_client)
+        _module_pipeline_tool = ModulePipelineTool(
+            llm_gateway=self.llm_gateway,
+            sandbox_client=self.sandbox_client,
+            modules_dir=str(modules_dir),
+            module_loader=self.module_loader,
+            module_registry=self.module_registry,
+        )
+        _module_admin_tool = ModuleAdminTool(
+            module_loader=self.module_loader,
+            module_registry=self.module_registry,
+            credential_store=self.credential_store,
+            draft_manager=_dm,
+            version_manager=_vm,
+        )
+
+        # ── Register 8 primary tools ────────────────────────────────
+        self.tool_registry.register(_user_context_tool, name="user_context", description=_user_context_tool.description)
+        self.tool_registry.register(_web_tool, name="web", description=_web_tool.description)
+        self.tool_registry.register(_knowledge_search_tool, name="search_knowledge", description=_knowledge_search_tool.description)
+        self.tool_registry.register(_knowledge_store_tool, name="store_knowledge", description=_knowledge_store_tool.description)
+        self.tool_registry.register(_math_tool, name="math_solver", description=_math_tool.description)
+        self.tool_registry.register(_code_executor_tool, name="execute_code", description=_code_executor_tool.description)
+        self.tool_registry.register(_module_pipeline_tool, name="module_pipeline", description=_module_pipeline_tool.description)
+        self.tool_registry.register(_module_admin_tool, name="module_admin", description=_module_admin_tool.description)
+
+        # ── Backward-compat aliases (remove after stable) ───────────
+        self.tool_registry.register(_user_context_tool, name="get_user_context", description="Get user context data")
+        self.tool_registry.register(_user_context_tool, name="get_daily_briefing", description="Get daily briefing")
+        self.tool_registry.register(_user_context_tool, name="get_commute_time", description="Get commute time")
+        self.tool_registry.register(_user_context_tool, name="query_finance", description="Query finance data")
+        self.tool_registry.register(_web_tool, name="web_search", description="Search the web")
+        self.tool_registry.register(_web_tool, name="load_web_page", description="Load web page content")
+        self.tool_registry.register(_module_pipeline_tool, name="build_module", description="Build a module")
+        self.tool_registry.register(_module_pipeline_tool, name="write_module_code", description="Write module code")
+        self.tool_registry.register(_module_pipeline_tool, name="repair_module", description="Repair module code")
+        self.tool_registry.register(_module_pipeline_tool, name="validate_module", description="Validate a module")
+        self.tool_registry.register(_module_pipeline_tool, name="install_module", description="Install a module")
+        self.tool_registry.register(_module_admin_tool, name="list_modules", description="List modules")
+        self.tool_registry.register(_module_admin_tool, name="enable_module", description="Enable a module")
+        self.tool_registry.register(_module_admin_tool, name="disable_module", description="Disable a module")
+        self.tool_registry.register(_module_admin_tool, name="store_module_credentials", description="Store module credentials")
+        self.tool_registry.register(_module_admin_tool, name="uninstall_module", description="Uninstall a module")
+        self.tool_registry.register(_module_admin_tool, name="create_draft", description="Create a draft")
+        self.tool_registry.register(_module_admin_tool, name="edit_draft", description="Edit a draft")
+        self.tool_registry.register(_module_admin_tool, name="diff_draft", description="Diff a draft")
+        self.tool_registry.register(_module_admin_tool, name="validate_draft", description="Validate a draft")
+        self.tool_registry.register(_module_admin_tool, name="promote_draft", description="Promote a draft")
+        self.tool_registry.register(_module_admin_tool, name="list_versions", description="List versions")
+        self.tool_registry.register(_module_admin_tool, name="rollback_version", description="Rollback a version")
+
+        logger.info(f"Registered 8 primary tools + backward-compat aliases")
 
         try:
             loaded = self.module_loader.load_all_modules()
@@ -1076,75 +1106,6 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self._run_startup_recovery()
         
         logger.info("Orchestrator initialization complete")
-
-    def _register_draft_version_tools(self):
-        """Register DraftManager + VersionManager operations as orchestrator chat tools."""
-
-        # We create thin wrapper functions that call the managers.
-        # The actual DraftManager/VersionManager instances are created in serve()
-        # and passed to admin_api, but we also need them here for chat tool access.
-        # For now, create lightweight instances that share the same DB/directory paths.
-        _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
-        _dm = DraftManager(
-            drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
-            modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
-            audit_log=_audit_log,
-        )
-        _vm = VersionManager(
-            db_path=os.getenv("VERSION_DB_PATH", "data/module_versions.db"),
-            audit_log=_audit_log,
-        )
-
-        def create_draft(module_id: str) -> dict:
-            """Create a new draft from an installed module for editing. Returns draft metadata with draft_id."""
-            return _dm.create_draft(module_id=module_id, actor="chat_agent")
-
-        def edit_draft(draft_id: str, file_path: str, content: str) -> dict:
-            """Edit a file in a draft workspace. file_path must be adapter.py, test_adapter.py, or manifest.json."""
-            return _dm.edit_file(draft_id=draft_id, file_path=file_path, content=content, actor="chat_agent")
-
-        def diff_draft(draft_id: str) -> dict:
-            """Show unified diff of draft changes vs the source module version."""
-            return _dm.get_diff(draft_id=draft_id, actor="chat_agent")
-
-        def validate_draft(draft_id: str) -> dict:
-            """Run validation pipeline on a draft. Returns validation result with pass/fail."""
-            return _dm.validate_draft(draft_id=draft_id, actor="chat_agent")
-
-        def promote_draft(draft_id: str) -> dict:
-            """Promote a validated draft to a new module version. Requires admin role."""
-            return _dm.promote_draft(draft_id=draft_id, actor="chat_agent")
-
-        def list_versions(module_id: str) -> list:
-            """List all versions of a module with metadata (version_id, status, created_at)."""
-            return _vm.list_versions(module_id=module_id)
-
-        def rollback_version(module_id: str, target_version_id: str) -> dict:
-            """Roll back a module to a specific prior version. Instant pointer movement."""
-            return _vm.rollback_to_version(
-                module_id=module_id,
-                target_version_id=target_version_id,
-                actor="chat_agent",
-            )
-
-        # Set proper tool metadata for LLM consumption
-        create_draft.__name__ = "create_draft"
-        edit_draft.__name__ = "edit_draft"
-        diff_draft.__name__ = "diff_draft"
-        validate_draft.__name__ = "validate_draft"
-        promote_draft.__name__ = "promote_draft"
-        list_versions.__name__ = "list_versions"
-        rollback_version.__name__ = "rollback_version"
-
-        self.tool_registry.register(create_draft)
-        self.tool_registry.register(edit_draft)
-        self.tool_registry.register(diff_draft)
-        self.tool_registry.register(validate_draft)
-        self.tool_registry.register(promote_draft)
-        self.tool_registry.register(list_versions)
-        self.tool_registry.register(rollback_version)
-
-        logger.info("Draft lifecycle + version management tools registered (7 tools)")
 
     def _initialize_llm_gateway(self) -> Optional[LLMGateway]:
         """

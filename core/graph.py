@@ -218,7 +218,7 @@ class AgentWorkflow:
         """Check if this session involves module-build tool calls."""
         for result in state.get("tool_results", []):
             name = result.get("tool_name", "")
-            if name in ("build_module", "write_module_code", "validate_module"):
+            if name in ("build_module", "write_module_code", "validate_module", "module_pipeline"):
                 return True
         return False
 
