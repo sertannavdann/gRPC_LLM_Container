@@ -8,6 +8,7 @@ Supports multiple LLM providers:
 - local: Uses local llama.cpp via gRPC (default)
 - perplexity: Uses Perplexity Sonar API
 - openai: Uses OpenAI API
+- nvidia: Uses NVIDIA NIM OpenAI-compatible API
 - anthropic: Uses Anthropic Claude API
 - openclaw: Uses OpenClaw Gateway (gpt-5.x via Copilot proxy)
 """
@@ -29,11 +30,14 @@ class OrchestratorConfig:
     port: int = 50054
     
     # LLM Provider settings (NEW)
-    provider_type: str = "local"  # local, perplexity, openai, anthropic, openclaw
+    provider_type: str = "local"  # local, perplexity, openai, nvidia, anthropic, openclaw
     provider_api_key: Optional[str] = None
     provider_base_url: Optional[str] = None
     provider_model: Optional[str] = None  # Model name for online providers
     provider_timeout: int = 60
+    provider_top_p: Optional[float] = None
+    provider_thinking: Optional[bool] = None  # None=provider default, True=thinking, False=instant
+    provider_max_tokens: Optional[int] = None
     
     # LLM service connection (for local provider)
     llm_host: str = "llm_service"
@@ -83,6 +87,9 @@ class OrchestratorConfig:
             api_key = os.getenv("PERPLEXITY_API_KEY")
         elif provider_type == "openai":
             api_key = os.getenv("OPENAI_API_KEY")
+        elif provider_type == "nvidia":
+            api_key = os.getenv("NIM_API_KEY")
+            base_url = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
         elif provider_type == "anthropic":
             api_key = os.getenv("ANTHROPIC_API_KEY")
         elif provider_type == "openclaw":
@@ -93,6 +100,20 @@ class OrchestratorConfig:
         
         # Allow override via generic base URL env var
         base_url = os.getenv("LLM_PROVIDER_BASE_URL", base_url)
+
+        provider_top_p_env = os.getenv("LLM_PROVIDER_TOP_P")
+        if provider_top_p_env is None or provider_top_p_env.strip() == "":
+            provider_top_p = 0.95 if provider_type == "nvidia" else 1.0
+        else:
+            provider_top_p = float(provider_top_p_env)
+
+        thinking_env = os.getenv("LLM_PROVIDER_THINKING")
+        provider_thinking = None
+        if thinking_env is not None and thinking_env.strip() != "":
+            provider_thinking = thinking_env.strip().lower() in {"1", "true", "yes", "on"}
+
+        provider_max_tokens_env = os.getenv("LLM_PROVIDER_MAX_TOKENS")
+        provider_max_tokens = int(provider_max_tokens_env) if provider_max_tokens_env else (16384 if provider_type == "nvidia" else None)
         
         # Get model based on provider type
         provider_model = os.getenv("LLM_PROVIDER_MODEL")
@@ -102,6 +123,8 @@ class OrchestratorConfig:
                 provider_model = "sonar-pro"
             elif provider_type == "openai":
                 provider_model = "gpt-4o-mini"
+            elif provider_type == "nvidia":
+                provider_model = "moonshotai/kimi-k2.5"
             elif provider_type == "anthropic":
                 provider_model = "claude-3-5-sonnet-20241022"
             elif provider_type == "openclaw":
@@ -116,6 +139,9 @@ class OrchestratorConfig:
             provider_base_url=base_url,
             provider_model=provider_model,
             provider_timeout=int(os.getenv("LLM_PROVIDER_TIMEOUT", "60")),
+            provider_top_p=provider_top_p,
+            provider_thinking=provider_thinking,
+            provider_max_tokens=provider_max_tokens,
             # Local LLM settings (fallback)
             llm_host=os.getenv("LLM_HOST", "llm_service"),
             llm_port=int(os.getenv("LLM_PORT", "50051")),

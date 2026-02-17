@@ -263,6 +263,9 @@ class OnlineProvider(BaseProvider):
         if request.tools:
             payload["tools"] = request.tools
 
+        if request.extra:
+            payload.update(request.extra)
+
         return payload
 
     def _parse_response(self, response: Dict[str, Any], model: str) -> ChatResponse:

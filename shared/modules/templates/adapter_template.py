@@ -73,6 +73,23 @@ class {class_name}(BaseAdapter[Dict[str, Any]]):
 
     def get_capabilities(self) -> Dict[str, bool]:
         return {capabilities_dict}
+
+    def get_schema(self) -> Dict[str, Any]:
+        """Return output schema for transformed records."""
+        return {{
+            "type": "array",
+            "items": {{
+                "type": "object",
+                "properties": {{
+                    "id": {{"type": "string"}},
+                    "name": {{"type": "string"}},
+                    "data": {{"type": "object"}},
+                    "fetched_at": {{"type": "string"}},
+                    "platform": {{"type": "string"}},
+                }},
+                "required": ["id", "name", "data", "fetched_at", "platform"],
+            }},
+        }}
 '''
 
 # Default fetch body for API-key authenticated JSON APIs

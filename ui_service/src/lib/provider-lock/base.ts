@@ -62,8 +62,7 @@ export abstract class ProviderUnlockBase {
   toStatus(envConfig: EnvConfig): ProviderLockStatus {
     const missingRequirements = this.getRequiredFields(envConfig);
     const locked = missingRequirements.length > 0;
-    // Can test if not locked OR if testing with overrides
-    const canTest = !locked;
+    const canTest = true;
 
     return {
       locked,

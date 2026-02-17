@@ -447,7 +447,7 @@ def system_info(user: User = Depends(get_current_user)):
 
 
 @_app.get("/admin/providers")
-def get_providers(user: User = Depends(get_current_user)):
+def get_providers():
     """Return provider/model lists and LIDM tier models from routing config."""
     mgr = _get_mgr()
     config = mgr.get_config()
@@ -1213,6 +1213,7 @@ def start_admin_server(
         public_paths=[
             "/admin/health",
             "/admin/bootstrap",
+            "/admin/providers",
             "/docs",
             "/openapi.json",
             "/redoc",

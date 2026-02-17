@@ -11,6 +11,7 @@ interface ProviderInfo {
 interface SettingsConfig {
   provider: string;
   model: string;
+  hasNimKey: boolean;
   hasPerplexityKey: boolean;
   hasOpenaiKey: boolean;
   hasAnthropicKey: boolean;
@@ -38,6 +39,7 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
   const [selectedModel, setSelectedModel] = useState('');
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [apiKeys, setApiKeys] = useState({
+    nvidia: '',
     perplexity: '',
     openai: '',
     anthropic: '',
@@ -164,7 +166,7 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
       }
       
       // Clear API key inputs after save
-      setApiKeys({ perplexity: '', openai: '', anthropic: '', serper: '' });
+      setApiKeys({ nvidia: '', perplexity: '', openai: '', anthropic: '', serper: '' });
       setShowApiKeys(false);
       
       // Auto-restart orchestrator
@@ -184,15 +186,18 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
 
   // Update model when provider changes
   useEffect(() => {
-    if (providers[selectedProvider]) {
+    if (!providers[selectedProvider]) return;
+    const models = providers[selectedProvider].models || [];
+    if (!selectedModel || !models.includes(selectedModel)) {
       setSelectedModel(providers[selectedProvider].default);
     }
-  }, [selectedProvider, providers]);
+  }, [selectedProvider, providers, selectedModel]);
 
   if (!isOpen) return null;
 
   const providerIcons: Record<string, React.ReactNode> = {
     local: <Server className="h-4 w-4" />,
+    nvidia: <Brain className="h-4 w-4" />,
     perplexity: <Brain className="h-4 w-4" />,
     openai: <Brain className="h-4 w-4" />,
     anthropic: <Brain className="h-4 w-4" />,
@@ -200,6 +205,7 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
 
   const providerLabels: Record<string, string> = {
     local: 'Local (llama.cpp)',
+    nvidia: 'NVIDIA NIM (Kimi K2.5)',
     perplexity: 'Perplexity Sonar',
     openai: 'OpenAI',
     anthropic: 'Anthropic Claude',
@@ -290,6 +296,7 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 mt-2">
+                    <KeyIndicator label="NVIDIA" hasKey={config.hasNimKey} />
                     <KeyIndicator label="Perplexity" hasKey={config.hasPerplexityKey} />
                     <KeyIndicator label="OpenAI" hasKey={config.hasOpenaiKey} />
                     <KeyIndicator label="Anthropic" hasKey={config.hasAnthropicKey} />
@@ -310,6 +317,12 @@ export function SettingsPanel({ isOpen, onClose }: { isOpen: boolean; onClose: (
                 
                 {showApiKeys && (
                   <div className="space-y-3 p-3 border rounded-lg">
+                    <ApiKeyInput
+                      label="NVIDIA NIM API Key"
+                      value={apiKeys.nvidia}
+                      onChange={(v) => setApiKeys({ ...apiKeys, nvidia: v })}
+                      placeholder="nvapi-..."
+                    />
                     <ApiKeyInput
                       label="Perplexity API Key"
                       value={apiKeys.perplexity}

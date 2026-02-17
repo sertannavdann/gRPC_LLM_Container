@@ -17,6 +17,7 @@ from shared.providers import (
     ModelInfo,
     setup_providers,
 )
+from shared.providers.config import ProviderConfigLoader
 
 
 class TestProviderConfig:
@@ -196,6 +197,40 @@ class TestProviderTypes:
 
         assert len(models) > 0
         assert any("sonar" in m.name for m in models)
+
+    def test_openai_payload_includes_extra_fields(self):
+        """Test OpenAI-compatible payload forwards ChatRequest.extra fields."""
+        config = ProviderConfig(
+            provider_type=ProviderType.OPENAI,
+            api_key="test-key",
+        )
+        provider = OpenAIProvider(config)
+        request = ChatRequest(
+            messages=[ChatMessage(role="user", content="hi")],
+            model="moonshotai/kimi-k2.5",
+            max_tokens=256,
+            extra={"chat_template_kwargs": {"thinking": True}},
+        )
+
+        payload = provider._build_payload(request)
+        assert payload["chat_template_kwargs"] == {"thinking": True}
+
+
+class TestProviderConfigLoader:
+    """Tests for ProviderConfigLoader."""
+
+    def test_load_nvidia_config(self, monkeypatch):
+        """Test NVIDIA NIM config maps to OpenAI-compatible provider type."""
+        monkeypatch.setenv("NIM_API_KEY", "nim-test-key")
+        monkeypatch.setenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+        monkeypatch.setenv("NIM_TIMEOUT", "45")
+
+        config = ProviderConfigLoader.load_nvidia_config()
+
+        assert config.provider_type == ProviderType.OPENAI
+        assert config.api_key == "nim-test-key"
+        assert config.base_url == "https://integrate.api.nvidia.com/v1"
+        assert config.timeout == 45
 
 
 class TestSetupProviders:

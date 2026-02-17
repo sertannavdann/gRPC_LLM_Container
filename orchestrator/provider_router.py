@@ -168,6 +168,7 @@ class ProviderRouter:
             "claude": ProviderType.ANTHROPIC,
             "anthropic": ProviderType.ANTHROPIC,
             "openai": ProviderType.OPENAI,
+            "nvidia": ProviderType.OPENAI,
         }
 
         # Initialize health tracking for all known providers

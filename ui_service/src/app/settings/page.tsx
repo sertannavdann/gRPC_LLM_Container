@@ -92,6 +92,7 @@ export default function SettingsPage() {
   // Lock/unlock state
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, ConnectionTestResult>>({});
+  const [verificationConsole, setVerificationConsole] = useState<string[]>([]);
 
   // LIDM delegation state
   const [delegationEnabled, setDelegationEnabled] = useState(false);
@@ -102,6 +103,19 @@ export default function SettingsPage() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  const appendConsole = (line: string) => {
+    const timestamp = new Date().toISOString().replace('T', ' ').replace('Z', ' UTC');
+    setVerificationConsole((prev) => [`[${timestamp}] ${line}`, ...prev].slice(0, 50));
+  };
+
+  const providerApiKeyField: Record<string, keyof typeof apiKeys | undefined> = {
+    nvidia: 'nvidia',
+    openai: 'openai',
+    anthropic: 'anthropic',
+    perplexity: 'perplexity',
+    local: undefined,
+  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -129,28 +143,46 @@ export default function SettingsPage() {
 
   const testProviderConnection = async (providerName: string) => {
     setTestingProvider(providerName);
-    setTestResults({ ...testResults, [providerName]: { success: false, message: 'Testing...' } });
+    setTestResults((prev) => ({ ...prev, [providerName]: { success: false, message: 'Testing...' } }));
+    appendConsole(`${providerName}: starting connection test`);
+
+    const keyField = providerApiKeyField[providerName];
+    const typedApiKey = keyField ? apiKeys[keyField] : undefined;
+
     try {
       const res = await fetch('/api/settings/connection-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerName }),
+        body: JSON.stringify({
+          provider: providerName,
+          overrides: typedApiKey ? { apiKey: typedApiKey } : undefined,
+        }),
       });
       const result = await res.json();
-      setTestResults({ ...testResults, [providerName]: result });
+      setTestResults((prev) => ({ ...prev, [providerName]: result }));
+
+      const consoleDetails = result?.details && Object.keys(result.details).length > 0
+        ? ` | ${JSON.stringify(result.details)}`
+        : '';
+      appendConsole(`${providerName}: ${result.success ? 'PASS' : 'FAIL'} - ${result.message}${consoleDetails}`);
 
       // If test successful, update lock state
       if (result.success) {
-        setProviderLocks({
-          ...providerLocks,
+        setProviderLocks((prev) => ({
+          ...prev,
           [providerName]: { locked: false, missingRequirements: [], canTest: true },
-        });
+        }));
+
+        if (selectedProvider !== providerName) {
+          setSelectedProvider(providerName);
+        }
       }
     } catch (err: any) {
-      setTestResults({
-        ...testResults,
+      setTestResults((prev) => ({
+        ...prev,
         [providerName]: { success: false, message: err.message || 'Connection test failed' },
-      });
+      }));
+      appendConsole(`${providerName}: FAIL - ${err.message || 'Connection test failed'}`);
     } finally {
       setTestingProvider(null);
     }
@@ -194,7 +226,7 @@ export default function SettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save');
 
-      setApiKeys({ perplexity: '', openai: '', anthropic: '', serper: '' });
+      setApiKeys({ nvidia: '', perplexity: '', openai: '', anthropic: '', serper: '' });
       setShowApiKeys(false);
       setSaving(false);
 
@@ -254,12 +286,11 @@ export default function SettingsPage() {
             const isLocked = lockStatus?.locked ?? false;
             const testResult = testResults[name];
             const isTesting = testingProvider === name;
+            const showActive = isActive && !isLocked;
 
             return (
               <div key={name} className="space-y-2">
-                <button
-                  onClick={() => !isLocked && setSelectedProvider(name)}
-                  disabled={isLocked}
+                <div
                   className={`relative flex items-center gap-3 p-4 rounded-xl border-2 transition-all w-full ${
                     isSelected
                       ? 'border-primary bg-primary/5 shadow-sm'
@@ -268,7 +299,7 @@ export default function SettingsPage() {
                       : 'border-border hover:border-primary/30 hover:bg-muted/30'
                   }`}
                 >
-                  {isActive && (
+                  {showActive && (
                     <span className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-green-500 font-medium">
                       <Zap className="h-3 w-3" /> Active
                     </span>
@@ -278,6 +309,12 @@ export default function SettingsPage() {
                       <Lock className="h-3 w-3" /> Locked
                     </span>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => !isLocked && setSelectedProvider(name)}
+                    disabled={isLocked}
+                    className="flex items-center gap-3 flex-1 text-left disabled:cursor-not-allowed"
+                  >
                   <div className={`p-2 rounded-lg ${isSelected ? 'bg-primary/10' : 'bg-muted/50'}`}>
                     {meta?.icon === 'server'
                       ? <Server className={`h-5 w-5 ${meta?.color || ''}`} />
@@ -293,8 +330,10 @@ export default function SettingsPage() {
                       </div>
                     )}
                   </div>
+                  </button>
                   {isLocked && (
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         testProviderConnection(name);
@@ -315,7 +354,7 @@ export default function SettingsPage() {
                       )}
                     </button>
                   )}
-                </button>
+                </div>
 
                 {/* Connection test result */}
                 {testResult && (
@@ -342,6 +381,20 @@ export default function SettingsPage() {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      {/* Verification Console */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Verification Console</h2>
+        <div className="p-3 border rounded-xl bg-muted/20">
+          {verificationConsole.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No provider verification run yet.</p>
+          ) : (
+            <pre className="text-xs whitespace-pre-wrap break-words font-mono max-h-48 overflow-y-auto">
+              {verificationConsole.join('\n')}
+            </pre>
+          )}
         </div>
       </section>
 

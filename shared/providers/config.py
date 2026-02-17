@@ -70,6 +70,28 @@ class ProviderConfigLoader:
         )
 
     @staticmethod
+    def load_nvidia_config() -> ProviderConfig:
+        """
+        Load configuration for NVIDIA NIM provider.
+
+        NVIDIA NIM chat endpoints are OpenAI-compatible.
+        Expects NIM_API_KEY environment variable.
+
+        Returns:
+            ProviderConfig for NVIDIA NIM API
+        """
+        api_key = os.getenv("NIM_API_KEY")
+        if not api_key:
+            logger.warning("NIM_API_KEY not set")
+
+        return ProviderConfig(
+            provider_type=ProviderType.OPENAI,
+            api_key=api_key,
+            base_url=os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            timeout=int(os.getenv("NIM_TIMEOUT", "30")),
+        )
+
+    @staticmethod
     def load_perplexity_config() -> ProviderConfig:
         """
         Load configuration for Perplexity provider.
@@ -102,5 +124,6 @@ class ProviderConfigLoader:
             "local": ProviderConfigLoader.load_local_config(),
             "anthropic": ProviderConfigLoader.load_anthropic_config(),
             "openai": ProviderConfigLoader.load_openai_config(),
+            "nvidia": ProviderConfigLoader.load_nvidia_config(),
             "perplexity": ProviderConfigLoader.load_perplexity_config(),
         }
