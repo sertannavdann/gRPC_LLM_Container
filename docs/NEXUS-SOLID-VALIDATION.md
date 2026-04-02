@@ -205,9 +205,207 @@ To move closer to full SRP alignment, prioritize:
 
 ---
 
+## 8. Target-State Plan: What the Aimed SRP Changes Should Look Like
+
+The most valuable SRP cleanup is not “split everything into more services.” It is to define **one reason to change per module** and keep the individual-user product flow simple.
+
+### A. Dashboard target state
+
+**Current**: one dashboard slice mixes context aggregation, adapter listing, finance projections, module listing, and SSE stream assembly.
+
+**Aimed shape**:
+
+- **Context Aggregator**
+  - responsibility: fetch, merge, and normalize user context
+  - owns: `/context`, `/context/summary`, `/context/relevance`
+- **Pipeline Stream**
+  - responsibility: expose live execution and pipeline state to UI
+  - owns: SSE and pipeline event formatting only
+- **Finance Projection**
+  - responsibility: banking summaries, balances, and transaction-specific projections
+  - owns: finance-only endpoints and formatting
+- **Adapter Catalog**
+  - responsibility: adapter/module availability, status, capability metadata
+  - owns: adapter listing and enablement-facing read models
+
+This can remain in one deployable service initially, but should be split into separate modules/files with explicit interfaces before turning them into separate containers.
+
+### B. Tooling target state
+
+**Current**: context tools have overlapping fetch/format/fallback behavior.
+
+**Aimed shape**:
+
+- **One context retrieval path**
+  - a single `ContextBridge` / context service abstraction fetches context
+- **One user-facing context tool**
+  - `get_user_context(categories, mode)` becomes the main context entry point
+- **Thin convenience wrappers only if justified by UX**
+  - keep wrappers like `get_daily_briefing` only when they add distinct product value, not when they just rename the same call
+- **Finance querying either becomes context-derived or a truly separate finance analysis tool**
+  - avoid two paths for the same data
+
+### C. Self-evolving target state
+
+For an individual-user prototype, the self-evolving loop should look like:
+
+1. user requests a new capability
+2. module scaffold/generation produces draft assets
+3. sandbox validates imports, network policy, tests, and runtime behavior
+4. user reviews concise results
+5. user approves or rejects install
+6. system records metrics and audit trail
+
+That keeps the product focused on **assistive self-evolution**, not autonomous uncontrolled mutation.
+
+### D. Suggested implementation order
+
+1. **Refactor in-process first**
+   - split dashboard concerns into modules without adding new network boundaries
+2. **Unify context retrieval**
+   - eliminate overlap between context tools
+3. **Add approval checkpoint**
+   - make self-evolution safe for individuals before making it more autonomous
+4. **Only then consider more services**
+   - add deployment complexity only if runtime load or team boundaries demand it
+
+---
+
+## 9. Product Decisions That Need Arbitration
+
+These are the main choices that affect value more than code style.
+
+### Decision 1: “Simple personal agent” vs “general module platform”
+
+- **Simple personal agent**
+  - best for faster product clarity
+  - focuses on daily context, a few integrations, safe module suggestions, and clear approvals
+- **General module platform**
+  - broader long-term upside
+  - higher UX, safety, review, and support burden
+
+**Recommendation for prototype value**: bias toward the **simple personal agent** first.
+
+### Decision 2: Approval-first vs autonomy-first self-evolution
+
+- **Approval-first**
+  - user reviews generated code/results before enablement
+  - safer and easier to trust
+- **Autonomy-first**
+  - system installs after passing sandbox gates automatically
+  - feels more magical, but increases safety and support risk
+
+**Recommendation for prototype value**: choose **approval-first**.
+
+### Decision 3: Keep one dashboard service vs split into microservices now
+
+- **Keep one deployable service, split internally**
+  - less ops complexity
+  - enough to get SRP benefits early
+- **Split into microservices now**
+  - clearer runtime boundaries
+  - more moving parts for a single-user product
+
+**Recommendation for prototype value**: **modular monolith first**, microservices later.
+
+### Decision 4: Broad adapter surface vs curated adapter set
+
+- **Broad adapter surface**
+  - attractive ecosystem story
+  - weakens prototype focus
+- **Curated set**
+  - stronger end-user experience
+  - easier to validate deeply
+
+**Recommendation for prototype value**: keep a **curated set** around the highest-frequency personal workflows.
+
+### Decision 5: Enterprise controls now vs individual utility now
+
+- **Enterprise-first**
+  - SSO, marketplace, org policies, large-scale operations
+- **Individual-first**
+  - faster time to a lovable personal system
+
+**Recommendation for prototype value**: prioritize **individual-first**, while preserving extension seams for later enterprise work.
+
+---
+
+## 10. Segments Most Correlated with the NEXUS Prototype
+
+If NEXUS is positioned as a **simple self-evolving system for individuals**, the most aligned segments are the ones that benefit from automation but still want explicit control.
+
+### Highest-correlation prototype segments
+
+1. **Power users / technical individuals**
+   - want a personal system that can search, summarize, execute safe code, and add integrations over time
+   - tolerate an evolving prototype and understand approval workflows
+2. **Indie builders / solo operators**
+   - need one assistant that combines context, finance visibility, calendar/weather, and light automation
+   - benefit from module generation without needing enterprise infrastructure
+3. **Personal knowledge + operations users**
+   - want one interface for daily briefing, lightweight planning, memory, and safe tool execution
+
+### Medium-correlation segments
+
+1. **Small teams**
+   - useful later, but pushes the product quickly toward approvals, shared state, and governance
+2. **Consultants / analysts**
+   - value the workflow orchestration, but may want stronger reporting and trace exports sooner
+
+### Lower-correlation segments for the current prototype
+
+1. **Enterprise IT / compliance-heavy organizations**
+   - require SSO, policy layers, centralized logging, approvals, and stronger audit guarantees
+2. **Marketplace/ecosystem participants**
+   - need versioning, publishing, moderation, billing, and discovery flows beyond the current prototype
+
+### Prototype-aligned capability stack
+
+The simplest high-value NEXUS prototype should emphasize:
+
+- **daily context aggregation**
+- **safe gRPC-connected tool execution**
+- **module suggestion / generation**
+- **sandbox validation**
+- **explicit user approval**
+- **clear observability for what changed and why**
+
+The following areas are valuable but should stay secondary for the prototype:
+
+- marketplace flows
+- heavy multi-tenant governance
+- enterprise identity features
+- aggressive automatic self-modification
+
+---
+
+## 11. Recommended Product Plan for the Next Iteration
+
+### Phase A — tighten the prototype
+
+- split dashboard responsibilities internally
+- consolidate context tooling
+- keep the adapter set curated
+- improve the user-facing explanation of sandbox results
+
+### Phase B — make self-evolution trustworthy
+
+- add approval gates
+- add concise change summaries before install
+- track repair-loop and validation metrics in dashboards
+
+### Phase C — expand only after user value is proven
+
+- add more adapters where repeated user demand exists
+- consider externalizing more services only when operationally justified
+- defer enterprise and marketplace features until the individual workflow is clearly valuable
+
+---
+
 ## Bottom Line
 
 - The system is **modular enough to evolve**, especially across services and shared contracts.
 - It is **not yet fully SRP-clean**, with the dashboard/context area remaining the main hotspot.
 - The `NEXUS` branch has already carried out **exclusive SOLID-focused refactors**, so it is the right base for further cleanup.
 - The self-evolving story is **real but incomplete**: sandboxed validation, module repair, metering, and observability exist now; approval gates and co-evolution automation are still upcoming.
+- The highest-value path for the product prototype is a **modular, approval-first personal system** rather than a fully autonomous or enterprise-first platform.
