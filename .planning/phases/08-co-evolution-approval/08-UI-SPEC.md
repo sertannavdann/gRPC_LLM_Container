@@ -1,7 +1,8 @@
 ---
 phase: 8
 slug: co-evolution-approval
-status: draft
+status: approved
+reviewed_at: 2026-07-12
 shadcn_initialized: false
 preset: none
 created: 2026-07-12
@@ -44,7 +45,7 @@ Declared values (must be multiples of 4) — inherited from Phase 6, unchanged:
 | 3xl | 64px | Page-level spacing (not used inside panels) |
 
 Exceptions:
-- **44px minimum touch target** for icon-only buttons in the chat `ApprovalActionCard` (approve/reject icon buttons at compact width) — matches WCAG 2.5.5 and the icon-button precedent already used in `NodeDetailPanel`'s close button, sized up from its current 32px (`p-1` + 16px icon) to 44px hit area for the destructive-adjacent reject control specifically. Regular approve/reject buttons in the full-width `NodeDetailPanel` footer use the existing `ActionCard.tsx` pattern (`px-3 py-2`, ~36px height) — no exception needed there since they're full-width text+icon buttons, not icon-only.
+- **44px minimum touch target** for the chat `ApprovalActionCard`'s compact-width variant: when the chat viewport is too narrow for full-width text+icon buttons (< 360px card width), approve/reject collapse to icon-only buttons, each with a mandatory `aria-label` ("Approve Module" / "Reject Module") and a 44px hit area — matches WCAG 2.5.5 and the icon-button precedent already used in `NodeDetailPanel`'s close button, sized up from its current 32px (`p-1` + 16px icon) to 44px hit area for the destructive-adjacent reject control specifically. Regular approve/reject buttons in the full-width `NodeDetailPanel` footer use the existing `ActionCard.tsx` pattern (`px-3 py-2`, ~36px height) — no exception needed there since they're full-width text+icon buttons, not icon-only.
 - React Flow node `min-w` values (130–170px) are a pre-existing Phase 6 exception for node card widths, not a new exception for this phase.
 
 ---
@@ -64,6 +65,8 @@ Two weights declared: **400 regular** (body copy, code diff text, walkthrough pr
 
 **Legacy exception (inherited, out of scope):** `button.tsx` (shadcn Button primitive) uses `font-medium` (500) as its default weight. This predates this phase and is not to be changed; new Phase 8 components should use 400/600 per the table above, but reuse of the existing `<Button>` component is unaffected.
 
+**Budget note (by design, not oversight):** the `text-[10px]`/`text-[11px]` node-chrome micro-labels and the legacy `font-medium` (500) Button weight are inherited Phase 6 patterns explicitly excluded from this phase's 4-size/2-weight budget.
+
 ---
 
 ## Color
@@ -74,6 +77,8 @@ Two weights declared: **400 regular** (body copy, code diff text, walkthrough pr
 | Secondary (30%) | `zinc-900` (`#18181b`) / `zinc-800` (`#27272a`) | `NodeDetailPanel` surface, review-section cards, blueprint card surface, chat `ActionCard`/`ApprovalActionCard` surface, node default (non-active) fill |
 | Accent (10%) | `orange-500` (`#f97316`) / `orange-400` (`#fb923c`) | **Reserved exclusively for:** (1) live/in-progress build-stage node borders and animated edges on the pipeline graph — reuses the exact accent already established by `StageNode.tsx`'s `active` state and the pipeline stage edges (`stroke: '#f97316'`); (2) the pending-approval badge's pulse ring on the graph node (D-04 "the graph is the notification" — reusing the pipeline's own "live" accent makes the pending state read as "this needs your attention now," consistent with the existing visual language); (3) the "Review" affordance/button that opens `NodeDetailPanel` from a pending-approval node. |
 | Destructive | `hsl(var(--destructive))` ≈ `red-500` (`#ef4444`) | Reject Module button, terminal-rejection confirmation copy, rejected/failed node state, artifact-purge warning text |
+
+**Focal point:** the primary visual anchor on the Pipeline page is the pulsing orange pending-approval badge on a `VALIDATED` module node — every other accent use is subordinate to it.
 
 Accent reserved for: **live build-stage node borders/edges, the pending-approval badge pulse ring, and the "Review" CTA on a pending node only** — never for general buttons, links, or chrome elsewhere on the page. General interactive elements (Approve button inside the panel, links, focus rings) continue to use the pre-existing `--primary` token (blue, `#3b82f6`-family) established sitewide in Phase 6 — this is inherited chrome, not new accent budget for this phase.
 
