@@ -159,9 +159,9 @@ class TestAuditCompleteness:
         # Successful install
         _, bundle_hash = create_test_module(
             modules_dir, "test/auditsuccess", valid_adapter_code, valid_test_code,
-            ModuleStatus.VALIDATED.value,
+            ModuleStatus.APPROVED.value,
         )
-        attestation = {"bundle_sha256": bundle_hash, "status": "VALIDATED"}
+        attestation = {"bundle_sha256": bundle_hash, "status": "APPROVED"}
         result = setup_installer.install_module("test/auditsuccess", attestation)
         assert result["status"] == "success"
 
