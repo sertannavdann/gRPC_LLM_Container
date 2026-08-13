@@ -173,3 +173,18 @@ None — no external service configuration required.
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-13*
+
+## Self-Check: PASSED
+
+All created files verified present on disk:
+- FOUND: shared/modules/policy.py
+- FOUND: shared/modules/approval.py
+- FOUND: shared/modules/gc.py
+- FOUND: tests/unit/modules/test_installer_approval_guard.py
+- FOUND: tests/integration/admin/test_approval_gate.py
+- FOUND: .planning/phases/08-co-evolution-approval/08-01-SUMMARY.md
+
+All commit hashes verified present in `git log --oneline --all`:
+- FOUND: ac0f894 (Task 1)
+- FOUND: 2511733 (Task 2)
+- FOUND: aacd975 (docs: SUMMARY.md)
