@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from tools.base import CompositeTool, ActionStrategy
+from tools.builtin.module_admin import _record_mutation
+from shared.audit import AuditWriteError
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +74,25 @@ class InstallStrategy(ActionStrategy):
     action_name = "install"
     description = "Install a validated module into the live system"
 
-    def __init__(self, module_loader=None, module_registry=None, credential_store=None):
+    def __init__(self, module_loader=None, module_registry=None, credential_store=None, audit_store=None):
         self._module_loader = module_loader
         self._module_registry = module_registry
         self._credential_store = credential_store
+        self._audit_store = audit_store
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         from tools.builtin.module_installer import install_module as _install
-        return _install(**kwargs)
+        result = _install(**kwargs)
+
+        if result.get("status") == "success":
+            try:
+                _record_mutation(
+                    self._audit_store, "module_installed", "module", kwargs.get("module_id")
+                )
+            except AuditWriteError:
+                return {"status": "error", "error": "audit write failed"}
+
+        return result
 
 
 class ModulePipelineTool(CompositeTool):
@@ -110,6 +123,7 @@ class ModulePipelineTool(CompositeTool):
         module_loader=None,
         module_registry=None,
         credential_store=None,
+        audit_store=None,
     ):
         super().__init__()
 
@@ -125,4 +139,5 @@ class ModulePipelineTool(CompositeTool):
             module_loader=module_loader,
             module_registry=module_registry,
             credential_store=credential_store,
+            audit_store=audit_store,
         ))

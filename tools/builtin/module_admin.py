@@ -7,14 +7,58 @@ Replaces:
     - orchestrator closures (draft/version tools)
 
 Uses CompositeTool with ActionStrategy dispatch.
+
+Mutating strategies (enable/disable/credentials/uninstall) record audit
+events directly via AuditStore.record() (D-05: chat-tool mutations cannot
+bypass the audit trail). Draft-lifecycle strategies delegate to
+DraftManager/VersionManager, which log via DevModeAuditLog — its sink
+dual-write (shared/modules/audit.py) covers those, so this file only
+resolves the ambient actor identity for their `actor=` kwarg instead of
+hardcoding "chat_agent".
 """
 import json
 import logging
 from typing import Dict, Any, Optional
 
 from tools.base import CompositeTool, ActionStrategy
+from shared.audit import AuditWriteError, get_actor, get_audit_store
 
 logger = logging.getLogger(__name__)
+
+
+def _actor_id() -> str:
+    """Ambient actor id (set by core/graph.py's _tools_node), else 'chat_agent'."""
+    actor = get_actor()
+    return actor.actor_id if actor else "chat_agent"
+
+
+def _actor_org() -> str:
+    """Ambient org id (set by core/graph.py's _tools_node), else 'default'."""
+    actor = get_actor()
+    return actor.org_id if actor else "default"
+
+
+def _record_mutation(
+    audit_store,
+    action: str,
+    resource_type: str,
+    resource_id: Optional[str],
+    after_state: Optional[dict] = None,
+    before_state: Optional[dict] = None,
+    details: Optional[dict] = None,
+) -> None:
+    """Record a chat-tool mutation. Raises AuditWriteError on failure (fail-closed, D-03)."""
+    store = audit_store or get_audit_store()
+    store.record(
+        org_id=_actor_org(),
+        actor_id=_actor_id(),
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        before_state=before_state,
+        after_state=after_state,
+        details=details,
+    )
 
 
 class ListStrategy(ActionStrategy):
@@ -59,9 +103,10 @@ class EnableStrategy(ActionStrategy):
     action_name = "enable"
     description = "Enable a disabled module and load it"
 
-    def __init__(self, module_loader=None, module_registry=None):
+    def __init__(self, module_loader=None, module_registry=None, audit_store=None):
         self._module_loader = module_loader
         self._module_registry = module_registry
+        self._audit_store = audit_store
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         module_id = kwargs.get("module_id")
@@ -71,39 +116,59 @@ class EnableStrategy(ActionStrategy):
             handle = self._module_loader.enable_module(module_id)
             if self._module_registry:
                 self._module_registry.enable(module_id)
-            return {"status": "success", "module_id": module_id, "is_loaded": handle.is_loaded,
-                    "message": f"Module {module_id} enabled and loaded."}
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+        try:
+            _record_mutation(
+                self._audit_store,
+                "module_enabled",
+                "module",
+                module_id,
+                after_state={"is_loaded": handle.is_loaded},
+            )
+        except AuditWriteError:
+            return {"status": "error", "error": "audit write failed"}
+
+        return {"status": "success", "module_id": module_id, "is_loaded": handle.is_loaded,
+                "message": f"Module {module_id} enabled and loaded."}
 
 
 class DisableStrategy(ActionStrategy):
     action_name = "disable"
     description = "Disable a module without uninstalling it"
 
-    def __init__(self, module_loader=None, module_registry=None):
+    def __init__(self, module_loader=None, module_registry=None, audit_store=None):
         self._module_loader = module_loader
         self._module_registry = module_registry
+        self._audit_store = audit_store
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         module_id = kwargs.get("module_id")
         if not self._module_loader:
             return {"status": "error", "error": "Module loader not available"}
         success = self._module_loader.disable_module(module_id)
+        if not success:
+            return {"status": "error", "error": f"Module {module_id} not found"}
         if self._module_registry:
             self._module_registry.disable(module_id)
-        if success:
-            return {"status": "success", "module_id": module_id, "message": f"Module {module_id} disabled."}
-        return {"status": "error", "error": f"Module {module_id} not found"}
+
+        try:
+            _record_mutation(self._audit_store, "module_disabled", "module", module_id)
+        except AuditWriteError:
+            return {"status": "error", "error": "audit write failed"}
+
+        return {"status": "success", "module_id": module_id, "message": f"Module {module_id} disabled."}
 
 
 class CredentialStrategy(ActionStrategy):
     action_name = "credentials"
     description = "Store API credentials for a module"
 
-    def __init__(self, credential_store=None, module_loader=None):
+    def __init__(self, credential_store=None, module_loader=None, audit_store=None):
         self._credential_store = credential_store
         self._module_loader = module_loader
+        self._audit_store = audit_store
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         module_id = kwargs.get("module_id")
@@ -130,6 +195,18 @@ class CredentialStrategy(ActionStrategy):
             if handle and handle.is_loaded:
                 self._module_loader.reload_module(module_id)
 
+        try:
+            # NEVER put credential values in the event — key names only.
+            _record_mutation(
+                self._audit_store,
+                "module_credentials_stored",
+                "module_credentials",
+                module_id,
+                details={"credential_keys": sorted(creds.keys())},
+            )
+        except AuditWriteError:
+            return {"status": "error", "error": "audit write failed"}
+
         return {"status": "success", "module_id": module_id,
                 "message": f"Credentials stored for {module_id}. Module reloaded."}
 
@@ -138,13 +215,24 @@ class UninstallStrategy(ActionStrategy):
     action_name = "uninstall"
     description = "Uninstall a module from the live system"
 
-    def __init__(self, module_loader=None, module_registry=None):
+    def __init__(self, module_loader=None, module_registry=None, audit_store=None):
         self._module_loader = module_loader
         self._module_registry = module_registry
+        self._audit_store = audit_store
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         from tools.builtin.module_installer import uninstall_module as _uninstall
-        return _uninstall(**kwargs)
+        result = _uninstall(**kwargs)
+
+        if result.get("status") == "success":
+            try:
+                _record_mutation(
+                    self._audit_store, "module_uninstalled", "module", kwargs.get("module_id")
+                )
+            except AuditWriteError:
+                return {"status": "error", "error": "audit write failed"}
+
+        return result
 
 
 class CreateDraftStrategy(ActionStrategy):
@@ -157,7 +245,7 @@ class CreateDraftStrategy(ActionStrategy):
     def execute(self, **kwargs) -> Dict[str, Any]:
         if not self._dm:
             return {"status": "error", "error": "Draft manager not available"}
-        return self._dm.create_draft(module_id=kwargs.get("module_id"), actor="chat_agent")
+        return self._dm.create_draft(module_id=kwargs.get("module_id"), actor=_actor_id())
 
 
 class EditDraftStrategy(ActionStrategy):
@@ -174,7 +262,7 @@ class EditDraftStrategy(ActionStrategy):
             draft_id=kwargs.get("draft_id"),
             file_path=kwargs.get("file_path"),
             content=kwargs.get("content"),
-            actor="chat_agent",
+            actor=_actor_id(),
         )
 
 
@@ -188,7 +276,7 @@ class DiffDraftStrategy(ActionStrategy):
     def execute(self, **kwargs) -> Dict[str, Any]:
         if not self._dm:
             return {"status": "error", "error": "Draft manager not available"}
-        return self._dm.get_diff(draft_id=kwargs.get("draft_id"), actor="chat_agent")
+        return self._dm.get_diff(draft_id=kwargs.get("draft_id"), actor=_actor_id())
 
 
 class ValidateDraftStrategy(ActionStrategy):
@@ -201,7 +289,7 @@ class ValidateDraftStrategy(ActionStrategy):
     def execute(self, **kwargs) -> Dict[str, Any]:
         if not self._dm:
             return {"status": "error", "error": "Draft manager not available"}
-        return self._dm.validate_draft(draft_id=kwargs.get("draft_id"), actor="chat_agent")
+        return self._dm.validate_draft(draft_id=kwargs.get("draft_id"), actor=_actor_id())
 
 
 class PromoteDraftStrategy(ActionStrategy):
@@ -214,7 +302,7 @@ class PromoteDraftStrategy(ActionStrategy):
     def execute(self, **kwargs) -> Dict[str, Any]:
         if not self._dm:
             return {"status": "error", "error": "Draft manager not available"}
-        return self._dm.promote_draft(draft_id=kwargs.get("draft_id"), actor="chat_agent")
+        return self._dm.promote_draft(draft_id=kwargs.get("draft_id"), actor=_actor_id())
 
 
 class ListVersionsStrategy(ActionStrategy):
@@ -244,7 +332,7 @@ class RollbackVersionStrategy(ActionStrategy):
         return self._vm.rollback_to_version(
             module_id=kwargs.get("module_id"),
             target_version_id=kwargs.get("target_version_id"),
-            actor="chat_agent",
+            actor=_actor_id(),
         )
 
 
@@ -269,14 +357,15 @@ class ModuleAdminTool(CompositeTool):
         credential_store=None,
         draft_manager=None,
         version_manager=None,
+        audit_store=None,
     ):
         super().__init__()
 
         self._register_strategy(ListStrategy(module_loader, module_registry, credential_store))
-        self._register_strategy(EnableStrategy(module_loader, module_registry))
-        self._register_strategy(DisableStrategy(module_loader, module_registry))
-        self._register_strategy(CredentialStrategy(credential_store, module_loader))
-        self._register_strategy(UninstallStrategy(module_loader, module_registry))
+        self._register_strategy(EnableStrategy(module_loader, module_registry, audit_store))
+        self._register_strategy(DisableStrategy(module_loader, module_registry, audit_store))
+        self._register_strategy(CredentialStrategy(credential_store, module_loader, audit_store))
+        self._register_strategy(UninstallStrategy(module_loader, module_registry, audit_store))
         self._register_strategy(CreateDraftStrategy(draft_manager))
         self._register_strategy(EditDraftStrategy(draft_manager))
         self._register_strategy(DiffDraftStrategy(draft_manager))
