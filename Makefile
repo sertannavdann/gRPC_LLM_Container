@@ -782,8 +782,8 @@ auth-test:
 	@cd tests && python -m pytest unit/test_auth.py auth/test_auth_integration.py -v --tb=short
 
 audit-test:
-	@printf '$(CYAN)Running audit trail unit tests...$(RESET)\n'
-	@cd tests && python -m pytest unit/test_audit_store.py -v --tb=short
+	@printf '$(CYAN)Running audit trail unit + integration tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_audit_store.py unit/test_audit_decorator.py integration/admin/test_audit_capture.py integration/admin/test_audit_query_api.py -v --tb=short
 
 billing-test:
 	@printf '$(CYAN)Running billing unit tests...$(RESET)\n'

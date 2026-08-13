@@ -6,21 +6,26 @@ Provides CRUD endpoints for hot-reloading routing config
 and managing NEXUS dynamic modules without container restarts.
 """
 
+import csv
+import dataclasses
+import io
+import json
 import logging
 import os
 import re
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from typing import Optional, Dict, Any, List
+from typing import Iterator, Optional, Dict, Any, List
 
 from shared.audit import (
     AuditContextMiddleware,
@@ -32,7 +37,7 @@ from shared.audit import (
 )
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
-from shared.auth.models import User
+from shared.auth.models import Role, User
 from shared.auth.rbac import Permission, get_current_user, require_permission
 from shared.billing import UsageStore, QuotaManager
 from shared.modules.approval import approve_module, reject_module
@@ -2111,3 +2116,172 @@ def start_admin_server(
     thread = threading.Thread(target=_run, name="admin-api", daemon=True)
     thread.start()
     logger.info(f"Admin API started on port {port} (daemon thread)")
+
+
+# =============================================================================
+# AUDIT QUERY API (REQ-012)
+# =============================================================================
+
+_AUDIT_CSV_COLUMNS = [
+    "id", "timestamp", "org_id", "actor_id", "action", "resource_type",
+    "resource_id", "ip_address", "before_state", "after_state",
+    "details", "prev_hash", "row_hash",
+]
+
+
+def _audit_query_filters(
+    user: User,
+    org_id: Optional[str],
+    actor_id: Optional[str],
+    action: Optional[str],
+    resource_type: Optional[str],
+    resource_id: Optional[str],
+    start: Optional[str],
+    end: Optional[str],
+) -> Dict[str, Any]:
+    """
+    Build the filter dict for AuditStore query/count/iter_events.
+
+    Org scoping (REQ-012 truth): non-OWNER callers are forced to their own
+    org_id. OWNER may pass ?org_id= to scope to one org, or omit it to see
+    events across all orgs.
+    """
+    filters: Dict[str, Any] = {}
+    if user.role == Role.OWNER:
+        if org_id is not None:
+            filters["org_id"] = org_id
+    else:
+        filters["org_id"] = user.org_id
+    if actor_id is not None:
+        filters["actor_id"] = actor_id
+    if action is not None:
+        filters["action"] = action
+    if resource_type is not None:
+        filters["resource_type"] = resource_type
+    if resource_id is not None:
+        filters["resource_id"] = resource_id
+    if start is not None:
+        filters["start_time"] = start
+    if end is not None:
+        filters["end_time"] = end
+    return filters
+
+
+def _audit_csv_cell(value: Any) -> str:
+    """Serialize one CSV cell, guarding against formula injection.
+
+    Any cell whose rendered text starts with =, +, -, or @ (interpreted as
+    a formula by Excel/Sheets when a CSV is opened) gets a leading
+    apostrophe so it is treated as literal text.
+    """
+    if value is None:
+        return ""
+    text = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+    if text[:1] in ("=", "+", "-", "@"):
+        text = "'" + text
+    return text
+
+
+@_app.get("/admin/audit-logs")
+def query_audit_logs(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    user: User = Depends(require_permission(Permission.READ_AUDIT)),
+):
+    """
+    Query audit events with date/actor/action/resource filters (REQ-012).
+
+    RBAC: admin+ role required (READ_AUDIT permission). Org-scoped to the
+    caller unless OWNER.
+    """
+    if _audit_store is None:
+        raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
+    filters = _audit_query_filters(
+        user, org_id, actor_id, action, resource_type, resource_id, start, end
+    )
+
+    events = _audit_store.query(limit=limit, offset=offset, **filters)
+    total = _audit_store.count(**filters)
+
+    return {
+        "events": events,
+        "count": len(events),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@_app.get("/admin/audit-logs/export")
+def export_audit_logs(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    action: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    user: User = Depends(require_permission(Permission.READ_AUDIT)),
+):
+    """
+    Stream a CSV export of audit events with an injection guard (REQ-012).
+
+    RBAC: admin+ role required (READ_AUDIT permission). Org-scoped to the
+    caller unless OWNER.
+    """
+    if _audit_store is None:
+        raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+    filters = _audit_query_filters(
+        user, org_id, actor_id, action, resource_type, resource_id, start, end
+    )
+
+    def _generate() -> Iterator[str]:
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_AUDIT_CSV_COLUMNS)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for event in _audit_store.iter_events(batch_size=1000, **filters):
+            writer.writerow([_audit_csv_cell(event.get(col)) for col in _AUDIT_CSV_COLUMNS])
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    filename = f"audit_events_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@_app.get("/admin/audit-logs/verify")
+def verify_audit_chain(
+    start_id: Optional[int] = None,
+    end_id: Optional[int] = None,
+    user: User = Depends(require_permission(Permission.READ_AUDIT)),
+):
+    """
+    Run the hash-chain verification check and report the first invalid row
+    (D-02, REQ-012).
+
+    RBAC: admin+ role required (READ_AUDIT permission).
+    """
+    if _audit_store is None:
+        raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+    result = _audit_store.verify_chain(start_id=start_id, end_id=end_id)
+    return dataclasses.asdict(result)

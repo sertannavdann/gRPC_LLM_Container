@@ -126,6 +126,7 @@ services:
       - ADMIN_API_PORT=8003
       - MODULES_DIR=/app/modules
       - AUTH_DB_PATH=/app/data/api_keys.db
+      - AUDIT_DB_PATH=/app/data/audit_events.db
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
       # Adapter credentials (read by capability lock-state check)
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
@@ -165,6 +166,7 @@ services:
       - OTEL_SERVICE_NAME=dashboard-service
       - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-true}
       - AUTH_DB_PATH=/app/shared_data/api_keys.db
+      - AUDIT_DB_PATH=/app/shared_data/audit_events.db
       - CACHE_TTL_SECONDS=300
       # Real adapter API keys
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}

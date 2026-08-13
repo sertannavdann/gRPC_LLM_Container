@@ -26,11 +26,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from .context import get_actor
 from .redaction import redact
 
 logger = logging.getLogger(__name__)
 
 GENESIS_HASH = "0" * 64
+
+# Lazy module-level metrics holder (REQ-012). Created on first use rather
+# than at import time so environments without OTel wiring configured still
+# work — opentelemetry.metrics.get_meter() degrades to a no-op meter when no
+# MeterProvider is registered, and any construction failure is swallowed so
+# a metrics problem can never block an audit write (D-03 only fails closed
+# on the write itself, never on telemetry).
+_audit_metrics = None
+_audit_metrics_init_failed = False
+
+
+def _get_audit_metrics():
+    global _audit_metrics, _audit_metrics_init_failed
+    if _audit_metrics is None and not _audit_metrics_init_failed:
+        try:
+            from shared.observability.metrics import create_audit_metrics
+            _audit_metrics = create_audit_metrics()
+        except Exception:
+            _audit_metrics_init_failed = True
+    return _audit_metrics
 
 # Columns eligible for direct equality filtering in query()/count()/iter_events().
 _FILTERABLE_COLUMNS = {"org_id", "actor_id", "action", "resource_type", "resource_id"}
@@ -256,6 +277,7 @@ class AuditStore:
                 ),
             )
             conn.execute("COMMIT")
+            self._record_metric_success(action, resource_type)
             return new_id
         except Exception as e:
             if conn is not None:
@@ -264,10 +286,41 @@ class AuditStore:
                 except Exception:
                     pass
             logger.error(f"Audit write failed: {e}")
+            self._record_metric_failure(action, resource_type)
             raise AuditWriteError(f"Failed to record audit event: {e}") from e
         finally:
             if conn is not None:
                 conn.close()
+
+    @staticmethod
+    def _record_metric_success(action: str, resource_type: str) -> None:
+        """Increment nexus_audit_events_total. Never raises — a metrics
+        problem must not affect the audit write it is measuring."""
+        try:
+            metrics = _get_audit_metrics()
+            if metrics is None:
+                return
+            actor = get_actor()
+            channel = actor.channel if actor is not None else "system"
+            metrics.audit_events_total.add(
+                1, {"action": action, "resource_type": resource_type, "channel": channel}
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _record_metric_failure(action: str, resource_type: str) -> None:
+        """Increment nexus_audit_write_failures_total before AuditWriteError
+        is raised. Never raises."""
+        try:
+            metrics = _get_audit_metrics()
+            if metrics is None:
+                return
+            metrics.audit_write_failures_total.add(
+                1, {"action": action, "resource_type": resource_type}
+            )
+        except Exception:
+            pass
 
     # -- reads -----------------------------------------------------------
 

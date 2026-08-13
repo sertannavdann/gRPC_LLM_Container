@@ -29,6 +29,7 @@ from shared.audit import (
     reset_actor,
     set_actor,
 )
+import shared.audit.store as audit_store_module
 from shared.audit.store import GENESIS_HASH
 
 
@@ -346,3 +347,87 @@ class TestD06ApprovalEventShape:
 
         result = store.verify_chain()
         assert result.valid is True
+
+
+# ============================================================================
+# Metrics (REQ-012): lazy module-level holder, degrades without OTel wiring
+# ============================================================================
+
+
+class _FakeCounter:
+    def __init__(self):
+        self.calls = []
+
+    def add(self, amount, attributes=None):
+        self.calls.append((amount, attributes or {}))
+
+
+class _FakeAuditMetrics:
+    def __init__(self):
+        self.audit_events_total = _FakeCounter()
+        self.audit_write_failures_total = _FakeCounter()
+
+
+class TestAuditMetrics:
+    def test_successful_record_increments_events_total(self, store, monkeypatch):
+        fake = _FakeAuditMetrics()
+        monkeypatch.setattr(audit_store_module, "_get_audit_metrics", lambda: fake)
+
+        store.record(
+            org_id="org-1", actor_id="actor-1", action="module_enabled",
+            resource_type="module", resource_id="weather/openweather",
+        )
+
+        assert len(fake.audit_events_total.calls) == 1
+        amount, attrs = fake.audit_events_total.calls[0]
+        assert amount == 1
+        assert attrs == {"action": "module_enabled", "resource_type": "module", "channel": "system"}
+        assert fake.audit_write_failures_total.calls == []
+
+    def test_successful_record_uses_ambient_actor_channel(self, store, monkeypatch):
+        fake = _FakeAuditMetrics()
+        monkeypatch.setattr(audit_store_module, "_get_audit_metrics", lambda: fake)
+
+        with actor_context(ActorContext(actor_id="a1", org_id="org-1", channel="chat")):
+            store.record(
+                org_id="org-1", actor_id="a1", action="module_enabled",
+                resource_type="module",
+            )
+
+        _, attrs = fake.audit_events_total.calls[0]
+        assert attrs["channel"] == "chat"
+
+    def test_failed_record_increments_write_failures_total(self, store, tmp_db, monkeypatch):
+        fake = _FakeAuditMetrics()
+        monkeypatch.setattr(audit_store_module, "_get_audit_metrics", lambda: fake)
+
+        # Make the DB read-only so the write fails (fail-closed, D-03).
+        os.chmod(tmp_db, stat.S_IREAD)
+        try:
+            with pytest.raises(AuditWriteError):
+                store.record(
+                    org_id="org-1", actor_id="actor-1", action="module_enabled",
+                    resource_type="module",
+                )
+        finally:
+            os.chmod(tmp_db, stat.S_IREAD | stat.S_IWRITE)
+
+        assert fake.audit_events_total.calls == []
+        assert len(fake.audit_write_failures_total.calls) == 1
+        amount, attrs = fake.audit_write_failures_total.calls[0]
+        assert amount == 1
+        assert attrs == {"action": "module_enabled", "resource_type": "module"}
+
+    def test_metrics_failure_does_not_block_write(self, store, monkeypatch):
+        """A broken metrics backend must never prevent an audit write from
+        succeeding — telemetry is best-effort, the write itself is not."""
+        def _boom():
+            raise RuntimeError("no meter provider configured")
+
+        monkeypatch.setattr(audit_store_module, "_get_audit_metrics", _boom)
+
+        event_id = store.record(
+            org_id="org-1", actor_id="actor-1", action="module_enabled",
+            resource_type="module",
+        )
+        assert event_id >= 1
