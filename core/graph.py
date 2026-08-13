@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, System
 
 from .state import AgentState, WorkflowConfig, ToolExecutionResult
 from .context_compactor import compact_context
+from shared.audit import ActorContext, actor_context
 from shared.billing.run_units import RunUnitCalculator
 from shared.billing.usage_store import UsageStore
 
@@ -410,69 +411,81 @@ class AgentWorkflow:
         total_tool_calls = state.get("total_tool_calls", 0)
         
         logger.info(f"Executing {len(tool_calls)} tool calls (cumulative: {total_tool_calls})")
-        
-        for tool_call in tool_calls:
-            tool_name = tool_call["function"]["name"]
-            tool_args = tool_call["function"]["arguments"]
-            tool_call_id = tool_call.get("id", f"call_{tool_name}")
-            
-            logger.debug("Tool %s called with args: %r", tool_name, tool_args)
-            
-            start_time = datetime.now()
-            
-            # Execute tool
-            tool = self.registry.get(tool_name)
-            if tool:
-                try:
-                    result = tool(**tool_args)
-                    status = result.get("status", "success")
-                except Exception as e:
-                    logger.error(f"Tool {tool_name} error: {e}", exc_info=True)
-                    result = {"status": "error", "error": str(e)}
+
+        # Ambient actor identity for this node's tool executions — chat-tool
+        # mutations (ModuleAdminTool/ModulePipelineTool strategies) read this
+        # via shared.audit.get_actor() to attribute audit events to the
+        # conversational identity, without threading actor_id through every
+        # tool call signature (D-05).
+        chat_actor = ActorContext(
+            actor_id=state.get("user_id") or "chat_agent",
+            org_id=state.get("org_id") or "default",
+            channel="chat",
+        )
+
+        with actor_context(chat_actor):
+            for tool_call in tool_calls:
+                tool_name = tool_call["function"]["name"]
+                tool_args = tool_call["function"]["arguments"]
+                tool_call_id = tool_call.get("id", f"call_{tool_name}")
+
+                logger.debug("Tool %s called with args: %r", tool_name, tool_args)
+
+                start_time = datetime.now()
+
+                # Execute tool
+                tool = self.registry.get(tool_name)
+                if tool:
+                    try:
+                        result = tool(**tool_args)
+                        status = result.get("status", "success")
+                    except Exception as e:
+                        logger.error(f"Tool {tool_name} error: {e}", exc_info=True)
+                        result = {"status": "error", "error": str(e)}
+                        status = "error"
+                else:
+                    result = {
+                        "status": "error",
+                        "error": f"Tool '{tool_name}' not found or circuit breaker open",
+                    }
                     status = "error"
-            else:
-                result = {
-                    "status": "error",
-                    "error": f"Tool '{tool_name}' not found or circuit breaker open",
-                }
-                status = "error"
-            
-            # Calculate latency
-            latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            
-            # Record result with metadata
-            execution_result = ToolExecutionResult(
-                tool_name=tool_name,
-                status=status,
-                result=result,
-                latency_ms=latency_ms,
-                error_message=result.get("error") if status == "error" else None,
-                retry_count=state.get("retry_count", 0),
-            )
-            
-            results.append(execution_result.to_dict())
-            
-            # Create tool message for LLM context
-            # Format result for better LLM comprehension
-            result_content = self._format_tool_result(tool_name, result)
 
-            # Inject retry budget for module-build tools so the LLM knows
-            # how many fix attempts remain
-            _module_tools = {"build_module", "write_module_code", "validate_module", "install_module"}
-            if tool_name in _module_tools:
-                effective_max = self._get_effective_max_iterations(state)
-                remaining = max(0, effective_max - state.get("retry_count", 0) - 1)
-                result_content += f"\n[Retry budget: {remaining}/{effective_max} iterations remaining]"
+                # Calculate latency
+                latency_ms = (datetime.now() - start_time).total_seconds() * 1000
 
-            tool_messages.append(
-                ToolMessage(
-                    content=result_content,
-                    tool_call_id=tool_call_id,
-                    name=tool_name,  # Include tool name for multi-turn context
+                # Record result with metadata
+                execution_result = ToolExecutionResult(
+                    tool_name=tool_name,
+                    status=status,
+                    result=result,
+                    latency_ms=latency_ms,
+                    error_message=result.get("error") if status == "error" else None,
+                    retry_count=state.get("retry_count", 0),
                 )
-            )
-            
-            total_tool_calls += 1
+
+                results.append(execution_result.to_dict())
+
+                # Create tool message for LLM context
+                # Format result for better LLM comprehension
+                result_content = self._format_tool_result(tool_name, result)
+
+                # Inject retry budget for module-build tools so the LLM knows
+                # how many fix attempts remain
+                _module_tools = {"build_module", "write_module_code", "validate_module", "install_module"}
+                if tool_name in _module_tools:
+                    effective_max = self._get_effective_max_iterations(state)
+                    remaining = max(0, effective_max - state.get("retry_count", 0) - 1)
+                    result_content += f"\n[Retry budget: {remaining}/{effective_max} iterations remaining]"
+
+                tool_messages.append(
+                    ToolMessage(
+                        content=result_content,
+                        tool_call_id=tool_call_id,
+                        name=tool_name,  # Include tool name for multi-turn context
+                    )
+                )
+
+                total_tool_calls += 1
 
         # ── Run-unit metering ────────────────────────────────────────
         org_id = state.get("org_id") or "default"

@@ -15,6 +15,7 @@ from .context import (
     reset_actor,
     set_actor,
 )
+from .decorator import audit_action
 from .redaction import fingerprint, redact
 from .store import (
     AuditStore,
@@ -38,4 +39,5 @@ __all__ = [
     "get_actor",
     "actor_context",
     "AuditContextMiddleware",
+    "audit_action",
 ]

@@ -18,12 +18,14 @@ from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from shared.audit import AuditContextMiddleware, audit_action
+from shared.auth import User, get_current_user
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
 
@@ -327,6 +329,13 @@ app = FastAPI(
 
 # API key auth store + middleware (must be added before app startup)
 _api_key_store = APIKeyStore(db_path=os.getenv("AUTH_DB_PATH", "data/api_keys.db"))
+
+# AuditContextMiddleware must run INNER of the auth middleware (after
+# request.state.user is set) — Starlette's add_middleware() makes the
+# LAST-added middleware the OUTERMOST, so this call must come BEFORE the
+# APIKeyAuthMiddleware add_middleware() call below.
+app.add_middleware(AuditContextMiddleware)
+
 app.add_middleware(
     APIKeyAuthMiddleware,
     api_key_store=_api_key_store,
@@ -809,8 +818,34 @@ class ModuleCredentialRequest(BaseModel):
     credentials: dict
 
 
+def _module_credential_keys_snapshot(**kwargs) -> Optional[dict]:
+    """NEVER return credential values — key names only (D-04).
+
+    Field name deliberately avoids the literal substring "credential" —
+    shared.audit.redaction.SECRET_KEY_PATTERN matches any dict KEY
+    containing that substring and would redact this whole safe metadata
+    field (a list of field NAMES, not values) down to "[REDACTED]".
+    """
+    request = kwargs.get("request")
+    creds = getattr(request, "credentials", None) if request is not None else None
+    if not creds:
+        return None
+    return {"field_names": sorted(creds.keys())}
+
+
 @app.post("/admin/module-credentials/{category}/{platform}", tags=["Admin"])
-async def store_module_credentials(category: str, platform: str, request: ModuleCredentialRequest):
+@audit_action(
+    "module_credentials_stored",
+    "module_credentials",
+    resource_id="{category}/{platform}",
+    snapshot=_module_credential_keys_snapshot,
+)
+async def store_module_credentials(
+    category: str,
+    platform: str,
+    request: ModuleCredentialRequest,
+    user: User = Depends(get_current_user),
+):
     """Store credentials for a NEXUS module."""
     module_id = f"{category}/{platform}"
     try:
@@ -822,7 +857,14 @@ async def store_module_credentials(category: str, platform: str, request: Module
 
 
 @app.delete("/admin/module-credentials/{category}/{platform}", tags=["Admin"])
-async def delete_module_credentials(category: str, platform: str):
+@audit_action(
+    "module_credentials_deleted", "module_credentials", resource_id="{category}/{platform}"
+)
+async def delete_module_credentials(
+    category: str,
+    platform: str,
+    user: User = Depends(get_current_user),
+):
     """Remove credentials for a NEXUS module."""
     module_id = f"{category}/{platform}"
     try:
@@ -841,10 +883,30 @@ async def check_module_credentials(category: str, platform: str):
     return {"module_id": module_id, "has_credentials": store.has_credentials(module_id)}
 
 
+def _env_presence_snapshot(**kwargs) -> Optional[dict]:
+    """Presence booleans only — never env var values (D-04)."""
+    update = kwargs.get("update")
+    if update is None:
+        return None
+    env_keys = {
+        env_key
+        for (platform, _field), env_key in _CREDENTIAL_ENV_MAP.items()
+        if platform == update.platform
+    }
+    return {k: bool(os.environ.get(k)) for k in sorted(env_keys)}
+
+
 @app.post("/admin/credentials", tags=["Admin"])
+@audit_action(
+    "runtime_credentials_updated",
+    "runtime_credentials",
+    resource_id="{update.platform}",
+    snapshot=_env_presence_snapshot,
+)
 async def update_credentials(
     update: CredentialUpdate,
     user_id: str = Query(default="default", description="User identifier"),
+    user: User = Depends(get_current_user),
 ):
     """
     Hot-reload adapter credentials without container restart.
@@ -888,9 +950,16 @@ async def update_credentials(
 
 
 @app.post("/admin/disconnect", tags=["Admin"])
+@audit_action(
+    "runtime_credentials_disconnected",
+    "runtime_credentials",
+    resource_id="{update.platform}",
+    snapshot=_env_presence_snapshot,
+)
 async def disconnect_adapter(
     update: CredentialUpdate,
     user_id: str = Query(default="default", description="User identifier"),
+    user: User = Depends(get_current_user),
 ):
     """
     Remove adapter credentials and evict cached aggregator.

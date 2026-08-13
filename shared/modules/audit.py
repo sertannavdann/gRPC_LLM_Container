@@ -22,6 +22,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from shared.audit import get_actor
+
 logger = logging.getLogger(__name__)
 
 
@@ -356,19 +358,28 @@ class DevModeAuditLog:
     - draft_discarded
     - version_rollback
 
-    Logs are append-only JSONL format for immutability and streaming.
+    Logs are append-only JSONL format for immutability and streaming — this is
+    the D-10-binding format that survives artifact purges. When constructed
+    with a `sink` (shared.audit.AuditStore), every log_action() call ALSO
+    dual-writes into the queryable SQLite audit_events table (D-01), so all
+    audit queries hit one store. There is no try/except around the sink
+    write: a sink failure propagates (fail-closed, D-03) — the JSONL append
+    already happened, but the caller must still see the mutation as unaudited
+    if the SQLite side cannot record it.
     """
 
-    def __init__(self, audit_dir: Path):
+    def __init__(self, audit_dir: Path, sink=None):
         """
         Initialize dev-mode audit log.
 
         Args:
             audit_dir: Directory for audit logs
+            sink: Optional shared.audit.AuditStore for SQLite dual-write (D-01)
         """
         self.audit_dir = Path(audit_dir)
         self.audit_dir.mkdir(parents=True, exist_ok=True)
         self.audit_file = self.audit_dir / "dev_mode_audit.jsonl"
+        self.sink = sink
 
     def log_action(
         self,
@@ -410,6 +421,24 @@ class DevModeAuditLog:
             f.write(json.dumps(event.to_dict()) + "\n")
 
         logger.debug(f"Audit event logged: {action} by {actor}")
+
+        if self.sink is not None:
+            ctx = get_actor()
+            # NO try/except here — sink failure must propagate (D-03).
+            self.sink.record(
+                org_id=ctx.org_id if ctx else "default",
+                actor_id=ctx.actor_id if ctx else actor,
+                action=action,
+                resource_type="module_draft" if draft_id else "module",
+                resource_id=draft_id or module_id,
+                details={
+                    **(details or {}),
+                    "module_id": module_id,
+                    "draft_id": draft_id,
+                    "jsonl_event_id": event_id,
+                },
+                ip_address=ctx.ip_address if ctx else None,
+            )
 
         return event_id
 

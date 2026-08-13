@@ -22,6 +22,14 @@ from pydantic import BaseModel
 
 from typing import Optional, Dict, Any, List
 
+from shared.audit import (
+    AuditContextMiddleware,
+    AuditStore,
+    AuditWriteError,
+    audit_action,
+    get_audit_store,
+    set_audit_store,
+)
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
 from shared.auth.models import User
@@ -58,6 +66,9 @@ _api_key_store: Optional[APIKeyStore] = None
 _usage_store: Optional[UsageStore] = None
 _quota_manager: Optional[QuotaManager] = None
 
+# Audit (set by start_admin_server) — REQ-011
+_audit_store: Optional[AuditStore] = None
+
 # Dev-mode (set by start_admin_server)
 _draft_manager = None
 _version_manager = None
@@ -89,6 +100,70 @@ def _check_module_credentials(module_id: str, forwarded_api_key: Optional[str] =
 
 
 # =============================================================================
+# AUDIT SNAPSHOT HELPERS (REQ-011)
+#
+# Each helper is invoked by @audit_action as snapshot(**bound_args), both
+# before and after the wrapped handler runs — it must be None-tolerant
+# (module globals may not be initialized yet) and accept **kwargs so it
+# tolerates handler signatures it doesn't fully consume.
+# =============================================================================
+
+
+def _routing_config_snapshot(**kwargs) -> Optional[dict]:
+    if _config_manager is None:
+        return None
+    return _config_manager.get_config().model_dump()
+
+
+def _routing_category_snapshot(**kwargs) -> Optional[dict]:
+    if _config_manager is None:
+        return None
+    name = kwargs.get("name")
+    if name is None:
+        return None
+    cat = _config_manager.get_config().categories.get(name)
+    return cat.model_dump() if cat else None
+
+
+def _module_snapshot(**kwargs) -> Optional[dict]:
+    if _module_registry is None:
+        return None
+    category = kwargs.get("category")
+    platform = kwargs.get("platform")
+    if category is None or platform is None:
+        return None
+    return _module_registry.get_module(f"{category}/{platform}")
+
+
+def _credential_keys_snapshot(**kwargs) -> Optional[dict]:
+    """NEVER return credential values — key names only (D-04).
+
+    Field name deliberately avoids the literal substring "credential" —
+    shared.audit.redaction.SECRET_KEY_PATTERN matches any dict KEY
+    containing that substring and would redact this whole safe metadata
+    field (a list of field NAMES, not values) down to "[REDACTED]".
+    """
+    request = kwargs.get("request")
+    creds = getattr(request, "credentials", None) if request is not None else None
+    if not creds:
+        return None
+    return {"field_names": sorted(creds.keys())}
+
+
+def _user_prefs_snapshot(**kwargs) -> Optional[dict]:
+    if _user_prefs_store is None:
+        return None
+    user = kwargs.get("user")
+    if user is None:
+        return None
+    try:
+        prefs, version = _user_prefs_store.get_prefs(user.org_id)
+        return {"prefs": prefs.model_dump(), "version": version}
+    except Exception:
+        return None
+
+
+# =============================================================================
 # ROUTING CONFIG ENDPOINTS
 # =============================================================================
 
@@ -112,6 +187,7 @@ def get_routing_config(user: User = Depends(get_current_user)):
 
 
 @_app.put("/admin/routing-config")
+@audit_action("routing_config_updated", "routing_config", snapshot=_routing_config_snapshot)
 def put_routing_config(
     payload: RoutingConfig,
     user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
@@ -122,6 +198,12 @@ def put_routing_config(
 
 
 @_app.patch("/admin/routing-config/category/{name}")
+@audit_action(
+    "routing_config_category_updated",
+    "routing_config_category",
+    resource_id="{name}",
+    snapshot=_routing_category_snapshot,
+)
 def patch_category(
     name: str,
     payload: CategoryRouting,
@@ -135,6 +217,12 @@ def patch_category(
 
 
 @_app.delete("/admin/routing-config/category/{name}")
+@audit_action(
+    "routing_config_category_deleted",
+    "routing_config_category",
+    resource_id="{name}",
+    snapshot=_routing_category_snapshot,
+)
 def delete_category(
     name: str,
     user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
@@ -149,6 +237,7 @@ def delete_category(
 
 
 @_app.post("/admin/routing-config/reload")
+@audit_action("routing_config_reloaded", "routing_config", snapshot=_routing_config_snapshot)
 def reload_config(user: User = Depends(require_permission(Permission.WRITE_CONFIG))):
     mgr = _get_mgr()
     config = mgr.reload()
@@ -237,6 +326,9 @@ def get_module(category: str, platform: str, request: Request, user: User = Depe
 
 
 @_app.post("/admin/modules/{category}/{platform}/enable")
+@audit_action(
+    "module_enabled", "module", resource_id="{category}/{platform}", snapshot=_module_snapshot
+)
 def enable_module(
     category: str,
     platform: str,
@@ -262,6 +354,9 @@ def enable_module(
 
 
 @_app.post("/admin/modules/{category}/{platform}/disable")
+@audit_action(
+    "module_disabled", "module", resource_id="{category}/{platform}", snapshot=_module_snapshot
+)
 def disable_module(
     category: str,
     platform: str,
@@ -287,6 +382,9 @@ def disable_module(
 
 
 @_app.post("/admin/modules/{category}/{platform}/reload")
+@audit_action(
+    "module_reloaded", "module", resource_id="{category}/{platform}", snapshot=_module_snapshot
+)
 def reload_module(
     category: str,
     platform: str,
@@ -385,6 +483,9 @@ def run_module_tests(
 
 
 @_app.delete("/admin/modules/{category}/{platform}")
+@audit_action(
+    "module_uninstalled", "module", resource_id="{category}/{platform}", snapshot=_module_snapshot
+)
 def uninstall_module(
     category: str,
     platform: str,
@@ -417,6 +518,12 @@ def uninstall_module(
 
 
 @_app.post("/admin/modules/{category}/{platform}/credentials")
+@audit_action(
+    "module_credentials_stored",
+    "module_credentials",
+    resource_id="{category}/{platform}",
+    snapshot=_credential_keys_snapshot,
+)
 def store_credentials(
     category: str,
     platform: str,
@@ -449,6 +556,9 @@ def store_credentials(
 
 
 @_app.delete("/admin/modules/{category}/{platform}/credentials")
+@audit_action(
+    "module_credentials_deleted", "module_credentials", resource_id="{category}/{platform}"
+)
 def delete_credentials(
     category: str,
     platform: str,
@@ -536,6 +646,7 @@ def get_providers():
 
 
 @_app.post("/admin/reload")
+@audit_action("system_reloaded", "system", snapshot=_routing_config_snapshot)
 def reload_system(user: User = Depends(require_permission(Permission.WRITE_CONFIG))):
     """Reload routing config and signal LLM clients to reconnect."""
     mgr = _get_mgr()
@@ -594,7 +705,7 @@ def create_draft(
     result = _draft_manager.create_draft(
         module_id=module_id,
         from_version=request.from_version,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") != "success":
@@ -617,7 +728,7 @@ def edit_draft_file(
         draft_id=draft_id,
         file_path=request.file_path,
         content=request.content,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") != "success":
@@ -635,7 +746,7 @@ def get_draft_diff(
     if _draft_manager is None:
         raise HTTPException(503, "Draft manager not initialized")
 
-    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.org_id)
+    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.user_id)
 
     if result.get("status") != "success":
         raise HTTPException(400, result.get("error", "Diff failed"))
@@ -652,7 +763,7 @@ def validate_draft(
     if _draft_manager is None:
         raise HTTPException(503, "Draft manager not initialized")
 
-    result = _draft_manager.validate_draft(draft_id=draft_id, actor=user.org_id)
+    result = _draft_manager.validate_draft(draft_id=draft_id, actor=user.user_id)
 
     if result.get("status") not in ["success", "failed"]:
         raise HTTPException(400, result.get("error", "Validation error"))
@@ -669,7 +780,7 @@ def promote_draft(
     if _draft_manager is None:
         raise HTTPException(503, "Draft manager not initialized")
 
-    result = _draft_manager.promote_draft(draft_id=draft_id, actor=user.org_id)
+    result = _draft_manager.promote_draft(draft_id=draft_id, actor=user.user_id)
 
     if result.get("status") != "success":
         raise HTTPException(400, result.get("error", "Promotion failed"))
@@ -686,7 +797,7 @@ def discard_draft(
     if _draft_manager is None:
         raise HTTPException(503, "Draft manager not initialized")
 
-    result = _draft_manager.discard_draft(draft_id=draft_id, actor=user.org_id)
+    result = _draft_manager.discard_draft(draft_id=draft_id, actor=user.user_id)
 
     if result.get("status") != "success":
         raise HTTPException(400, result.get("error", "Discard failed"))
@@ -710,7 +821,7 @@ def rollback_module(
     result = _version_manager.rollback_to_version(
         module_id=module_id,
         target_version_id=request.target_version,
-        actor=user.org_id,
+        actor=user.user_id,
         reason=request.reason
     )
 
@@ -1349,6 +1460,9 @@ def get_user_prefs(user: User = Depends(get_current_user)):
 
 
 @_app.put("/admin/user/prefs")
+@audit_action(
+    "user_prefs_updated", "user_prefs", resource_id="{user.org_id}", snapshot=_user_prefs_snapshot
+)
 def update_user_prefs(
     request: UserPrefsUpdateRequest,
     user: User = Depends(get_current_user),
@@ -1431,6 +1545,27 @@ def bootstrap_admin_key():
         )
     org = _api_key_store.create_organization("default", "Default Organization")
     key, key_id = _api_key_store.create_key("default", "owner")
+
+    # Public, unauthenticated endpoint — no request.state.user for the
+    # decorator to resolve, so record directly (D-05, D-06 cross-phase
+    # contract shape: after_state carries {key_id, role} only, never the
+    # plaintext key).
+    audit_store = _audit_store or get_audit_store()
+    try:
+        audit_store.record(
+            org_id="default",
+            actor_id="bootstrap",
+            action="bootstrap_completed",
+            resource_type="api_key",
+            resource_id=key_id,
+            after_state={"key_id": key_id, "role": "owner"},
+        )
+    except AuditWriteError as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Audit write failed; mutation not recorded — the state change may have applied",
+        ) from e
+
     return {
         "api_key": key,
         "key_id": key_id,
@@ -1441,6 +1576,7 @@ def bootstrap_admin_key():
 
 
 @_app.post("/admin/api-keys")
+@audit_action("api_key_created", "api_key", resource_id="{request.org_id}")
 def create_api_key(
     request: CreateKeyRequest,
     user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
@@ -1468,6 +1604,7 @@ def list_api_keys(user: User = Depends(require_permission(Permission.MANAGE_KEYS
 
 
 @_app.delete("/admin/api-keys/{key_id}")
+@audit_action("api_key_revoked", "api_key", resource_id="{key_id}")
 def revoke_api_key(
     key_id: str,
     user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
@@ -1482,6 +1619,7 @@ def revoke_api_key(
 
 
 @_app.post("/admin/api-keys/{key_id}/rotate")
+@audit_action("api_key_rotated", "api_key", resource_id="{key_id}")
 def rotate_api_key(
     key_id: str,
     user: User = Depends(require_permission(Permission.MANAGE_KEYS)),
@@ -1584,7 +1722,7 @@ def create_draft(
     result = _draft_manager.create_draft(
         module_id=module_id,
         from_version=request.from_version,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") == "error":
@@ -1611,7 +1749,7 @@ def edit_draft(
         draft_id=draft_id,
         file_path=request.file_path,
         content=request.content,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") == "error":
@@ -1633,7 +1771,7 @@ def get_draft_diff(
     if _draft_manager is None:
         raise HTTPException(503, "Draft manager not initialized")
 
-    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.org_id)
+    result = _draft_manager.get_diff(draft_id=draft_id, actor=user.user_id)
 
     if result.get("status") == "error":
         raise HTTPException(400, result.get("error", "Unknown error"))
@@ -1656,7 +1794,7 @@ def validate_draft(
 
     result = _draft_manager.validate_draft(
         draft_id=draft_id,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") == "error":
@@ -1680,7 +1818,7 @@ def promote_draft(
 
     result = _draft_manager.promote_draft(
         draft_id=draft_id,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") == "error":
@@ -1704,7 +1842,7 @@ def discard_draft(
 
     result = _draft_manager.discard_draft(
         draft_id=draft_id,
-        actor=user.org_id
+        actor=user.user_id
     )
 
     if result.get("status") == "error":
@@ -1730,7 +1868,7 @@ def rollback_module(
     result = _version_manager.rollback_to_version(
         module_id=module_id,
         target_version_id=request.target_version_id,
-        actor=user.org_id,
+        actor=user.user_id,
         reason=request.reason
     )
 
@@ -1903,10 +2041,12 @@ def start_admin_server(
     draft_manager=None,
     version_manager=None,
     artifacts_dir=None,
+    audit_store: Optional[AuditStore] = None,
 ) -> None:
     """Start admin API in a daemon thread. Safe to call from gRPC serve()."""
     global _config_manager, _module_loader, _module_registry, _credential_store, _api_key_store
     global _usage_store, _quota_manager, _draft_manager, _version_manager, _artifacts_dir
+    global _audit_store
     _config_manager = config_manager
     _module_loader = module_loader
     _module_registry = module_registry
@@ -1928,6 +2068,18 @@ def start_admin_server(
         usage_store=_usage_store,
         api_key_store=_api_key_store,
     )
+
+    # Initialize audit (REQ-011) — single sink for every mutation path.
+    _audit_store = audit_store or AuditStore(
+        db_path=os.getenv("AUDIT_DB_PATH", "data/audit_events.db")
+    )
+    set_audit_store(_audit_store)
+
+    # AuditContextMiddleware must run INNER of the auth middleware (after
+    # request.state.user is set) — Starlette's add_middleware() makes the
+    # LAST-added middleware the OUTERMOST, so this call must come BEFORE
+    # the APIKeyAuthMiddleware add_middleware() call below.
+    _app.add_middleware(AuditContextMiddleware)
 
     _app.add_middleware(
         APIKeyAuthMiddleware,

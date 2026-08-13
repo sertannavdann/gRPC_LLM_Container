@@ -127,6 +127,7 @@ from shared.billing import QuotaManager, UsageStore
 from shared.modules.drafts import DraftManager
 from shared.modules.versioning import VersionManager
 from shared.modules.audit import DevModeAuditLog
+from shared.audit import AuditStore, set_audit_store
 
 
 logging.basicConfig(
@@ -975,8 +976,19 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         if self.sandbox_client:
             set_validator_sandbox(self.sandbox_client)
 
+        # ── Shared audit store (REQ-011) — single sink for every mutation
+        # path: DevModeAuditLog dual-write, @audit_action decorated Admin
+        # API endpoints, and direct record() calls from chat-tool strategies.
+        self.audit_store = AuditStore(
+            db_path=os.getenv("AUDIT_DB_PATH", "data/audit_events.db")
+        )
+        set_audit_store(self.audit_store)
+
         # ── Create DraftManager + VersionManager for ModuleAdminTool ─
-        _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
+        _audit_log = DevModeAuditLog(
+            audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")),
+            sink=self.audit_store,
+        )
         _dm = DraftManager(
             drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
             modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
@@ -1002,6 +1014,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             modules_dir=str(modules_dir),
             module_loader=self.module_loader,
             module_registry=self.module_registry,
+            audit_store=self.audit_store,
         )
         _module_admin_tool = ModuleAdminTool(
             module_loader=self.module_loader,
@@ -1009,6 +1022,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             credential_store=self.credential_store,
             draft_manager=_dm,
             version_manager=_vm,
+            audit_store=self.audit_store,
         )
 
         # ── Register 8 primary tools ────────────────────────────────
@@ -1812,8 +1826,13 @@ def serve(config: Optional[OrchestratorConfig] = None):
     # Start admin API for dynamic routing config + module management (daemon thread)
     from .admin_api import start_admin_server
     admin_port = int(os.getenv("ADMIN_API_PORT", "8003"))
-    # Initialize dev-mode managers for draft lifecycle and version rollback
-    _audit_log = DevModeAuditLog(audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")))
+    # Initialize dev-mode managers for draft lifecycle and version rollback.
+    # Reuse the OrchestratorService's shared AuditStore (single sink, D-01)
+    # rather than constructing a second instance.
+    _audit_log = DevModeAuditLog(
+        audit_dir=Path(os.getenv("AUDIT_DIR", "data/audit")),
+        sink=orchestrator_service.audit_store,
+    )
     _draft_manager = DraftManager(
         drafts_dir=Path(os.getenv("DRAFTS_DIR", "data/drafts")),
         modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
@@ -1835,6 +1854,7 @@ def serve(config: Optional[OrchestratorConfig] = None):
         draft_manager=_draft_manager,
         version_manager=_version_manager,
         artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "/app/data/artifacts")),
+        audit_store=orchestrator_service.audit_store,
     )
 
     try:

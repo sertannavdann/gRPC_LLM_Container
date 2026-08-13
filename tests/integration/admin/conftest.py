@@ -18,6 +18,7 @@ from starlette.testclient import TestClient
 # Import the components we need directly (avoiding orchestrator/__init__.py)
 from orchestrator.config_manager import ConfigManager
 from orchestrator.routing_config import RoutingConfig, CategoryRouting, TierConfig, PerformanceConstraints
+from shared.audit import AuditContextMiddleware, AuditStore, audit_action, set_audit_store
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
 from shared.auth.models import Role, User
@@ -48,6 +49,20 @@ def create_test_admin_app():
     app.state.quota_manager = None
     app.state.modules_dir = None
     app.state.audit_log = None
+
+    def _module_credential_keys_snapshot(**kwargs):
+        """NEVER return credential values — key names only (D-04).
+
+        Field name deliberately avoids the literal substring "credential" —
+        shared.audit.redaction.SECRET_KEY_PATTERN matches any dict KEY
+        containing that substring and would redact this whole safe metadata
+        field (a list of field NAMES, not values) down to "[REDACTED]".
+        """
+        request = kwargs.get("request")
+        creds = getattr(request, "credentials", None) if request is not None else None
+        if not creds:
+            return None
+        return {"field_names": sorted(creds.keys())}
 
     # Health endpoint
     @app.get("/admin/health")
@@ -103,8 +118,9 @@ def create_test_admin_app():
         result["has_credentials"] = False
         return result
 
-    # Enable module
+    # Enable module — representative decorated "module" mutation (REQ-011 Task 3)
     @app.post("/admin/modules/{category}/{platform}/enable")
+    @audit_action("module_enabled", "module", resource_id="{category}/{platform}")
     def enable_module(category: str, platform: str, user: User = Depends(require_permission(Permission.MANAGE_MODULES))):
         from fastapi import HTTPException
         from pydantic import BaseModel
@@ -197,6 +213,37 @@ def create_test_admin_app():
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    # Store module credentials — representative decorated "credential" mutation
+    # (REQ-011 Task 3). Mirrors orchestrator/admin_api.py's store_credentials:
+    # NEVER puts credential values in the audit event, key names only (D-04).
+    class TestModuleCredentialRequest(BaseModel):
+        credentials: Dict[str, str]
+
+    @app.post("/admin/modules/{category}/{platform}/credentials")
+    @audit_action(
+        "module_credentials_stored",
+        "module_credentials",
+        resource_id="{category}/{platform}",
+        snapshot=_module_credential_keys_snapshot,
+    )
+    def store_credentials(
+        category: str,
+        platform: str,
+        request: TestModuleCredentialRequest,
+        user: User = Depends(require_permission(Permission.MANAGE_CREDENTIALS)),
+    ):
+        from fastapi import HTTPException
+
+        module_id = f"{category}/{platform}"
+        if app.state.credential_store is None:
+            raise HTTPException(status_code=503, detail="Credential store not initialized")
+        app.state.credential_store.store(module_id, request.credentials)
+        return {
+            "success": True,
+            "module_id": module_id,
+            "message": f"Credentials stored for {module_id}",
+        }
+
     # Routing config endpoints
     @app.get("/admin/routing-config")
     def get_routing_config(user: User = Depends(get_current_user)):
@@ -205,7 +252,9 @@ def create_test_admin_app():
             raise HTTPException(status_code=503, detail="ConfigManager not initialized")
         return app.state.config_manager.get_config().model_dump()
 
+    # Representative decorated "config" mutation (REQ-011 Task 3)
     @app.put("/admin/routing-config")
+    @audit_action("routing_config_updated", "routing_config")
     def put_routing_config(payload: RoutingConfig, user: User = Depends(require_permission(Permission.WRITE_CONFIG))):
         from fastapi import HTTPException
         if app.state.config_manager is None:
@@ -423,7 +472,21 @@ def tmp_databases(tmp_path):
         "registry": str(tmp_path / "registry.db"),
         "credentials": str(tmp_path / "credentials.db"),
         "routing_config": str(tmp_path / "routing_config.json"),
+        "audit": str(tmp_path / "audit_events.db"),
     }
+
+
+@pytest.fixture
+def audit_store(tmp_databases):
+    """
+    Create an isolated AuditStore for testing and register it as the
+    module-level singleton (shared.audit.get_audit_store()) so
+    @audit_action-decorated endpoints — which resolve their store lazily
+    at call time — write into this test's isolated DB.
+    """
+    store = AuditStore(db_path=tmp_databases["audit"])
+    set_audit_store(store)
+    return store
 
 
 @pytest.fixture
@@ -520,6 +583,7 @@ def admin_app(
     quota_manager,
     modules_dir,
     audit_log,
+    audit_store,
 ):
     """Configure the Admin API app with test dependencies."""
     app = create_test_admin_app()
@@ -534,6 +598,13 @@ def admin_app(
     app.state.quota_manager = quota_manager
     app.state.modules_dir = modules_dir
     app.state.audit_log = audit_log
+    app.state.audit_store = audit_store
+
+    # AuditContextMiddleware must run INNER of the auth middleware (after
+    # request.state.user is set) — Starlette's add_middleware() makes the
+    # LAST-added middleware the OUTERMOST, so this call must come BEFORE
+    # the APIKeyAuthMiddleware add_middleware() call below.
+    app.add_middleware(AuditContextMiddleware)
 
     # Add auth middleware
     app.add_middleware(
