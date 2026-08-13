@@ -281,6 +281,72 @@
           "legendFormat": "utilization"
         }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40},
+      "id": 17,
+      "panels": [],
+      "title": "Audit Trail",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
+      "id": 18,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "title": "Audit Events by Action",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (action) (rate(grpc_llm_nexus_audit_events_total[5m]))",
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "blue", "mode": "fixed"}
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 41},
+      "id": 19,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Audit Events (24h)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(increase(grpc_llm_nexus_audit_events_total[24h]))",
+          "legendFormat": "Events"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 41},
+      "id": 20,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Audit Write Failures (24h)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(increase(grpc_llm_nexus_audit_write_failures_total[24h]))",
+          "legendFormat": "Failures"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,

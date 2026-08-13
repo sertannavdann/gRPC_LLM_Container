@@ -542,6 +542,43 @@ def create_module_metrics(meter: Optional[Meter] = None) -> ModuleMetrics:
 
 
 # =============================================================================
+# AUDIT METRICS (REQ-012)
+# =============================================================================
+
+@dataclass
+class AuditMetrics:
+    """Metrics for the NEXUS audit trail (shared/audit)."""
+
+    # Audit events successfully recorded, by action/resource_type/channel
+    audit_events_total: Counter
+
+    # Audit write failures (fail-closed, D-03), by action/resource_type
+    audit_write_failures_total: Counter
+
+
+def create_audit_metrics(meter: Optional[Meter] = None) -> AuditMetrics:
+    """Create metrics for the NEXUS audit trail."""
+    m = meter or get_meter()
+
+    audit_events_total = m.create_counter(
+        name="nexus_audit_events_total",
+        description="Total audit events successfully recorded",
+        unit="1",
+    )
+
+    audit_write_failures_total = m.create_counter(
+        name="nexus_audit_write_failures_total",
+        description="Total audit write failures (fail-closed, D-03)",
+        unit="1",
+    )
+
+    return AuditMetrics(
+        audit_events_total=audit_events_total,
+        audit_write_failures_total=audit_write_failures_total,
+    )
+
+
+# =============================================================================
 # RUN-UNIT METERING METRICS
 # =============================================================================
 
