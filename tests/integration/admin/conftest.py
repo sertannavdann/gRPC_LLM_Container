@@ -4,14 +4,19 @@ Shared fixtures for Admin API integration tests.
 Provides TestClient wired with auth middleware, isolated databases,
 and API keys for all roles (viewer, operator, admin, owner).
 """
+import csv
+import dataclasses
+import io
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 import pytest
 from fastapi import FastAPI, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
@@ -49,6 +54,7 @@ def create_test_admin_app():
     app.state.quota_manager = None
     app.state.modules_dir = None
     app.state.audit_log = None
+    app.state.audit_store = None
 
     def _module_credential_keys_snapshot(**kwargs):
         """NEVER return credential values — key names only (D-04).
@@ -459,6 +465,135 @@ def create_test_admin_app():
                 e.to_dict() for e in app.state.audit_log.get_events(module_id=module_id)
             ]
         return {"module_id": module_id, "attempts": events}
+
+    # ------------------------------------------------------------------
+    # Audit query API (REQ-012, Phase 07-03) — mirrors orchestrator/
+    # admin_api.py's three read-only audit endpoints, wired against
+    # app.state.audit_store instead of the module-global _audit_store
+    # (this factory deliberately avoids importing orchestrator/).
+    # ------------------------------------------------------------------
+
+    _AUDIT_CSV_COLUMNS = [
+        "id", "timestamp", "org_id", "actor_id", "action", "resource_type",
+        "resource_id", "ip_address", "before_state", "after_state",
+        "details", "prev_hash", "row_hash",
+    ]
+
+    def _audit_query_filters(user, org_id, actor_id, action, resource_type, resource_id, start, end):
+        filters: Dict[str, Any] = {}
+        if user.role == Role.OWNER:
+            if org_id is not None:
+                filters["org_id"] = org_id
+        else:
+            filters["org_id"] = user.org_id
+        if actor_id is not None:
+            filters["actor_id"] = actor_id
+        if action is not None:
+            filters["action"] = action
+        if resource_type is not None:
+            filters["resource_type"] = resource_type
+        if resource_id is not None:
+            filters["resource_id"] = resource_id
+        if start is not None:
+            filters["start_time"] = start
+        if end is not None:
+            filters["end_time"] = end
+        return filters
+
+    def _audit_csv_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        text = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+        if text[:1] in ("=", "+", "-", "@"):
+            text = "'" + text
+        return text
+
+    @app.get("/admin/audit-logs")
+    def query_audit_logs(
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        user: User = Depends(require_permission(Permission.READ_AUDIT)),
+    ):
+        from fastapi import HTTPException
+        if app.state.audit_store is None:
+            raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+        limit = max(1, min(limit, 1000))
+        offset = max(0, offset)
+        filters = _audit_query_filters(
+            user, org_id, actor_id, action, resource_type, resource_id, start, end
+        )
+
+        events = app.state.audit_store.query(limit=limit, offset=offset, **filters)
+        total = app.state.audit_store.count(**filters)
+
+        return {
+            "events": events,
+            "count": len(events),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @app.get("/admin/audit-logs/export")
+    def export_audit_logs(
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        user: User = Depends(require_permission(Permission.READ_AUDIT)),
+    ):
+        from fastapi import HTTPException
+        if app.state.audit_store is None:
+            raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+        filters = _audit_query_filters(
+            user, org_id, actor_id, action, resource_type, resource_id, start, end
+        )
+
+        def _generate() -> Iterator[str]:
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(_AUDIT_CSV_COLUMNS)
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+            for event in app.state.audit_store.iter_events(batch_size=1000, **filters):
+                writer.writerow([_audit_csv_cell(event.get(col)) for col in _AUDIT_CSV_COLUMNS])
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate(0)
+
+        filename = f"audit_events_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
+        return StreamingResponse(
+            _generate(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/admin/audit-logs/verify")
+    def verify_audit_chain(
+        start_id: Optional[int] = None,
+        end_id: Optional[int] = None,
+        user: User = Depends(require_permission(Permission.READ_AUDIT)),
+    ):
+        from fastapi import HTTPException
+        if app.state.audit_store is None:
+            raise HTTPException(status_code=503, detail="AuditStore not initialized")
+
+        result = app.state.audit_store.verify_chain(start_id=start_id, end_id=end_id)
+        return dataclasses.asdict(result)
 
     return app
 

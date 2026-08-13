@@ -18,6 +18,7 @@ class Permission(str, Enum):
     MANAGE_CREDENTIALS = "manage_credentials"
     MANAGE_KEYS = "manage_keys"
     ADMIN_ALL = "admin_all"
+    READ_AUDIT = "read_audit"
 
 
 ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
@@ -28,6 +29,7 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.WRITE_CONFIG,
         Permission.MANAGE_MODULES,
         Permission.MANAGE_KEYS,
+        Permission.READ_AUDIT,
     },
     Role.OWNER: set(Permission),
 }
