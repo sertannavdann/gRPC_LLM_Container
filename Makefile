@@ -51,7 +51,7 @@ BOLD := \033[1m
         proto-gen proto-gen-chroma proto-gen-llm proto-gen-shared \
         build-% restart-% logs-% shell-% status-% \
         provider-local provider-perplexity provider-openai provider-anthropic \
-		test test-unit test-integration test-e2e test-monkey auth-test billing-test test-metering make-test-metering test-self-evolution verify \
+		test test-unit test-integration test-e2e test-monkey auth-test billing-test audit-test test-metering make-test-metering test-self-evolution verify \
         dev dev-ui dev-ui-local dev-backend query chat \
         db-reset db-backup db-restore \
         install-deps check-deps lint format \
@@ -780,6 +780,10 @@ test-monkey:
 auth-test:
 	@printf '$(CYAN)Running auth unit + integration tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_auth.py auth/test_auth_integration.py -v --tb=short
+
+audit-test:
+	@printf '$(CYAN)Running audit trail unit tests...$(RESET)\n'
+	@cd tests && python -m pytest unit/test_audit_store.py -v --tb=short
 
 billing-test:
 	@printf '$(CYAN)Running billing unit tests...$(RESET)\n'
