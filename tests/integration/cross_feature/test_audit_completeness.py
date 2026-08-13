@@ -16,6 +16,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from shared.audit import AuditStore
 from shared.modules.audit import (
     BuildAuditLog,
     AttemptRecord,
@@ -288,3 +289,127 @@ class TestAuditCompleteness:
         assert loaded.attempts[2].failure_fingerprint == "fp_abc"
         assert loaded.attempts[2].failure_type == FailureType.TEST_FAILURE
         assert loaded.attempts[2].metadata["model"] == "gpt-4o"
+
+
+class TestAuditSQLiteParity:
+    """
+    D-01 dual-write parity (Phase 07-02 Task 3): every DevModeAuditLog
+    JSONL event produced during the draft/version lifecycle must have a
+    matching row in the SQLite audit_events store, cross-referenced by
+    jsonl_event_id — not just present in the JSONL file.
+    """
+
+    @staticmethod
+    def _assert_parity(jsonl_events, sqlite_store, action: str) -> None:
+        """Every JSONL event with `action` has exactly one SQLite row whose
+        details.jsonl_event_id matches, and core fields agree."""
+        matching_jsonl = [e for e in jsonl_events if e.action == action]
+        assert matching_jsonl, f"No JSONL events found for action={action!r}"
+
+        sqlite_rows = sqlite_store.query(action=action, limit=1000)
+        sqlite_by_event_id = {
+            row["details"]["jsonl_event_id"]: row
+            for row in sqlite_rows
+            if row.get("details") and "jsonl_event_id" in row["details"]
+        }
+
+        for jsonl_event in matching_jsonl:
+            assert jsonl_event.event_id in sqlite_by_event_id, (
+                f"JSONL event {jsonl_event.event_id} (action={action!r}) has no "
+                f"SQLite parity row"
+            )
+            sqlite_row = sqlite_by_event_id[jsonl_event.event_id]
+            assert sqlite_row["actor_id"] == jsonl_event.actor
+            assert sqlite_row["details"]["module_id"] == jsonl_event.module_id
+            assert sqlite_row["details"]["draft_id"] == jsonl_event.draft_id
+
+    def test_draft_lifecycle_sqlite_parity(
+        self, temp_workspace, valid_adapter_code, valid_test_code
+    ):
+        """Every DraftManager action's JSONL event has a matching SQLite row."""
+        modules_dir = temp_workspace["modules_dir"]
+        sqlite_store = AuditStore(db_path=str(Path(temp_workspace["audit_dir"]) / "audit_events.db"))
+        audit_log = DevModeAuditLog(temp_workspace["audit_dir"], sink=sqlite_store)
+
+        create_test_module(
+            modules_dir, "test/sqliteparity", valid_adapter_code, valid_test_code,
+            ModuleStatus.VALIDATED.value,
+        )
+
+        dm = DraftManager(
+            drafts_dir=temp_workspace["drafts_dir"],
+            modules_dir=modules_dir,
+            audit_log=audit_log,
+        )
+
+        result = dm.create_draft("test/sqliteparity", actor="dev1")
+        draft_id = result["draft_id"]
+        dm.edit_file(draft_id, "adapter.py", "class A: pass", actor="dev1")
+        dm.get_diff(draft_id, actor="dev1")
+        validator_func = MagicMock(return_value={"status": "success", "report": {}})
+        dm.validate_draft(draft_id, actor="dev1", validator_func=validator_func)
+
+        result2 = dm.create_draft("test/sqliteparity", actor="dev1")
+        dm.discard_draft(result2["draft_id"], actor="dev1")
+
+        all_events = audit_log.get_events()
+
+        for action in (
+            "draft_created",
+            "draft_edited",
+            "draft_diff_viewed",
+            "draft_validated",
+            "draft_discarded",
+        ):
+            self._assert_parity(all_events, sqlite_store, action)
+
+        # Row count parity: same number of rows on both sides for this module.
+        sqlite_total = sqlite_store.count()
+        assert sqlite_total == len(all_events)
+
+    def test_version_rollback_sqlite_parity(self, temp_workspace):
+        """Rollback JSONL events have matching SQLite rows with from/to/reason in details."""
+        sqlite_store = AuditStore(db_path=str(Path(temp_workspace["audit_dir"]) / "audit_events.db"))
+        audit_log = DevModeAuditLog(temp_workspace["audit_dir"], sink=sqlite_store)
+        vm = VersionManager(
+            db_path=temp_workspace["db_path"],
+            audit_log=audit_log,
+        )
+
+        v1_id = vm.record_version(
+            module_id="test/rollparity", bundle_sha256="hash_v1", actor="system",
+        )
+        time.sleep(0.01)
+        v2_id = vm.record_version(
+            module_id="test/rollparity", bundle_sha256="hash_v2", actor="dev1",
+        )
+
+        vm.rollback_to_version("test/rollparity", v2_id, actor="admin", reason="Testing v2")
+        vm.rollback_to_version("test/rollparity", v1_id, actor="admin", reason="Bug in v2")
+
+        all_events = audit_log.get_events()
+        self._assert_parity(all_events, sqlite_store, "version_rollback")
+
+        rollback_sqlite_rows = sqlite_store.query(action="version_rollback")
+        assert any(
+            row["details"].get("reason") == "Bug in v2" for row in rollback_sqlite_rows
+        )
+
+    def test_sink_failure_propagates_and_stops_lifecycle_action(self, temp_workspace, monkeypatch):
+        """A broken SQLite sink raises out of log_action() (D-03 fail-closed) —
+        the JSONL side still recorded the event, but the caller sees the failure."""
+        from shared.audit import AuditWriteError
+
+        sqlite_store = AuditStore(db_path=str(Path(temp_workspace["audit_dir"]) / "audit_events.db"))
+        audit_log = DevModeAuditLog(temp_workspace["audit_dir"], sink=sqlite_store)
+
+        def _boom(*args, **kwargs):
+            raise AuditWriteError("sink unavailable")
+
+        monkeypatch.setattr(sqlite_store, "record", _boom)
+
+        with pytest.raises(AuditWriteError):
+            audit_log.log_action(action="draft_created", actor="dev1", module_id="test/sinkfail")
+
+        # JSONL append happens before the sink call, so the event is still there.
+        assert len(audit_log.get_events()) == 1

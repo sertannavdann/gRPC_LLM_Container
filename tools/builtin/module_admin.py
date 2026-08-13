@@ -197,12 +197,16 @@ class CredentialStrategy(ActionStrategy):
 
         try:
             # NEVER put credential values in the event — key names only.
+            # Field name avoids the literal substring "credential" —
+            # shared.audit.redaction.SECRET_KEY_PATTERN matches any dict KEY
+            # containing it and would redact this safe metadata (a list of
+            # field NAMES, not values) down to "[REDACTED]".
             _record_mutation(
                 self._audit_store,
                 "module_credentials_stored",
                 "module_credentials",
                 module_id,
-                details={"credential_keys": sorted(creds.keys())},
+                details={"field_names": sorted(creds.keys())},
             )
         except AuditWriteError:
             return {"status": "error", "error": "audit write failed"}

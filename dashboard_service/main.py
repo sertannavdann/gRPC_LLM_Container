@@ -819,12 +819,18 @@ class ModuleCredentialRequest(BaseModel):
 
 
 def _module_credential_keys_snapshot(**kwargs) -> Optional[dict]:
-    """NEVER return credential values — key names only (D-04)."""
+    """NEVER return credential values — key names only (D-04).
+
+    Field name deliberately avoids the literal substring "credential" —
+    shared.audit.redaction.SECRET_KEY_PATTERN matches any dict KEY
+    containing that substring and would redact this whole safe metadata
+    field (a list of field NAMES, not values) down to "[REDACTED]".
+    """
     request = kwargs.get("request")
     creds = getattr(request, "credentials", None) if request is not None else None
     if not creds:
         return None
-    return {"credential_keys": sorted(creds.keys())}
+    return {"field_names": sorted(creds.keys())}
 
 
 @app.post("/admin/module-credentials/{category}/{platform}", tags=["Admin"])
