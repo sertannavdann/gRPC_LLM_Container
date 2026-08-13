@@ -412,6 +412,25 @@ Wave 4 — Stability + Synchronization Extension:
 - No module installed without explicit user approval
 - Traces auto-purge per retention policy
 
+**Goal**: Human approval gates the self-evolution engine — nothing installs without an explicit, attributable, integrity-bound decision — and artifacts and traces clean themselves up.
+
+**Plans:** 13 plans (08-01 complete; 08-02..08-13 close the verification + review gaps and the remaining scope)
+
+Plans:
+- [x] 08-01-PLAN.md — Backend enforcement core: install guard raised to APPROVED, approve/reject core, admin endpoints, policy scaffold
+- [ ] 08-02-PLAN.md — Attestation integrity (CR-01/WR-01) + individual-admin attribution and ISO-8601/audit hygiene (WR-02..WR-05)
+- [ ] 08-03-PLAN.md — SSE payload extension: manifest-scanned pending-approval modules with status/pending_approval/build_stage
+- [ ] 08-04-PLAN.md — Shared GC + tiered retention worker (REQ-017, D-10/D-11/D-12)
+- [ ] 08-05-PLAN.md — Inbound token-bucket rate limiting with 429 + Retry-After on both HTTP services (REQ-020)
+- [ ] 08-06-PLAN.md — LLM walkthrough generated at validation time + manifest field (D-08)
+- [ ] 08-07-PLAN.md — adminClient approval fetchers + pipelinePageMachine (XState v5, D-14)
+- [ ] 08-08-PLAN.md — Pending-approval module nodes + machine-driven pipeline page (D-01/D-04/D-13)
+- [ ] 08-09-PLAN.md — Review surface: five collapsible layers, progressive blueprint, walkthrough, approve/reject footer (D-05/D-06/D-15)
+- [ ] 08-10-PLAN.md — Chat approval backend: session identity from API key + RBAC-guarded approve/reject strategies (D-02/D-17)
+- [ ] 08-11-PLAN.md — ApprovalActionCard chat surface with inline blueprint and feedback (D-02)
+- [ ] 08-12-PLAN.md — Generic auto-generated module output panel over AdapterRunResult (D-07)
+- [ ] 08-13-PLAN.md — Playwright SSE E2E: connect, reconnect after dashboard restart, error handling (REQ-018)
+
 ---
 
 ## Phase 9: Enterprise & Marketplace (Future — Ideation Only)
