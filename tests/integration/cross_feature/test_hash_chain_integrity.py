@@ -30,10 +30,10 @@ class TestHashChainIntegrity:
         modules_dir = temp_workspace["modules_dir"]
         manifest, bundle_hash = create_test_module(
             modules_dir, "test/hashcheck", valid_adapter_code, valid_test_code,
-            ModuleStatus.VALIDATED.value,
+            ModuleStatus.APPROVED.value,
         )
 
-        attestation = {"bundle_sha256": bundle_hash, "status": "VALIDATED"}
+        attestation = {"bundle_sha256": bundle_hash, "status": "APPROVED"}
         result = setup_installer.install_module("test/hashcheck", attestation)
 
         assert result["status"] == "success"
@@ -46,14 +46,14 @@ class TestHashChainIntegrity:
         modules_dir = temp_workspace["modules_dir"]
         manifest, original_hash = create_test_module(
             modules_dir, "test/tamper", valid_adapter_code, valid_test_code,
-            ModuleStatus.VALIDATED.value,
+            ModuleStatus.APPROVED.value,
         )
 
         # Tamper with adapter.py after hash was computed
         adapter_file = modules_dir / "test" / "tamper" / "adapter.py"
         adapter_file.write_text(adapter_file.read_text() + "\n# tampered")
 
-        attestation = {"bundle_sha256": original_hash, "status": "VALIDATED"}
+        attestation = {"bundle_sha256": original_hash, "status": "APPROVED"}
         result = setup_installer.install_module("test/tamper", attestation)
 
         assert result["status"] == "error"

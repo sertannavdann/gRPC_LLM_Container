@@ -12,6 +12,7 @@ import re
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -26,6 +27,8 @@ from shared.auth.middleware import APIKeyAuthMiddleware
 from shared.auth.models import User
 from shared.auth.rbac import Permission, get_current_user, require_permission
 from shared.billing import UsageStore, QuotaManager
+from shared.modules.approval import approve_module, reject_module
+from shared.modules.manifest import ModuleManifest, ModuleStatus
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
@@ -39,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 _app = FastAPI(title="Orchestrator Admin API", version="2.0")
 _config_manager: Optional[ConfigManager] = None
+
+# Modules base directory — used by the approval gate (approve/reject/review/audit)
+_MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
 
 # Module system references (set by start_admin_server)
 _module_loader = None
@@ -733,6 +739,187 @@ def list_module_versions(
         "total": len(versions),
         "active": next((v.to_dict() for v in versions if v.status == "ACTIVE"), None)
     }
+
+
+# =============================================================================
+# APPROVAL GATE ENDPOINTS (Phase 8 plan 08-01 — D-16/D-17/D-09/D-10/D-19)
+# =============================================================================
+
+
+class RejectModuleRequest(BaseModel):
+    """Request to reject a module. Non-empty feedback triggers one bounded
+    repair cycle (D-09); empty/None feedback is a terminal rejection."""
+    feedback: Optional[str] = None
+
+
+def _build_blueprint_summary(module_dir: Path, manifest: "ModuleManifest") -> Dict[str, Any]:
+    """
+    Best-effort structural summary of a module's adapter for the D-05
+    mini-graph. Statically parses adapter.py's get_schema() return value
+    (no code execution) to surface field count and inferred output types.
+    Degrades gracefully (zeroed/empty fields) if adapter.py is missing or
+    get_schema() isn't a simple dict literal — this is a summary aid for
+    the review UI, not a validation surface.
+    """
+    summary: Dict[str, Any] = {
+        "adapter_name": manifest.class_name,
+        "schema_field_count": 0,
+        "output_types": [],
+        "credential_names": [manifest.name] if manifest.requires_api_key else [],
+    }
+
+    adapter_file = module_dir / "adapter.py"
+    if not adapter_file.exists():
+        return summary
+
+    try:
+        import ast
+
+        tree = ast.parse(adapter_file.read_text())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.FunctionDef) and node.name == "get_schema"):
+                continue
+            for stmt in ast.walk(node):
+                if not (isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Dict)):
+                    continue
+                for key, value in zip(stmt.value.keys, stmt.value.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "properties"
+                        and isinstance(value, ast.Dict)
+                    ):
+                        summary["schema_field_count"] = len(value.keys)
+                        output_types = []
+                        for prop_value in value.values:
+                            if not isinstance(prop_value, ast.Dict):
+                                continue
+                            for prop_key, prop_val in zip(prop_value.keys, prop_value.values):
+                                if (
+                                    isinstance(prop_key, ast.Constant)
+                                    and prop_key.value == "type"
+                                    and isinstance(prop_val, ast.Constant)
+                                ):
+                                    output_types.append(prop_val.value)
+                        summary["output_types"] = output_types
+    except Exception as e:
+        logger.debug(f"Blueprint summary parse skipped for {module_dir}: {e}")
+
+    return summary
+
+
+@_app.post("/admin/modules/{category}/{platform}/approve")
+def approve_module_endpoint(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),  # admin+ role
+):
+    """Approve a VALIDATED module for install (admin+ role, D-16/D-17)."""
+    if _draft_manager is None:
+        raise HTTPException(503, "Audit log not initialized")
+
+    module_id = f"{category}/{platform}"
+    result = approve_module(
+        module_id=module_id,
+        actor=user.org_id,
+        audit_log=_draft_manager.audit_log,
+        modules_dir=_MODULES_DIR,
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Approval failed"))
+
+    return result
+
+
+@_app.post("/admin/modules/{category}/{platform}/reject")
+def reject_module_endpoint(
+    category: str,
+    platform: str,
+    request: RejectModuleRequest,
+    user: User = Depends(require_permission(Permission.WRITE_CONFIG)),  # admin+ role
+):
+    """
+    Reject a module (admin+ role).
+
+    Non-empty feedback triggers one bounded repair cycle and returns the
+    module to VALIDATING (D-09). Empty/None feedback is terminal: status
+    becomes FAILED and artifacts are queued for GC (D-09/D-10).
+    """
+    if _draft_manager is None:
+        raise HTTPException(503, "Audit log not initialized")
+
+    module_id = f"{category}/{platform}"
+    result = reject_module(
+        module_id=module_id,
+        feedback=request.feedback,
+        actor=user.org_id,
+        audit_log=_draft_manager.audit_log,
+        modules_dir=_MODULES_DIR,
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(400, result.get("error", "Rejection failed"))
+
+    return result
+
+
+@_app.get("/admin/modules/{category}/{platform}/review")
+def review_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),  # operator+ role
+):
+    """Return the review payload for a pending-approval module (operator+ role)."""
+    module_id = f"{category}/{platform}"
+    module_dir = _MODULES_DIR / category / platform
+    manifest_path = module_dir / "manifest.json"
+
+    if not manifest_path.exists():
+        raise HTTPException(404, f"Module not found: {module_id}")
+
+    manifest = ModuleManifest.load(manifest_path)
+
+    return {
+        "module_id": module_id,
+        "status": manifest.status,
+        "validation_results": manifest.validation_results.to_dict(),
+        "walkthrough": getattr(manifest, "walkthrough", ""),
+        "credentials": {
+            "requires_api_key": manifest.requires_api_key,
+            "auth_type": manifest.auth_type,
+            "api_key_instructions": manifest.api_key_instructions,
+        },
+        "blueprint": _build_blueprint_summary(module_dir, manifest),
+    }
+
+
+@_app.get("/admin/modules/{category}/{platform}/audit")
+def audit_module(
+    category: str,
+    platform: str,
+    user: User = Depends(require_permission(Permission.MANAGE_MODULES)),  # operator+ role
+):
+    """Return BuildAuditLog attempt records for a module (operator+ role)."""
+    from shared.modules.audit import BuildAuditLog
+
+    module_id = f"{category}/{platform}"
+    module_dir = _MODULES_DIR / category / platform
+
+    if not module_dir.exists():
+        raise HTTPException(404, f"Module not found: {module_id}")
+
+    attempts: List[Dict[str, Any]] = []
+    audit_dir = Path(os.getenv("AUDIT_DIR", "/app/data/audit"))
+    if audit_dir.exists():
+        for audit_file in audit_dir.glob("*_audit.json"):
+            try:
+                log = BuildAuditLog.load(audit_file)
+            except Exception:
+                continue
+            if log.module_id == module_id:
+                attempts.extend(a.to_dict() for a in log.attempts)
+
+    return {"module_id": module_id, "attempts": attempts}
 
 
 # =============================================================================

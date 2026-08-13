@@ -66,6 +66,19 @@ def mock_cred_store():
     return store
 
 
+def _approve(modules_dir, module_id: str) -> None:
+    """Simulate an admin approval (D-16): move manifest.status to APPROVED.
+
+    install_module() requires APPROVED, not just VALIDATED, since Phase 8
+    plan 08-01 raised the install guard to enforce the manual approval gate.
+    """
+    category, platform = module_id.split("/")
+    manifest_path = modules_dir / category / platform / "manifest.json"
+    manifest = ModuleManifest.load(manifest_path)
+    manifest.status = ModuleStatus.APPROVED
+    manifest.save(modules_dir)
+
+
 # ---------------------------------------------------------------------------
 # build_module
 # ---------------------------------------------------------------------------
@@ -322,6 +335,7 @@ class TestInstallModule:
         set_installer_deps(mock_loader, mock_registry, mock_cred_store)
         build_module(name="inst", category="test", requires_api_key=False)
         validate_module("test/inst")
+        _approve(modules_dir, "test/inst")
 
         result = install_module("test/inst")
 
@@ -352,7 +366,7 @@ class TestInstallModule:
     def test_rejects_pending_module(
         self, modules_dir, _reset_installer, mock_loader,
     ):
-        """Verify the new VALIDATED guard rejects PENDING modules."""
+        """Verify the APPROVED guard rejects PENDING modules (D-16)."""
         from tools.builtin.module_builder import build_module
         from tools.builtin.module_installer import install_module, set_installer_deps
 
@@ -363,7 +377,26 @@ class TestInstallModule:
         result = install_module("test/pend_inst")
 
         assert result["status"] == "error"
-        assert "not been validated" in result["error"]
+        assert "not been approved" in result["error"]
+        mock_loader.load_module.assert_not_called()
+
+    def test_rejects_validated_but_not_approved_module(
+        self, modules_dir, _reset_installer, mock_loader,
+    ):
+        """Verify a VALIDATED (but not APPROVED) module is rejected (D-16)."""
+        from tools.builtin.module_builder import build_module
+        from tools.builtin.module_validator import validate_module
+        from tools.builtin.module_installer import install_module, set_installer_deps
+
+        set_installer_deps(mock_loader, MagicMock(), MagicMock())
+        build_module(name="validated_only", category="test")
+        validate_module("test/validated_only")
+        # No approval step — status remains VALIDATED
+
+        result = install_module("test/validated_only")
+
+        assert result["status"] == "error"
+        assert "not been approved" in result["error"]
         mock_loader.load_module.assert_not_called()
 
     def test_install_without_loader(self, modules_dir, _reset_installer):
@@ -373,6 +406,7 @@ class TestInstallModule:
 
         build_module(name="noloader", category="test")
         validate_module("test/noloader")
+        _approve(modules_dir, "test/noloader")
 
         result = install_module("test/noloader")
 
@@ -433,7 +467,8 @@ class SelfcorrAdapter(BaseAdapter):
         assert v2["status"] == "success"
         assert v2["fix_hints"] is None
 
-        # Step 6: install
+        # Step 6: approve (D-16 admin approval gate, then install)
+        _approve(modules_dir, module_id)
         inst = install_module(module_id)
         assert inst["status"] == "success"
         assert inst["is_loaded"] is True

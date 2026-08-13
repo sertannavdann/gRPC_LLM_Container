@@ -8,9 +8,11 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import pytest
 from fastapi import FastAPI, Depends
+from pydantic import BaseModel
 from starlette.testclient import TestClient
 
 # Import the components we need directly (avoiding orchestrator/__init__.py)
@@ -21,8 +23,11 @@ from shared.auth.middleware import APIKeyAuthMiddleware
 from shared.auth.models import Role, User
 from shared.auth.rbac import Permission, get_current_user, require_permission
 from shared.billing import QuotaManager, UsageStore
+from shared.modules.approval import approve_module, reject_module
+from shared.modules.audit import DevModeAuditLog
 from shared.modules.credentials import CredentialStore
 from shared.modules.loader import ModuleLoader
+from shared.modules.manifest import ModuleManifest
 from shared.modules.registry import ModuleRegistry
 
 # We need to re-create the admin API app here to avoid importing orchestrator package
@@ -41,6 +46,8 @@ def create_test_admin_app():
     app.state.api_key_store = None
     app.state.usage_store = None
     app.state.quota_manager = None
+    app.state.modules_dir = None
+    app.state.audit_log = None
 
     # Health endpoint
     @app.get("/admin/health")
@@ -265,6 +272,145 @@ def create_test_admin_app():
         result = app.state.quota_manager.check_quota(user.org_id)
         return result.model_dump()
 
+    # ------------------------------------------------------------------
+    # Approval gate endpoints (Phase 8 plan 08-01 — D-16/D-17/D-09/D-10/D-19)
+    # Mirrors orchestrator/admin_api.py's approve/reject/review/audit
+    # endpoints, reading dependencies from app.state instead of module
+    # globals (this factory deliberately avoids importing orchestrator/).
+    # ------------------------------------------------------------------
+
+    class RejectModuleRequest(BaseModel):
+        feedback: Optional[str] = None
+
+    @app.post("/admin/modules/{category}/{platform}/approve")
+    def approve_module_endpoint(
+        category: str,
+        platform: str,
+        user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
+    ):
+        from fastapi import HTTPException
+        if app.state.audit_log is None or app.state.modules_dir is None:
+            raise HTTPException(status_code=503, detail="Approval gate not initialized")
+
+        module_id = f"{category}/{platform}"
+        result = approve_module(
+            module_id=module_id,
+            actor=user.org_id,
+            audit_log=app.state.audit_log,
+            modules_dir=app.state.modules_dir,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("error", "Approval failed"))
+        return result
+
+    @app.post("/admin/modules/{category}/{platform}/reject")
+    def reject_module_endpoint(
+        category: str,
+        platform: str,
+        request: RejectModuleRequest,
+        user: User = Depends(require_permission(Permission.WRITE_CONFIG)),
+    ):
+        from fastapi import HTTPException
+        if app.state.audit_log is None or app.state.modules_dir is None:
+            raise HTTPException(status_code=503, detail="Approval gate not initialized")
+
+        module_id = f"{category}/{platform}"
+        result = reject_module(
+            module_id=module_id,
+            feedback=request.feedback,
+            actor=user.org_id,
+            audit_log=app.state.audit_log,
+            modules_dir=app.state.modules_dir,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("error", "Rejection failed"))
+        return result
+
+    def _test_blueprint_summary(module_dir: Path, manifest) -> Dict[str, Any]:
+        """Minimal mirror of admin_api.py's _build_blueprint_summary for tests
+        (kept local to avoid importing the orchestrator package)."""
+        import ast
+
+        summary: Dict[str, Any] = {
+            "adapter_name": manifest.class_name,
+            "schema_field_count": 0,
+            "output_types": [],
+            "credential_names": [manifest.name] if manifest.requires_api_key else [],
+        }
+        adapter_file = module_dir / "adapter.py"
+        if not adapter_file.exists():
+            return summary
+        try:
+            tree = ast.parse(adapter_file.read_text())
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.FunctionDef) and node.name == "get_schema"):
+                    continue
+                for stmt in ast.walk(node):
+                    if not (isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Dict)):
+                        continue
+                    for key, value in zip(stmt.value.keys, stmt.value.values):
+                        if (
+                            isinstance(key, ast.Constant)
+                            and key.value == "properties"
+                            and isinstance(value, ast.Dict)
+                        ):
+                            summary["schema_field_count"] = len(value.keys)
+        except Exception:
+            pass
+        return summary
+
+    @app.get("/admin/modules/{category}/{platform}/review")
+    def review_module_endpoint(
+        category: str,
+        platform: str,
+        user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+    ):
+        from fastapi import HTTPException
+        if app.state.modules_dir is None:
+            raise HTTPException(status_code=503, detail="Approval gate not initialized")
+
+        module_id = f"{category}/{platform}"
+        module_dir = Path(app.state.modules_dir) / category / platform
+        manifest_path = module_dir / "manifest.json"
+        if not manifest_path.exists():
+            raise HTTPException(status_code=404, detail=f"Module not found: {module_id}")
+
+        manifest = ModuleManifest.load(manifest_path)
+        return {
+            "module_id": module_id,
+            "status": manifest.status,
+            "validation_results": manifest.validation_results.to_dict(),
+            "walkthrough": getattr(manifest, "walkthrough", ""),
+            "credentials": {
+                "requires_api_key": manifest.requires_api_key,
+                "auth_type": manifest.auth_type,
+                "api_key_instructions": manifest.api_key_instructions,
+            },
+            "blueprint": _test_blueprint_summary(module_dir, manifest),
+        }
+
+    @app.get("/admin/modules/{category}/{platform}/audit")
+    def audit_module_endpoint(
+        category: str,
+        platform: str,
+        user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
+    ):
+        from fastapi import HTTPException
+        if app.state.modules_dir is None:
+            raise HTTPException(status_code=503, detail="Approval gate not initialized")
+
+        module_id = f"{category}/{platform}"
+        module_dir = Path(app.state.modules_dir) / category / platform
+        if not module_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Module not found: {module_id}")
+
+        events = []
+        if app.state.audit_log is not None:
+            events = [
+                e.to_dict() for e in app.state.audit_log.get_events(module_id=module_id)
+            ]
+        return {"module_id": module_id, "attempts": events}
+
     return app
 
 
@@ -350,6 +496,20 @@ def module_loader(tmp_path):
 
 
 @pytest.fixture
+def modules_dir(tmp_path):
+    """Modules directory backing the approval-gate endpoints (shared with module_loader)."""
+    d = tmp_path / "modules"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+@pytest.fixture
+def audit_log(tmp_path):
+    """DevModeAuditLog instance for approval-gate audit trail tests (D-19)."""
+    return DevModeAuditLog(audit_dir=tmp_path / "audit")
+
+
+@pytest.fixture
 def admin_app(
     config_manager,
     module_loader,
@@ -358,6 +518,8 @@ def admin_app(
     api_key_store,
     usage_store,
     quota_manager,
+    modules_dir,
+    audit_log,
 ):
     """Configure the Admin API app with test dependencies."""
     app = create_test_admin_app()
@@ -370,6 +532,8 @@ def admin_app(
     app.state.api_key_store = api_key_store
     app.state.usage_store = usage_store
     app.state.quota_manager = quota_manager
+    app.state.modules_dir = modules_dir
+    app.state.audit_log = audit_log
 
     # Add auth middleware
     app.add_middleware(

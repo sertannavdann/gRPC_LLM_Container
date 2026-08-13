@@ -138,22 +138,34 @@ def test_adapter():
     return manifest, bundle.bundle_sha256
 
 
-def test_validated_bundle_installs_successfully(setup_installer_deps, temp_modules_dir):
-    """Test that a validated bundle installs successfully."""
+def test_approved_bundle_installs_successfully(setup_installer_deps, temp_modules_dir):
+    """Test that an APPROVED bundle installs successfully (D-16: guard raised to APPROVED)."""
     manifest, bundle_hash = create_test_module(
-        temp_modules_dir, "test/validated", ModuleStatus.VALIDATED.value
+        temp_modules_dir, "test/approved", ModuleStatus.APPROVED.value
     )
 
     attestation = {
         "bundle_sha256": bundle_hash,
-        "status": "VALIDATED",
+        "status": "APPROVED",
     }
 
-    result = module_installer.install_module("test/validated", attestation)
+    result = module_installer.install_module("test/approved", attestation)
 
     assert result["status"] == "success"
-    assert result["module_id"] == "test/validated"
+    assert result["module_id"] == "test/approved"
     assert result["is_loaded"] is True
+
+
+def test_validated_only_bundle_rejected(setup_installer_deps, temp_modules_dir):
+    """A VALIDATED-but-not-yet-APPROVED bundle is rejected (D-16 admin approval gate)."""
+    manifest, bundle_hash = create_test_module(
+        temp_modules_dir, "test/validated_only", ModuleStatus.VALIDATED.value
+    )
+
+    result = module_installer.install_module("test/validated_only")
+
+    assert result["status"] == "error"
+    assert "not been approved" in result["error"]
 
 
 def test_non_validated_bundle_rejected(setup_installer_deps, temp_modules_dir):
@@ -165,7 +177,7 @@ def test_non_validated_bundle_rejected(setup_installer_deps, temp_modules_dir):
     result = module_installer.install_module("test/pending")
 
     assert result["status"] == "error"
-    assert "not been validated" in result["error"]
+    assert "not been approved" in result["error"]
 
 
 def test_failed_bundle_rejected(setup_installer_deps, temp_modules_dir):
@@ -183,7 +195,7 @@ def test_failed_bundle_rejected(setup_installer_deps, temp_modules_dir):
 def test_tampered_bundle_hash_mismatch_rejected(setup_installer_deps, temp_modules_dir):
     """Test that a tampered bundle (hash mismatch) is rejected."""
     manifest, original_hash = create_test_module(
-        temp_modules_dir, "test/tampered", ModuleStatus.VALIDATED.value
+        temp_modules_dir, "test/tampered", ModuleStatus.APPROVED.value
     )
 
     # Tamper with the file
@@ -207,7 +219,7 @@ def test_tampered_bundle_hash_mismatch_rejected(setup_installer_deps, temp_modul
 def test_install_success_creates_audit_record(setup_installer_deps, temp_modules_dir, temp_audit_dir):
     """Test that successful install creates audit record."""
     manifest, bundle_hash = create_test_module(
-        temp_modules_dir, "test/audit_success", ModuleStatus.VALIDATED.value
+        temp_modules_dir, "test/audit_success", ModuleStatus.APPROVED.value
     )
 
     attestation = {
@@ -256,18 +268,18 @@ def test_install_rejection_creates_audit_record(setup_installer_deps, temp_modul
     last_entry = entries[-1]
     assert last_entry["module_id"] == "test/audit_reject"
     assert last_entry["action"] == "install_rejected"
-    assert last_entry["reason"] == "not_validated"
+    assert last_entry["reason"] == "not_approved"
 
 
 def test_missing_attestation_hash_rejected(setup_installer_deps, temp_modules_dir):
     """Test that attestation without bundle_sha256 is rejected."""
     manifest, bundle_hash = create_test_module(
-        temp_modules_dir, "test/no_hash", ModuleStatus.VALIDATED.value
+        temp_modules_dir, "test/no_hash", ModuleStatus.APPROVED.value
     )
 
     # Attestation without bundle_sha256
     attestation = {
-        "status": "VALIDATED",
+        "status": "APPROVED",
     }
 
     result = module_installer.install_module("test/no_hash", attestation)

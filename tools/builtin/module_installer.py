@@ -9,7 +9,8 @@ records it in the persistent ModuleRegistry, and prompts for credentials
 if needed.
 
 Security features:
-- Attestation-based install guard: only VALIDATED bundles can be installed
+- Attestation-based install guard: only APPROVED bundles can be installed
+  (an admin must explicitly approve a VALIDATED module first — D-16)
 - Hash verification: bundle_sha256 must match validation attestation
 - Audit trail: all install attempts (success and rejection) are logged
 """
@@ -56,7 +57,8 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
     AND the user has explicitly approved the installation.
 
     Pre-install checks:
-    1. Validation status must be VALIDATED (not FAILED, ERROR, or PENDING)
+    1. Manifest status must be APPROVED — an admin must approve a VALIDATED
+       module via approve_module() before install_module() will proceed (D-16)
     2. bundle_sha256 in attestation must match the actual bundle being installed
     3. Attestation must reference the most recent validation report
 
@@ -93,15 +95,15 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
             "error": f"Module {module_id} failed validation. Fix errors and run validate_module() again.",
         }
 
-    if manifest.status != ModuleStatus.VALIDATED and manifest.status != ModuleStatus.VALIDATED.value:
+    if manifest.status != ModuleStatus.APPROVED and manifest.status != ModuleStatus.APPROVED.value:
         _log_install_rejection(
-            module_id, "not_validated", f"Status: {manifest.status}"
+            module_id, "not_approved", f"Status: {manifest.status}"
         )
         return {
             "status": "error",
             "error": (
-                f"Module {module_id} has not been validated (status: {manifest.status}). "
-                f"Call validate_module('{module_id}') first."
+                f"Module {module_id} has not been approved for install (status: {manifest.status}). "
+                f"An admin must approve it first."
             ),
         }
 
