@@ -7,29 +7,56 @@
 > (admin_api.py, dashboard main.py, middleware, stores, gc/retention). They execute AFTER Phase 8
 > gap execution completes. Stage 0 (read-only) and Stage 1 (dead code + mechanical fixes) may run before.
 
-## Stage 0 — VERIFY CLAIMS (read-only, runs now)
+## Stage 0 — VERIFY CLAIMS ✓ COMPLETE (2026-08-13, read-only agent, evidence in verdicts below)
 
-Confirm liveness/deadness before any deletion. Output: confirmed kill-list with evidence.
-
-- [ ] 6.1 OTC pair: `otc_reward.py` (86 ln) + `otc_policy_store.py` (378 ln) claimed zero prod callers.
-      CAUTION: Phase 4 deliverable was "bridge run-unit metering to OTC reward signal" — deletion may
-      undo a shipped requirement. Verify call graph + Phase 4 SUMMARYs before verdict (delete vs wire).
-- [ ] 6.2 `sandbox_service/runner.py` (405 ln): audit itself notes module_validator.py:421-422 calls it →
-      NOT dead; verdict is re-route module_validator to gRPC sandbox then delete, or keep. Verify.
-- [ ] 6.1 `latency_snapshot.py`: claimed __main__-only. CAUTION: Phase 4 REQ-028 perf snapshot may invoke
-      it via make verify / scripts. Grep Makefile + scripts/ before verdict.
-- [ ] 6.1 remainder (create_auth_middleware, interceptors, quota get_remaining/would_exceed,
-      estimate_request_cost, aggregator probe_all_adapters, LogContext, delete_prefs, execute_with_timeout,
-      relevance get_context_summary_for_llm) — grep-verify zero callers incl. tests.
-- [ ] 5.8 HRV threshold drift (<40 formatters vs <30 relevance) — confirm which is clinically intended
-      (check git history / CONTEXT docs) before unifying.
-- [ ] Existing test debt baseline (6 known failures) — re-confirm list so Stage 1 gates are honest.
+- [x] **OTC pair: DEAD — delete both + their test files.** Zero prod importers, not exported from
+      shared/billing/__init__, data/otc_policy.db never created, no compose/env wiring. Phase 4 shipped
+      only function+tests; the "bridge" was deferred to Phase 6 and silently dropped; superseded by
+      orchestrator/rl/reward.py (itself an unwired island — separate decision). Delete
+      tests/unit/test_otc_reward.py (14) + test_otc_policy_store.py (23) alongside; orphans
+      .planning/research/nexus_otc_policy_schema.sql.
+- [x] **runner.py: LIVE — DO NOT DELETE.** On the production build pipeline: module_validator.py:422 →
+      validate_module → ModulePipelineTool (registered orchestrator:1035) + drafts.py:512 + nexus_dev.
+      4 integration test files import it. The REAL dead code is the half-wired gRPC route:
+      module_validator._sandbox_client is set (orchestrator:81) but never read. Stage 3 decision:
+      either wire gRPC sandbox and retire runner, or delete the dangling _sandbox_client wire.
+      Delete only `execute_with_timeout` method (pass-through, unimplemented timeout contract).
+- [x] **latency_snapshot.py: LIVE** — IS the REQ-028 deliverable: Makefile verify → scripts/verify.sh:171
+      `python -m shared.billing.latency_snapshot`. Keep. (Audit's 4.3 consolidation point still valid
+      as Stage 2 refactor, not deletion.)
+- [x] **grpc_interceptor: split** — ObservabilityServerInterceptor + _wrap_streaming_handler LIVE
+      (orchestrator:1792); create_server_interceptors / create_client_interceptors /
+      ObservabilityClientInterceptor DEAD (delete symbols, keep module — 3 unit tests stub the module path).
+- [x] **create_auth_middleware: DEAD** — delete + remove shared/auth/__init__ export (:7, __all__:19).
+- [x] **Quota get_remaining/would_exceed + estimate_request_cost: DEAD in prod, LIVE in tests** —
+      deletion requires surgically removing 5 assertions from tests/unit/test_billing.py (file also
+      covers live code — do not drop the file).
+- [x] **8-symbol batch: DEAD** (aggregator.probe_all_adapters, aggregator.py:511 module-level
+      get_user_context [NOT the live tools/builtin one], RelevanceEngine.get_context_summary_for_llm,
+      LogContext + clear_context [delete together], UserPrefsStore.delete_prefs). EXCEPTION:
+      keep `bind_context` — public export in shared/observability __all__.
+- [x] **HRV: standardize on <40** — formatters <40 is newer (same-day, 16.5h later) AND the UI encodes
+      <40 twice (HealthWidget.tsx:58,129); relevance.py:198 <30 is the outlier. Live consequence today:
+      HRV 35 alerts in prose but isn't classified high-priority.
+- [x] **Cross-boundary formatters import (user_context.py:118): regression risk confirmed** — fallback
+      emits "CATEGORY: data available" stubs with alert_count=0 and still reports success. Clean seam
+      for Stage 3: the existing HTTP path `_fetch_summary_from_dashboard` → /context/summary.
+- [x] **4 dashboard instruments: DEAD zombie series** (actual names AGGREGATOR_FETCH_DURATION,
+      AGGREGATOR_CACHE_HITS/MISSES, CONTEXT_ITEMS). Check config/grafana + prometheus rules for
+      references before deleting.
 
 ## Stage 1 — CLEAN (safe subset, may run before Phase 8 gaps execute)
 
 Only items with confirmed zero callers and no Phase 8 file overlap:
 
-- [ ] Delete confirmed-dead symbols/files from Stage 0 verdicts (NOT runner.py/OTC unless confirmed).
+- [ ] Delete OTC pair (otc_reward.py, otc_policy_store.py) + their two test files; note orphaned
+      nexus_otc_policy_schema.sql in commit message.
+- [ ] Delete dead symbols per Stage 0: 3 interceptor factories, create_auth_middleware (+exports),
+      probe_all_adapters, aggregator get_user_context wrapper, get_context_summary_for_llm,
+      LogContext+clear_context (keep bind_context), delete_prefs, execute_with_timeout method,
+      quota get_remaining/would_exceed + estimate_request_cost (surgical test_billing.py edit).
+- [ ] Unify HRV threshold to <40 in relevance.py:198 (matches formatters + UI; fixes live alerting
+      inconsistency).
 - [ ] 6.3 sandbox_service.py dead imports/classes (multiprocessing, StringIO, signal, TimeoutError/
       MemoryExceededError, module-level restricted_import).
 - [ ] 6.6 `datetime.utcnow()` → `datetime.now(timezone.utc)` (api_keys 5 sites, bridge 2 sites).
