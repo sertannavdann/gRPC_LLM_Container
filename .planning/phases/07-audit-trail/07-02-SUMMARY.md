@@ -144,3 +144,10 @@ None - no external service configuration required.
 ---
 *Phase: 07-audit-trail*
 *Completed: 2026-08-14*
+
+## Self-Check: PASSED
+
+All created files verified present on disk (shared/audit/decorator.py,
+tests/unit/test_audit_decorator.py, tests/integration/admin/test_audit_capture.py,
+this SUMMARY.md). All task commit hashes (674e6bf, c0cc303, b4ad760, 2e84f24)
+verified present in `git log`.
