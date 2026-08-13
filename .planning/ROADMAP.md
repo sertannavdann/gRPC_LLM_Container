@@ -1,6 +1,6 @@
 # NEXUS — Roadmap
 
-> **GSD Canonical File** | Updated 2026-02-16
+> **GSD Canonical File** | Updated 2026-02-17
 
 ---
 
@@ -12,9 +12,9 @@
 | 2 | Run-Unit Metering | **complete** | REQ-006, REQ-007, REQ-008, REQ-009 | Q2 2026 |
 | 3 | Self-Evolution Engine | **complete** | REQ-013, REQ-016 | Q2 2026 |
 | 4 | Release-Quality Verification | **complete** | REQ-019, REQ-028 | Q3 2026 |
-| 5 | Refactoring | **complete** | — | Q3 2026 |
-| 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032 | Q3 2026 |
-| 7 | Audit Trail | not-started | REQ-010, REQ-011, REQ-012 | Q3 2026 |
+| 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
+| 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
+| 7 | Audit Trail | 1/3 | In Progress|  |
 | 8 | Co-Evolution & Approval | not-started | REQ-014, REQ-017, REQ-018, REQ-020 | Q3–Q4 2026 |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
@@ -221,7 +221,7 @@ Wave 3 — Quality + Dev-Mode:
 
 **Goal**: Single command that runs integration + showroom and records a perf/latency snapshot. Additionally, bridge Phase 2 run-unit metering to the OTC (Optimal Tool Calls) reward signal for tool-call efficiency tracking.
 
-**Plans:** 4 plans (2 waves)
+**Plans:** 5 plans (2 waves)
 
 Wave 1 - OTC Policy Store + Admin API Tests + Provider Lock UX (parallel):
 - [x] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
@@ -276,7 +276,7 @@ Wave 2 - Unified Verification:
 
 **Goal**: Consolidate 6 areas of code redundancy, wire soul.md agent identities into the build pipeline, unify adapter lock/unlock with the provider pattern, and register DraftManager/VersionManager as orchestrator chat tools.
 
-**Plans:** 4 plans (3 waves)
+**Plans:** 5 plans (4 waves)
 
 Wave 1 — Code Dedup + Agent Wiring (parallel):
 - [x] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
@@ -288,6 +288,9 @@ Wave 2 — Adapter Unification + Tool Wiring:
 Wave 3 — Service Dependency Cleanup:
 - [x] 05-04-PLAN.md — Service dependency cleanup: conditional otel import, credential proxy elimination, SSE data deduplication
 
+Wave 4 — Tool Consolidation + SOLID:
+- [x] 05-05-PLAN.md — Tool consolidation and SOLID cleanup: BaseTool ABC, CompositeTool+ActionStrategy, 8 consolidated tools replacing 27 registrations, ContextBridge DI, mock adapter deletion
+
 ### Deliverables
 
 1. **Code deduplication** — 6 redundancy areas consolidated into 5 shared modules
@@ -297,6 +300,7 @@ Wave 3 — Service Dependency Cleanup:
 5. **Finance backend consolidation** — Iframe removed, single API proxy path
 6. **Orchestrator tool wiring** — DraftManager + VersionManager as chat tools with RBAC
 7. **Service dependency cleanup** — Conditional otel instrumentation, eliminated orchestrator→dashboard circular credential proxy, deduplicated SSE pipeline data collection
+8. **Tool consolidation + SOLID** — BaseTool[TRequest, TResponse] ABC, CompositeTool with ActionStrategy dispatch, 8 consolidated tools (from 27 registrations), ContextBridge DI, mock adapter and dead code deletion
 
 ### Done Criteria
 
@@ -316,7 +320,7 @@ Wave 3 — Service Dependency Cleanup:
 
 **Visualization Toolkit**: XState v5 (~12 KB) + React Flow v12 (~60 KB) + Recharts v2.15+ (~40 KB) + Framer Motion v11+ (~32 KB) = ~144 KB gzip total
 
-**Plans:** 4 plans (3 waves)
+**Plans:** 5 plans (4 waves)
 
 Wave 1 — Backend Capability Contract + XState Infrastructure (Cursor only):
 - [x] 06-01-PLAN.md — Capability schema + BFF endpoints + XState root machine: Pydantic CapabilityEnvelope, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + TypeScript docs, nexusAppMachine (3 parallel regions: capability, dataSource, auth), useNexusApp hook, Zustand bridge, npm package installation (xstate, @xstate/react, recharts, framer-motion)
@@ -328,6 +332,10 @@ Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
 Wave 3 — Monitoring + Polish:
 - [x] 06-04-PLAN.md — Monitoring + observability + error taxonomy + prefs + QA: XState monitoringPageMachine (parallel health/latency/tabs), React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart P99/P95/P50 with ReferenceLine, error taxonomy with XState guards, Framer Motion error components, user preferences (SQLite), navigation update
 
+Wave 4 — Stability + Synchronization Extension:
+- [x] 06-05-PLAN.md — Stability hardening for locked/blank dashboard failure modes: same-origin admin read path, single-source runtime params, deterministic lock/degraded rendering from capability contract, reason-coded fallback semantics, parametric synchronization guard tests
+- [x] 06-06-PLAN.md — Adapter credential unification: env-var-based lock checks, Settings page adapter key fields, .env persistence (3 tasks, 5 files)
+
 ### Deliverables
 
 1. **Backend capability contract** (REQ-031) — CapabilityEnvelope Pydantic model, three BFF endpoints with ETag
@@ -336,6 +344,7 @@ Wave 3 — Monitoring + Polish:
 4. **Visualization components** — React Flow service topology + pipeline flow, Recharts finance charts + latency bars, Framer Motion transitions + animations
 5. **UI infrastructure** — Error taxonomy (5 types) with XState guards, error state components (DegradedBanner, EmptyState, TimeoutSkeleton) with Framer Motion
 6. **Per-user preference persistence** — SQLite + optimistic concurrency
+7. **Adapter credential unification** (REQ-033) — .env-based adapter key management, Settings page adapter key fields, orchestrator env-var lock checks
 
 ### Tool Usage (v0 Premium + Cursor Pro)
 
