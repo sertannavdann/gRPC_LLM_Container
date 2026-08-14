@@ -29,6 +29,7 @@
 **Plans:** 3 plans
 
 Plans:
+
 - [x] 01-01-PLAN.md — Auth foundation: models, API key store, RBAC permission system
 - [x] 01-02-PLAN.md — Middleware + wiring: auth enforcement on Admin API and Dashboard
 - [x] 01-03-PLAN.md — Org-scoped data isolation: org_id in AgentState, registry, credentials
@@ -77,6 +78,7 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
+
 - [x] 02-01-PLAN.md — Billing foundation: RunUnitCalculator, UsageStore, QuotaManager
 - [x] 02-02-PLAN.md — Pipeline wiring: instrument _tools_node, quota enforcement in orchestrator
 - [x] 02-03-PLAN.md — Billing API endpoints, tests, Makefile target
@@ -124,14 +126,17 @@ Plans:
 **Plans:** 6 plans (3 waves)
 
 Wave 1 — Contracts + Gateway:
+
 - [x] 03-01-PLAN.md — Builder contracts: manifest schema, generator/adapter contracts, artifact bundles, canonical output envelope (106 tests)
 - [x] 03-02-PLAN.md — LLM Gateway: GitHub Models provider, purpose-lane routing (codegen/repair/critic), schema enforcement, fallback chain (47 tests)
 
 Wave 2 — Sandbox + Repair Loop:
+
 - [x] 03-03-PLAN.md — Sandbox policy: network modes, import allowlists (AST + runtime), validator merge, artifact capture (64 tests)
 - [x] 03-04-PLAN.md — Self-correction loop: stage pipeline (scaffold/implement/tests/repair), bounded repair (≤10), failure fingerprinting, install attestation guard (14 tests)
 
 Wave 3 — Quality + Dev-Mode:
+
 - [x] 03-05-PLAN.md — Feature tests: contract suites, capability-driven test harness (auth/pagination/rate-limit), chart validation, scenario library (5+ patterns) (93 tests)
 - [x] 03-06-PLAN.md — Dev-mode: drafts, diffs, revalidation, promotion, rollback (pointer-based), full audit trail
 
@@ -224,11 +229,13 @@ Wave 3 — Quality + Dev-Mode:
 **Plans:** 5 plans (2 waves)
 
 Wave 1 - OTC Policy Store + Admin API Tests + Provider Lock UX (parallel):
+
 - [x] 04-01-PLAN.md - OTC policy store + reward function: relocate otc_reward.py to shared/billing/, create OTC policy SQLite store, unit tests
 - [x] 04-02-PLAN.md - Admin API integration tests: module CRUD, credential ops, config hot-reload, billing endpoints (REQ-019)
 - [x] 04-04-PLAN.md - Settings provider lock/unlock architecture: base class + subclasses, API-driven unlock test output, UI gating + integration tests
 
 Wave 2 - Unified Verification:
+
 - [x] 04-03-PLAN.md - Unified verify command + latency snapshot: make verify, p50/p95/p99 recording, structured report (REQ-028)
 
 ### Deliverables
@@ -279,16 +286,20 @@ Wave 2 - Unified Verification:
 **Plans:** 5 plans (4 waves)
 
 Wave 1 — Code Dedup + Agent Wiring (parallel):
+
 - [x] 05-01-PLAN.md — Code deduplication & dead code removal: FORBIDDEN_IMPORTS, AST import checker, module_id parsing, SHA-256 hashing, validation report shape, dead code
 - [x] 05-02-PLAN.md — Soul.md agent identities + auto-prompt composition: builder/tester/monitor soul.md files, compose() function, Blueprint2Code confidence gate, bounded retry with jitter
 
 Wave 2 — Adapter Unification + Tool Wiring:
+
 - [x] 05-03-PLAN.md — Adapter lock/unlock unification + tool wiring: AdapterUnlockBase, adapter registry route, finance iframe removal, DraftManager/VersionManager chat tools, .env removal
 
 Wave 3 — Service Dependency Cleanup:
+
 - [x] 05-04-PLAN.md — Service dependency cleanup: conditional otel import, credential proxy elimination, SSE data deduplication
 
 Wave 4 — Tool Consolidation + SOLID:
+
 - [x] 05-05-PLAN.md — Tool consolidation and SOLID cleanup: BaseTool ABC, CompositeTool+ActionStrategy, 8 consolidated tools replacing 27 registrations, ContextBridge DI, mock adapter deletion
 
 ### Deliverables
@@ -323,16 +334,20 @@ Wave 4 — Tool Consolidation + SOLID:
 **Plans:** 5 plans (4 waves)
 
 Wave 1 — Backend Capability Contract + XState Infrastructure (Cursor only):
+
 - [x] 06-01-PLAN.md — Capability schema + BFF endpoints + XState root machine: Pydantic CapabilityEnvelope, GET /capabilities with ETag, GET /feature-health, GET /config/version, contract tests + TypeScript docs, nexusAppMachine (3 parallel regions: capability, dataSource, auth), useNexusApp hook, Zustand bridge, npm package installation (xstate, @xstate/react, recharts, framer-motion)
 
 Wave 2 — Capability-Driven Pages (v0 → Cursor, parallel):
+
 - [x] 06-02-PLAN.md — Dashboard + adapter connectivity: XState-backed useNexusApp hook, Framer Motion DataSourceIndicator (Live/Mock/Offline), adapter cards with layout animations, Zustand → XState event bridge
 - [x] 06-03-PLAN.md — Finance page + chat actions: XState financePageMachine (hierarchical locked/unlocked), Recharts LineChart + PieChart, Framer Motion AnimatePresence transitions, chat action cards with Framer Motion states, Zustand → XState refresh bridge
 
 Wave 3 — Monitoring + Polish:
+
 - [x] 06-04-PLAN.md — Monitoring + observability + error taxonomy + prefs + QA: XState monitoringPageMachine (parallel health/latency/tabs), React Flow v12 ServiceTopology + PipelineStageFlow, Recharts BarChart P99/P95/P50 with ReferenceLine, error taxonomy with XState guards, Framer Motion error components, user preferences (SQLite), navigation update
 
 Wave 4 — Stability + Synchronization Extension:
+
 - [x] 06-05-PLAN.md — Stability hardening for locked/blank dashboard failure modes: same-origin admin read path, single-source runtime params, deterministic lock/degraded rendering from capability contract, reason-coded fallback semantics, parametric synchronization guard tests
 - [x] 06-06-PLAN.md — Adapter credential unification: env-var-based lock checks, Settings page adapter key fields, .env persistence (3 tasks, 5 files)
 
@@ -417,18 +432,35 @@ Wave 4 — Stability + Synchronization Extension:
 **Plans:** 13 plans (08-01 complete; 08-02..08-13 close the verification + review gaps and the remaining scope)
 
 Plans:
-- [x] 08-01-PLAN.md — Backend enforcement core: install guard raised to APPROVED, approve/reject core, admin endpoints, policy scaffold
+**Wave 1**
+
 - [ ] 08-02-PLAN.md — Attestation integrity (CR-01/WR-01) + individual-admin attribution and ISO-8601/audit hygiene (WR-02..WR-05)
 - [ ] 08-03-PLAN.md — SSE payload extension: manifest-scanned pending-approval modules with status/pending_approval/build_stage
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 08-01-PLAN.md — Backend enforcement core: install guard raised to APPROVED, approve/reject core, admin endpoints, policy scaffold
 - [ ] 08-04-PLAN.md — Shared GC + tiered retention worker (REQ-017, D-10/D-11/D-12)
 - [ ] 08-05-PLAN.md — Inbound token-bucket rate limiting with 429 + Retry-After on both HTTP services (REQ-020)
 - [ ] 08-06-PLAN.md — LLM walkthrough generated at validation time + manifest field (D-08)
 - [ ] 08-07-PLAN.md — adminClient approval fetchers + pipelinePageMachine (XState v5, D-14)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 08-08-PLAN.md — Pending-approval module nodes + machine-driven pipeline page (D-01/D-04/D-13)
-- [ ] 08-09-PLAN.md — Review surface: five collapsible layers, progressive blueprint, walkthrough, approve/reject footer (D-05/D-06/D-15)
 - [ ] 08-10-PLAN.md — Chat approval backend: session identity from API key + RBAC-guarded approve/reject strategies (D-02/D-17)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 08-09-PLAN.md — Review surface: five collapsible layers, progressive blueprint, walkthrough, approve/reject footer (D-05/D-06/D-15)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 08-11-PLAN.md — ApprovalActionCard chat surface with inline blueprint and feedback (D-02)
 - [ ] 08-12-PLAN.md — Generic auto-generated module output panel over AdapterRunResult (D-07)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 08-13-PLAN.md — Playwright SSE E2E: connect, reconnect after dashboard restart, error handling (REQ-018)
 
 ---

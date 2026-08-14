@@ -132,6 +132,10 @@ Deliverables: Module approval gates UI (REQ-014), tiered trace retention (REQ-01
 - Marketplace publishing & browsing UI — Phase 9 (REQ-025/026)
 - Auto-approve policies (trusted categories, test-based) — config scaffold ships now (D-18), activation deferred
 - Multi-approver / approval-chain workflows — enterprise territory, Phase 9
+- Path B (DraftManager.promote_draft — dev-mode edits of installed modules) keeps its existing admin+
+  RBAC gate WITHOUT the new review-panel/blueprint/walkthrough treatment — RESEARCH.md Open Question Q1
+  resolved 2026-08-13 as intentionally out of scope for this phase (already satisfies "explicit user
+  approval" via RBAC; revisit in Phase 9 if dev-mode usage grows)
 
 </deferred>
 
