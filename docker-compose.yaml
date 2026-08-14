@@ -178,6 +178,11 @@ services:
       - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
       - CLASH_ROYALE_PLAYER_TAG=${CLASH_ROYALE_PLAYER_TAG:-}
       - MODULES_DIR=/app/modules
+      # Orchestrator writes build audit logs to host ./data/audit (its own
+      # /app/data); the dashboard sees the shared host ./data at
+      # /app/shared_data, so AUDIT_DIR must point there, not at the
+      # dashboard's own (different) /app/data.
+      - AUDIT_DIR=/app/shared_data/audit
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
     volumes:
       - ./dashboard_service/data:/app/data

@@ -9,7 +9,9 @@ Uses FastAPI StreamingResponse with text/event-stream.
 import asyncio
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import AsyncGenerator
 
 import httpx
@@ -17,10 +19,34 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from shared.adapters import adapter_registry
+from shared.modules.audit import BuildAuditLog
+from shared.modules.manifest import ModuleManifest, ModuleStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Modules directory scanned each cycle for on-disk (not necessarily loaded) modules.
+MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/modules"))
+
+# Build audit logs directory — orchestrator writes here (see docker-compose.yaml
+# AUDIT_DIR mapping for the dashboard container's view of the shared host dir).
+AUDIT_DIR = Path(os.getenv("AUDIT_DIR", "/app/data/audit"))
+
+# Manifest statuses for which the live build stage (from BuildAuditLog) should
+# override the status-fallback build_stage. Terminal/awaiting-approval statuses
+# (validated, approved, installed, disabled, failed, uninstalled) are excluded
+# so a stale audit file never overwrites the pending-approval visual.
+_IN_FLIGHT_STATUSES = {"pending", "validating"}
+
+_BUILD_STAGES = ("scaffold", "implement", "tests", "repair")
+
+# Cache keyed on the tuple of (filename, st_mtime_ns) for the audit files
+# considered on the last scan — this cycle runs every 2s, so we only
+# re-parse when the underlying files actually changed. BuildAuditLog.save()
+# rewrites the same filename per attempt, so directory mtime alone is not a
+# valid cache key; per-file mtimes are.
+_STAGE_INDEX_CACHE = {"key": None, "value": {}}
 
 # Tool → pipeline stage mapping (architectural relationships)
 TOOL_STAGE_MAP = {
@@ -118,6 +144,95 @@ def _build_tool_list(all_adapters: list) -> list:
     return tools
 
 
+def _build_stage_index(audit_dir: Path) -> dict:
+    """
+    Map module_id -> latest live build stage, read from BuildAuditLog files.
+
+    Only stats (never parses) files to build the cache key; re-parses ONLY
+    when the set of (filename, mtime_ns) pairs for the newest 50 files
+    changes, since this can run every 2 seconds. Mirrors the glob+load+
+    filter pattern in orchestrator/admin_api.py:audit_module — do not
+    invent a different scan. Never raises (T-08-58).
+    """
+    try:
+        if not audit_dir.exists():
+            return {}
+
+        audit_files = sorted(
+            audit_dir.glob("*_audit.json"),
+            key=lambda f: f.stat().st_mtime_ns,
+            reverse=True,
+        )[:50]
+
+        cache_key = tuple((f.name, f.stat().st_mtime_ns) for f in audit_files)
+        if cache_key == _STAGE_INDEX_CACHE["key"]:
+            return _STAGE_INDEX_CACHE["value"]
+
+        index: dict = {}
+        for audit_file in audit_files:
+            try:
+                log = BuildAuditLog.load(audit_file)
+            except Exception:
+                continue
+            if not log.attempts:
+                continue
+            stage = log.attempts[-1].stage
+            if stage not in _BUILD_STAGES:
+                continue
+            index.setdefault(log.module_id, stage)
+
+        _STAGE_INDEX_CACHE["key"] = cache_key
+        _STAGE_INDEX_CACHE["value"] = index
+        return index
+    except Exception as e:
+        logger.warning(f"Build-stage audit scan failed: {e}")
+        return {}
+
+
+def _build_pending_approval_list(modules_dir: Path, audit_dir: Path | None = None) -> list[dict]:
+    """
+    Scan MODULES_DIR for on-disk manifests and build one entry per module.
+
+    Runs every 2 seconds as part of the SSE cycle — must never raise, never
+    block on network I/O, and must degrade to [] on any unexpected failure
+    (T-08-13). For in-flight modules (pending/validating), build_stage is
+    overridden with the LIVE stage from BuildAuditLog when available
+    (D-13) — awaiting-approval/terminal statuses are left untouched so a
+    stale audit file never overwrites the pending-approval visual.
+    """
+    try:
+        manifests = ModuleManifest.discover(modules_dir)
+        entries = []
+        for manifest in manifests:
+            status = getattr(manifest.status, "value", manifest.status)
+            if status == ModuleStatus.INSTALLED.value:
+                state = "running"
+            elif status == ModuleStatus.FAILED.value:
+                state = "failed"
+            else:
+                state = "disabled"
+            entries.append({
+                "id": manifest.module_id,
+                "name": manifest.display_name or manifest.name,
+                "category": manifest.category,
+                "status": status,
+                "pending_approval": status == ModuleStatus.VALIDATED.value,
+                "build_stage": status,
+                "state": state,
+            })
+
+        if any(entry["status"] in _IN_FLIGHT_STATUSES for entry in entries):
+            stage_index = _build_stage_index(audit_dir if audit_dir is not None else AUDIT_DIR)
+            for entry in entries:
+                if entry["status"] in _IN_FLIGHT_STATUSES:
+                    entry["build_stage"] = stage_index.get(entry["id"]) or entry["status"]
+
+        return entries
+    except Exception as e:
+        logger.warning(f"Pending-approval manifest scan failed: {e}")
+        return []
+
+
 async def _build_pipeline_state(app) -> dict:
     """Build current pipeline state by probing services."""
     async with httpx.AsyncClient() as client:
@@ -148,15 +263,39 @@ async def _build_pipeline_state(app) -> dict:
     module_list = loader.list_modules() if loader else []
     all_adapters = adapter_registry.list_all_flat()
 
-    # Build module entries
+    # Manifest scan merged in so a VALIDATED-but-never-loaded module is
+    # visible (D-01/D-04) — by_id keyed on "category/platform".
+    manifest_entries = _build_pending_approval_list(MODULES_DIR)
+    by_id = {entry["id"]: entry for entry in manifest_entries}
+
+    # Build module entries: loaded modules first, enriched with manifest
+    # status/pending_approval/build_stage when available; then append
+    # manifest-only entries not already present in the loaded set.
     modules = []
+    loaded_ids = set()
     for m in module_list:
-        modules.append({
-            "id": f"{m.get('category', '?')}/{m.get('platform', '?')}",
+        mid = f"{m.get('category', '?')}/{m.get('platform', '?')}"
+        loaded_ids.add(mid)
+        manifest_info = by_id.get(mid)
+        entry = {
+            "id": mid,
             "name": m.get("name", "unknown"),
             "state": "running" if m.get("is_loaded") else "disabled",
             "category": m.get("category"),
-        })
+        }
+        if manifest_info is not None:
+            entry["status"] = manifest_info["status"]
+            entry["pending_approval"] = manifest_info["pending_approval"]
+            entry["build_stage"] = manifest_info["build_stage"]
+        else:
+            entry["status"] = "installed"
+            entry["pending_approval"] = False
+            entry["build_stage"] = "installed"
+        modules.append(entry)
+
+    for entry in manifest_entries:
+        if entry["id"] not in loaded_ids:
+            modules.append(entry)
 
     # Pass cached data to helper functions
     adapters = _build_adapter_list(module_list, all_adapters)
