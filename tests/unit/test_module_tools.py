@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from typing import Dict, Any
 
+from shared.modules.artifacts import compute_code_bundle_hash
 from shared.modules.manifest import ModuleManifest, ModuleStatus, ValidationResults
 from shared.modules.templates.adapter_template import generate_adapter_code
 from shared.modules.templates.test_template import generate_test_code
@@ -67,15 +68,22 @@ def mock_cred_store():
 
 
 def _approve(modules_dir, module_id: str) -> None:
-    """Simulate an admin approval (D-16): move manifest.status to APPROVED.
+    """Simulate an admin approval (D-16/D-19): move manifest.status to
+    APPROVED and record the code-bundle hash the admin "reviewed".
 
     install_module() requires APPROVED, not just VALIDATED, since Phase 8
     plan 08-01 raised the install guard to enforce the manual approval gate.
+    Phase 8 plan 08-02 additionally requires manifest.approved_bundle_sha256
+    to be set to the current code-bundle hash — install_module() now
+    unconditionally re-verifies the on-disk bundle against this hash
+    (CR-01/WR-01), so a simulated approval must set it too.
     """
     category, platform = module_id.split("/")
-    manifest_path = modules_dir / category / platform / "manifest.json"
+    module_dir = modules_dir / category / platform
+    manifest_path = module_dir / "manifest.json"
     manifest = ModuleManifest.load(manifest_path)
     manifest.status = ModuleStatus.APPROVED
+    manifest.approved_bundle_sha256 = compute_code_bundle_hash(module_dir, module_id) or ""
     manifest.save(modules_dir)
 
 
