@@ -122,3 +122,16 @@ None - no external service configuration required.
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-14*
+
+## Self-Check: PASSED
+
+- FOUND: tools/builtin/module_walkthrough.py
+- FOUND: tests/unit/modules/test_walkthrough_generation.py
+- FOUND: shared/providers/llm_gateway.py
+- FOUND: shared/modules/manifest.py
+- FOUND: tools/builtin/module_builder.py
+- FOUND: tools/builtin/module_validator.py
+- FOUND commit 7ef51ff (test)
+- FOUND commit e2a3467 (feat, Task 1)
+- FOUND commit acb703e (feat, Task 2)
+- FOUND commit 02c86f5 (docs, this summary)
