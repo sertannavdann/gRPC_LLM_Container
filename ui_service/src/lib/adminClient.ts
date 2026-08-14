@@ -31,6 +31,9 @@ export interface ModuleState {
   name: string;
   state: 'running' | 'disabled' | 'failed';
   category?: string;
+  status?: string;
+  pending_approval?: boolean;
+  build_stage?: string;
 }
 
 export interface AdapterState {
@@ -69,6 +72,53 @@ export interface PipelineState {
   stage_tools: Record<string, string[]>;
   timestamp: number;
   error?: string;
+}
+
+// ── Approval / Review Types (Phase 8) ───────────────────────────────────────
+
+export interface ModuleBlueprint {
+  adapter_name: string;
+  schema_field_count: number;
+  output_types: string[];
+  credential_names: string[];
+}
+
+export interface ModuleReview {
+  module_id: string;
+  status: string;
+  validation_results: Record<string, unknown>;
+  walkthrough: string;
+  credentials: {
+    requires_api_key: boolean;
+    auth_type: string;
+    api_key_instructions: string;
+  };
+  blueprint: ModuleBlueprint;
+}
+
+export interface ModuleAuditAttempt {
+  attempt_number: number;
+  bundle_sha256: string;
+  stage: string;
+  status: 'success' | 'failed' | 'error';
+  timestamp: string;
+  validation_report: Record<string, unknown> | null;
+  logs: string[];
+  failure_fingerprint: string | null;
+  failure_type: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface ModuleAuditLog {
+  module_id: string;
+  attempts: ModuleAuditAttempt[];
+}
+
+export interface ApprovalResult {
+  status: string;
+  module_id: string;
+  new_status: string;
+  bundle_sha256?: string;
 }
 
 export interface ModuleDetail {
@@ -217,6 +267,22 @@ export const adminApi = {
 
   runModuleTests: (category: string, platform: string) =>
     adminFetch<TestRunResult>(`/admin/modules/${category}/${platform}/run-tests`, { method: 'POST' }),
+
+  // Approval (Phase 8)
+  approveModule: (category: string, platform: string) =>
+    adminFetch<ApprovalResult>(`/admin/modules/${category}/${platform}/approve`, { method: 'POST' }),
+
+  rejectModule: (category: string, platform: string, feedback?: string) =>
+    adminFetch<ApprovalResult>(`/admin/modules/${category}/${platform}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ feedback: feedback ?? null }),
+    }),
+
+  getModuleReview: (category: string, platform: string) =>
+    adminFetch<ModuleReview>(`/admin/modules/${category}/${platform}/review`),
+
+  getModuleAudit: (category: string, platform: string) =>
+    adminFetch<ModuleAuditLog>(`/admin/modules/${category}/${platform}/audit`),
 
   // Routing config
   getRoutingConfig: () => adminFetch<Record<string, unknown>>('/admin/routing-config'),
