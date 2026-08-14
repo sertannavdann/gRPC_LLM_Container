@@ -127,7 +127,11 @@ from shared.billing import QuotaManager, UsageStore
 from shared.modules.drafts import DraftManager
 from shared.modules.versioning import VersionManager
 from shared.modules.audit import DevModeAuditLog
-from shared.audit import AuditStore, set_audit_store
+from shared.audit import ActorContext, AuditStore, actor_context, set_audit_store
+from shared.auth.api_keys import APIKeyStore
+from shared.auth.models import User
+from shared.auth.session_context import session_user
+from contextlib import ExitStack
 
 
 logging.basicConfig(
@@ -811,6 +815,43 @@ Answer:"""
         return ai_message
 
 
+def _resolve_session_user(
+    context: grpc.ServicerContext, api_key_store: Optional[APIKeyStore]
+) -> Optional[User]:
+    """
+    Resolve an authenticated User from `x-api-key` gRPC metadata (D-17).
+
+    Module-level (not a method) so it is unit-testable against a stub
+    context/store without constructing the full OrchestratorService.
+    Mirrors `_get_thread_id`'s metadata loop (lowercase key compare,
+    bytes/str tolerant, whole body in try/except -> None). Never raises —
+    missing metadata, an unknown key, or a store that raises all resolve
+    to None; the API key value itself is never logged (T-08-44).
+    """
+    if api_key_store is None:
+        return None
+    try:
+        md = context.invocation_metadata()
+        for item in md:
+            key = (item[0] or "").lower()
+            if key == "x-api-key":
+                val = item[1]
+                if isinstance(val, bytes):
+                    val = val.decode("utf-8", errors="ignore")
+                if isinstance(val, str) and val:
+                    try:
+                        user = api_key_store.validate_key(val)
+                    except Exception:
+                        logger.warning("Session API key validation failed")
+                        return None
+                    if user is not None:
+                        logger.info(f"Session resolved for user_id={user.user_id}")
+                    return user
+    except Exception:
+        pass
+    return None
+
+
 class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     """
     Unified orchestrator service combining agent workflow and routing.
@@ -983,6 +1024,16 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             db_path=os.getenv("AUDIT_DB_PATH", "data/audit_events.db")
         )
         set_audit_store(self.audit_store)
+
+        # ── Session identity store (D-17) — resolves x-api-key gRPC
+        # metadata to an authenticated User for chat approve/reject RBAC.
+        # Constructed here (service __init__ time) because start_admin_server()
+        # runs later in serve(); serve() passes this same instance into
+        # start_admin_server(api_key_store=...) so the HTTP admin API and the
+        # retention worker share it too — never a second store.
+        self._api_key_store = APIKeyStore(
+            db_path=os.getenv("AUTH_DB_PATH", "data/api_keys.db")
+        )
 
         # ── Create DraftManager + VersionManager for ModuleAdminTool ─
         _audit_log = DevModeAuditLog(
@@ -1356,7 +1407,17 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         except Exception:
             pass
         return None
-    
+
+    def _get_session_user(self, context: grpc.ServicerContext) -> Optional[User]:
+        """
+        Resolve the authenticated session User from `x-api-key` gRPC metadata,
+        via `self._api_key_store` (D-17). Never raises — missing metadata, an
+        unknown key, or an unavailable store all resolve to None so chat stays
+        usable without authentication; privileged tool actions gate on the
+        resolved User separately (tools/builtin/module_admin.py).
+        """
+        return _resolve_session_user(context, self._api_key_store)
+
     # NOTE: Worker delegation disabled - services removed in cleanup
     # Uncomment and restore registry_client/worker_client if worker mesh is needed
     # def delegate_to_worker(self, task: str, capability: str) -> str:
@@ -1386,6 +1447,12 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             # Get or create thread_id
             thread_id = self._get_thread_id(context) or request_id
 
+            # Resolve the authenticated session user (D-17). Optional — an
+            # unauthenticated chat session keeps working exactly as before;
+            # it simply cannot perform privileged tool actions (enforced in
+            # tools/builtin/module_admin.py, not here).
+            resolved_user = self._get_session_user(context)
+
             # Record request metric
             if self.observability_enabled and self.request_metrics:
                 self.request_metrics.requests_total.add(
@@ -1395,25 +1462,38 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             # Mark thread as incomplete (for crash recovery)
             self.checkpoint_manager.mark_thread_incomplete(thread_id)
 
-            # Process through agent workflow with tracing
-            if self.observability_enabled:
-                with create_span(
-                    name="QueryAgent.process",
-                    attributes={
-                        "request_id": request_id,
-                        "thread_id": thread_id,
-                        "query_length": len(request.user_query),
-                    }
-                ):
+            with ExitStack() as session_stack:
+                if resolved_user is not None:
+                    # Both contexts active for the full request duration,
+                    # reset in ExitStack's implicit finally on scope exit.
+                    session_stack.enter_context(session_user(resolved_user))
+                    session_stack.enter_context(actor_context(ActorContext(
+                        actor_id=resolved_user.user_id,
+                        org_id=resolved_user.org_id,
+                        channel="chat",
+                    )))
+
+                # Process through agent workflow with tracing
+                if self.observability_enabled:
+                    with create_span(
+                        name="QueryAgent.process",
+                        attributes={
+                            "request_id": request_id,
+                            "thread_id": thread_id,
+                            "query_length": len(request.user_query),
+                        }
+                    ):
+                        result = self._process_query(
+                            query=normalized_query,
+                            thread_id=thread_id,
+                            user=resolved_user,
+                        )
+                else:
                     result = self._process_query(
                         query=normalized_query,
-                        thread_id=thread_id
+                        thread_id=thread_id,
+                        user=resolved_user,
                     )
-            else:
-                result = self._process_query(
-                    query=normalized_query,
-                    thread_id=thread_id
-                )
 
             if result.get("quota_exceeded"):
                 context.set_code(grpc.StatusCode.RESOURCE_EXHAUSTED)
@@ -1498,7 +1578,8 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
     def _process_query(
         self,
         query: str,
-        thread_id: str
+        thread_id: str,
+        user: Optional[User] = None,
     ) -> Dict[str, Any]:
         """Process query through agent workflow with intent-based guardrails."""
 
@@ -1510,7 +1591,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
                 "iteration": 0,
             }
 
-        org_id = "default"  # resolved from auth context in production
+        org_id = user.org_id if user else "default"
 
         # Analyze intent for multi-tool queries
         intent_analysis = analyze_intent(query)
@@ -1849,6 +1930,13 @@ def serve(config: Optional[OrchestratorConfig] = None):
         module_loader=orchestrator_service.module_loader,
         module_registry=orchestrator_service.module_registry,
         credential_store=orchestrator_service.credential_store,
+        # Reuse the OrchestratorService's APIKeyStore (constructed in
+        # __init__ for gRPC session resolution, D-17) instead of letting
+        # start_admin_server() build a second instance — one store shared
+        # by the HTTP admin API, chat session resolution, and the
+        # retention worker (admin_module._api_key_store resolves to this
+        # same object).
+        api_key_store=orchestrator_service._api_key_store,
         usage_store=orchestrator_service._usage_store,
         quota_manager=orchestrator_service._quota_manager,
         draft_manager=_draft_manager,
