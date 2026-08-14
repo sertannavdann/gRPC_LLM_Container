@@ -194,3 +194,32 @@ class UsageStore:
             "by_tier": by_tier,
             "period": period,
         }
+
+    def delete_before(self, org_id: str, cutoff: str) -> int:
+        """
+        Delete usage records for an org older than a cutoff timestamp.
+
+        Only deletes rows for the given org_id with created_at < cutoff —
+        other orgs' rows and newer rows are left untouched. Uses the
+        existing idx_usage_org_created index.
+
+        Args:
+            org_id: Organization identifier
+            cutoff: ISO-8601 timestamp string; rows with created_at < cutoff
+                are deleted
+
+        Returns:
+            Number of rows deleted
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM usage_records WHERE org_id = ? AND created_at < ?",
+                (org_id, cutoff),
+            )
+            return cursor.rowcount
+
+    def list_org_ids(self) -> list[str]:
+        """Return the distinct org_ids present in usage_records."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT DISTINCT org_id FROM usage_records").fetchall()
+        return [row[0] for row in rows]
