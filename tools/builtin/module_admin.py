@@ -15,13 +15,27 @@ DraftManager/VersionManager, which log via DevModeAuditLog — its sink
 dual-write (shared/modules/audit.py) covers those, so this file only
 resolves the ambient actor identity for their `actor=` kwarg instead of
 hardcoding "chat_agent".
+
+ApproveModuleStrategy/RejectModuleStrategy (D-02/D-17, Phase 8 Plan 10) are
+the chat half of module approval: they call shared.modules.approval directly
+(the same core orchestrator/admin_api.py's HTTP endpoints call) and enforce
+admin+ RBAC via `_require_admin_session()`, reading the caller's identity
+from shared.auth.session_context.get_session_user() rather than the ambient
+audit actor — authorization must be bound to the authenticated SESSION, not
+the LLM's intent, so a prompt-injected instruction executed under a
+non-admin session cannot approve or reject.
 """
 import json
 import logging
-from typing import Dict, Any, Optional
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 from tools.base import CompositeTool, ActionStrategy
 from shared.audit import AuditWriteError, get_actor, get_audit_store
+from shared.auth.models import User
+from shared.auth.rbac import Permission, has_permission
+from shared.auth.session_context import get_session_user
 
 logger = logging.getLogger(__name__)
 
@@ -340,6 +354,131 @@ class RollbackVersionStrategy(ActionStrategy):
         )
 
 
+def _require_admin_session() -> Tuple[Optional[User], Optional[Dict[str, Any]]]:
+    """
+    Fail-closed RBAC gate for chat approve/reject (D-17, T-08-40/T-08-41).
+
+    Reads the ambient session User set by orchestrator_service.QueryAgent
+    via shared.auth.session_context.get_session_user() — authorization is
+    bound to the SESSION key, never to the LLM's intent, so a prompt
+    injection executed under a viewer session cannot approve a module.
+
+    Returns (user, None) when the session is authenticated and holds
+    WRITE_CONFIG (admin+); otherwise (None, error_dict) — callers must
+    return the error dict verbatim without proceeding.
+    """
+    user = get_session_user()
+    if user is None:
+        return None, {
+            "status": "error",
+            "error": (
+                "Module approval requires an authenticated admin session. "
+                "Send an x-api-key with an admin-role key."
+            ),
+        }
+    if not has_permission(user.role, Permission.WRITE_CONFIG):
+        return None, {
+            "status": "error",
+            "error": (
+                f"Permission denied: approval requires {Permission.WRITE_CONFIG.value} "
+                "(admin+ role)"
+            ),
+        }
+    return user, None
+
+
+def _validate_module_id(module_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return an error dict if module_id is missing/malformed, else None."""
+    if not module_id:
+        return {"status": "error", "error": "module_id is required"}
+    if module_id.count("/") != 1:
+        return {
+            "status": "error",
+            "error": f"module_id must be in 'category/platform' format, got: {module_id}",
+        }
+    return None
+
+
+class ApproveModuleStrategy(ActionStrategy):
+    """Approve a VALIDATED module, moving it to APPROVED. Admin-only (D-17)."""
+
+    action_name = "approve_module"
+    description = (
+        "Approve a validated module so it becomes installable. "
+        "Admin-only: requires an authenticated session with admin+ role."
+    )
+
+    def __init__(self, audit_log=None, modules_dir=None):
+        self._audit_log = audit_log
+        self._modules_dir = modules_dir or Path(os.getenv("MODULES_DIR", "/app/modules"))
+
+    def execute(self, **kwargs) -> Dict[str, Any]:
+        user, error = _require_admin_session()
+        if error:
+            return error
+
+        module_id = kwargs.get("module_id")
+        id_error = _validate_module_id(module_id)
+        if id_error:
+            return id_error
+
+        if not self._audit_log:
+            return {"status": "error", "error": "Audit log not available"}
+
+        from shared.modules.approval import approve_module
+
+        return approve_module(
+            module_id=module_id,
+            actor=user.user_id,
+            audit_log=self._audit_log,
+            modules_dir=self._modules_dir,
+            org_id=user.org_id,
+        )
+
+
+class RejectModuleStrategy(ActionStrategy):
+    """
+    Reject a module. Admin-only (D-17). Non-empty feedback triggers a
+    bounded repair cycle (D-09); empty/no feedback is a terminal rejection
+    that queues heavyweight artifacts for GC (D-10).
+    """
+
+    action_name = "reject_module"
+    description = (
+        "Reject a module under review, optionally with feedback that triggers "
+        "one bounded repair cycle. Admin-only: requires an authenticated "
+        "session with admin+ role."
+    )
+
+    def __init__(self, audit_log=None, modules_dir=None):
+        self._audit_log = audit_log
+        self._modules_dir = modules_dir or Path(os.getenv("MODULES_DIR", "/app/modules"))
+
+    def execute(self, **kwargs) -> Dict[str, Any]:
+        user, error = _require_admin_session()
+        if error:
+            return error
+
+        module_id = kwargs.get("module_id")
+        id_error = _validate_module_id(module_id)
+        if id_error:
+            return id_error
+
+        if not self._audit_log:
+            return {"status": "error", "error": "Audit log not available"}
+
+        from shared.modules.approval import reject_module
+
+        return reject_module(
+            module_id=module_id,
+            feedback=kwargs.get("feedback"),
+            actor=user.user_id,
+            audit_log=self._audit_log,
+            modules_dir=self._modules_dir,
+            org_id=user.org_id,
+        )
+
+
 class ModuleAdminTool(CompositeTool):
     """
     Consolidated module administration: list, enable, disable, credentials,
@@ -350,7 +489,7 @@ class ModuleAdminTool(CompositeTool):
     description = (
         "Module administration: list, enable, disable, credentials, uninstall, "
         "create_draft, edit_draft, diff_draft, validate_draft, promote_draft, "
-        "list_versions, rollback_version."
+        "list_versions, rollback_version, approve_module, reject_module."
     )
     version = "2.0.0"
 
@@ -377,3 +516,15 @@ class ModuleAdminTool(CompositeTool):
         self._register_strategy(PromoteDraftStrategy(draft_manager))
         self._register_strategy(ListVersionsStrategy(version_manager))
         self._register_strategy(RollbackVersionStrategy(version_manager))
+
+        # approve_module/reject_module call shared.modules.approval directly
+        # (D-02/D-17), which needs a DevModeAuditLog (.log_action), not the
+        # AuditStore (.record()) the other strategies above use. draft_manager
+        # and version_manager are constructed with the SAME DevModeAuditLog
+        # instance in orchestrator_service.py — reuse it rather than
+        # threading a new dependency through ModuleAdminTool's constructor.
+        _approval_audit_log = getattr(draft_manager, "audit_log", None) or getattr(
+            version_manager, "audit_log", None
+        )
+        self._register_strategy(ApproveModuleStrategy(audit_log=_approval_audit_log))
+        self._register_strategy(RejectModuleStrategy(audit_log=_approval_audit_log))
