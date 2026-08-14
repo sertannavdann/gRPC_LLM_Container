@@ -181,10 +181,16 @@ class TestEnableSwitch:
 
     def test_disabled_logs_one_warning_at_construction(self, monkeypatch, caplog):
         monkeypatch.setenv(RATE_LIMIT_ENABLED_ENV, "false")
+        app = _build_app(rules={"/": (0.01, 1)})
+        client = TestClient(app)
+
         with caplog.at_level(
             "WARNING", logger="shared.auth.rate_limit_middleware"
         ):
-            _build_app(rules={"/": (0.01, 1)})
+            # Starlette builds (and thus constructs) the middleware stack
+            # lazily on the first request, not at add_middleware() time.
+            client.get("/ping")
+            client.get("/ping")
 
         warnings = [r for r in caplog.records if "DISABLED" in r.message]
         assert len(warnings) == 1
