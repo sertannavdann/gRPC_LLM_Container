@@ -44,6 +44,7 @@ def approve_module(
     actor: str,
     audit_log: Any,
     modules_dir: Union[str, Path],
+    org_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Approve a VALIDATED module, moving it to APPROVED (D-16/D-17).
@@ -55,9 +56,11 @@ def approve_module(
 
     Args:
         module_id: Module identifier in "category/platform" format
-        actor: Identity of the approving admin
+        actor: Individual user identity (user_id) of the approving admin
         audit_log: DevModeAuditLog instance (exposes .log_action)
         modules_dir: Base modules directory (str or Path)
+        org_id: Tenant organization id, preserved in audit details now that
+            `actor` identifies the individual admin, not the org (WR-02)
 
     Returns:
         Dict with status, module_id, new_status (on success) or error
@@ -86,12 +89,12 @@ def approve_module(
     manifest.approved_bundle_sha256 = bundle_sha256 or ""
     manifest.save(Path(modules_dir))
 
-    timestamp = datetime.now(timezone.utc).isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat()
     audit_log.log_action(
         action="module_approved",
         actor=actor,
         module_id=module_id,
-        details={"bundle_sha256": bundle_sha256, "timestamp": timestamp},
+        details={"bundle_sha256": bundle_sha256, "timestamp": timestamp, "org_id": org_id},
     )
 
     logger.info(f"Module approved: {module_id} by {actor}")
@@ -110,6 +113,7 @@ def reject_module(
     actor: str,
     audit_log: Any,
     modules_dir: Union[str, Path],
+    org_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Reject a module (D-09/D-10/D-19).
@@ -129,9 +133,11 @@ def reject_module(
         module_id: Module identifier in "category/platform" format
         feedback: Reviewer feedback text driving a repair cycle, or
             empty/None for a terminal rejection
-        actor: Identity of the rejecting admin
+        actor: Individual user identity (user_id) of the rejecting admin
         audit_log: DevModeAuditLog instance (exposes .log_action)
         modules_dir: Base modules directory (str or Path)
+        org_id: Tenant organization id, preserved in audit details now that
+            `actor` identifies the individual admin, not the org (WR-02)
 
     Returns:
         Dict with status, module_id, new_status (on success) or error
@@ -141,7 +147,7 @@ def reject_module(
         return {"status": "error", "error": f"Module not found: {module_id}"}
 
     manifest = ModuleManifest.load(manifest_path)
-    timestamp = datetime.now(timezone.utc).isoformat() + "Z"
+    timestamp = datetime.now(timezone.utc).isoformat()
     bundle_sha256 = _bundle_hash(module_id, modules_dir)
 
     if feedback:
@@ -180,6 +186,7 @@ def reject_module(
                 "timestamp": timestamp,
                 "terminal": False,
                 "feedback": feedback,
+                "org_id": org_id,
             },
         )
 
@@ -205,6 +212,7 @@ def reject_module(
             "bundle_sha256": bundle_sha256,
             "timestamp": timestamp,
             "terminal": True,
+            "org_id": org_id,
         },
     )
 

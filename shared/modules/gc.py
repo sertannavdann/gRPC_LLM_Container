@@ -24,7 +24,7 @@ def queue_for_gc(
     module_id: str,
     modules_dir: Union[str, Path],
     actor: Optional[str] = None,
-) -> Path:
+) -> Optional[Path]:
     """
     Queue a terminally rejected module's artifacts for garbage collection.
 
@@ -41,15 +41,23 @@ def queue_for_gc(
         actor: Identity of the actor who triggered the terminal rejection
 
     Returns:
-        Path to the written marker file
+        Path to the written marker file, or None if module_dir does not
+        exist (IN-04 — this function must never fabricate a phantom
+        directory for a bogus/nonexistent module_id)
     """
     category, platform = module_id.split("/", 1)
     module_dir = Path(modules_dir) / category / platform
-    module_dir.mkdir(parents=True, exist_ok=True)
+
+    if not module_dir.exists():
+        logger.warning(
+            f"Cannot queue for GC: module directory does not exist for {module_id} "
+            f"({module_dir})"
+        )
+        return None
 
     marker = {
         "module_id": module_id,
-        "rejected_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "rejected_at": datetime.now(timezone.utc).isoformat(),
         "actor": actor,
     }
 
