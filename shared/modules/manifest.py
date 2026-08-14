@@ -77,6 +77,12 @@ class ModuleManifest:
     # Lifecycle
     status: str = "pending"
     health_status: str = "unknown"  # healthy | degraded | unhealthy | unknown
+    # Code-bundle hash (adapter.py + test_adapter.py only, NOT manifest.json)
+    # captured by approve_module() at approval time and re-verified
+    # unconditionally by install_module() at install time (D-16/D-19,
+    # CR-01/WR-01 fix). Empty string means the module was approved before
+    # integrity binding existed and must be re-approved.
+    approved_bundle_sha256: str = ""
     created_by: str = "user"        # user | executor_agent
     build_provider: str = ""        # e.g., "claude-sonnet-4-5", "local"
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

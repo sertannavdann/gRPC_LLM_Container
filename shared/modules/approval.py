@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from shared.modules.artifacts import compute_code_bundle_hash
 from shared.modules.gc import queue_for_gc
 from shared.modules.manifest import ModuleManifest, ModuleStatus
 
@@ -22,36 +23,17 @@ def _resolve_manifest_path(module_id: str, modules_dir: Union[str, Path]) -> Pat
     return Path(modules_dir) / category / platform / "manifest.json"
 
 
-def _compute_bundle_hash(
-    module_id: str, modules_dir: Union[str, Path]
-) -> Optional[str]:
+def _bundle_hash(module_id: str, modules_dir: Union[str, Path]) -> Optional[str]:
     """
-    Best-effort bundle hash resolution, mirroring the attestation surface
-    install_module() uses. Returns None if files are missing or hashing
-    fails — approval/rejection must never be blocked by hash resolution.
+    Best-effort code-bundle hash resolution via the shared
+    compute_code_bundle_hash() helper (manifest.json-exclusive, CR-01 fix).
+    Returns None if files are missing or hashing fails — approval/rejection
+    must never be blocked by hash resolution.
     """
     try:
-        from shared.modules.artifacts import ArtifactBundleBuilder
-
         category, platform = module_id.split("/", 1)
         module_dir = Path(modules_dir) / category / platform
-
-        files: Dict[str, str] = {}
-        for filename in ("adapter.py", "test_adapter.py", "manifest.json"):
-            file_path = module_dir / filename
-            if file_path.exists():
-                files[f"{category}/{platform}/{filename}"] = file_path.read_text()
-
-        if not files:
-            return None
-
-        bundle = ArtifactBundleBuilder.build_from_dict(
-            files=files,
-            job_id="approval_check",
-            attempt_id=1,
-            module_id=module_id,
-        )
-        return bundle.bundle_sha256
+        return compute_code_bundle_hash(module_dir, module_id)
     except Exception as e:
         logger.warning(f"Could not compute bundle hash for {module_id}: {e}")
         return None
@@ -95,9 +77,13 @@ def approve_module(
             ),
         }
 
-    bundle_sha256 = _compute_bundle_hash(module_id, modules_dir)
+    # Compute the code-bundle hash BEFORE the status mutation so it reflects
+    # exactly what the admin reviewed (manifest.json is excluded, so the
+    # subsequent status/updated_at rewrite below does not invalidate it).
+    bundle_sha256 = _bundle_hash(module_id, modules_dir)
 
     manifest.status = ModuleStatus.APPROVED
+    manifest.approved_bundle_sha256 = bundle_sha256 or ""
     manifest.save(Path(modules_dir))
 
     timestamp = datetime.now(timezone.utc).isoformat() + "Z"
@@ -114,6 +100,7 @@ def approve_module(
         "status": "success",
         "module_id": module_id,
         "new_status": ModuleStatus.APPROVED.value,
+        "bundle_sha256": bundle_sha256,
     }
 
 
@@ -155,7 +142,7 @@ def reject_module(
 
     manifest = ModuleManifest.load(manifest_path)
     timestamp = datetime.now(timezone.utc).isoformat() + "Z"
-    bundle_sha256 = _compute_bundle_hash(module_id, modules_dir)
+    bundle_sha256 = _bundle_hash(module_id, modules_dir)
 
     if feedback:
         manifest.status = ModuleStatus.VALIDATING

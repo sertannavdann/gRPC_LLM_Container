@@ -15,6 +15,10 @@ from typing import Dict, List, Optional, Set
 
 from shared.modules.hashing import compute_sha256, compute_bundle_hash
 
+# Files that participate in the approval-time / install-time integrity hash.
+# manifest.json is deliberately excluded — see compute_code_bundle_hash().
+CODE_BUNDLE_FILES = ("adapter.py", "test_adapter.py")
+
 
 @dataclass
 class FileArtifact:
@@ -291,6 +295,53 @@ class ArtifactBundleBuilder:
             "changed": sorted(list(changed)),
             "unchanged": sorted(list(common - changed))
         }
+
+
+def compute_code_bundle_hash(module_dir: Path, module_id: str) -> Optional[str]:
+    """
+    Compute the content-addressed hash of a module's CODE artifacts only.
+
+    Hashes exactly `CODE_BUNDLE_FILES` (adapter.py, test_adapter.py) — never
+    manifest.json. manifest.json carries mutable lifecycle state (status,
+    updated_at, approved_bundle_sha256) and cannot be part of an
+    approval-stable hash: if manifest.json were included, every
+    ModuleManifest.save() call (e.g. the VALIDATED -> APPROVED transition)
+    would change the bundle hash and permanently invalidate any attestation
+    captured before that save (CR-01). This function is the single source
+    of truth for both the hash issued at approval time
+    (shared.modules.approval.approve_module) and the hash re-verified at
+    install time (tools.builtin.module_installer.install_module).
+
+    Args:
+        module_dir: Directory containing the module's files
+            (modules/{category}/{platform}/)
+        module_id: Module identifier in "category/platform" format, used
+            only to key the hashed file paths identically to the installer's
+            historical hashing scheme
+
+    Returns:
+        Hex-encoded SHA-256 bundle hash, or None if neither adapter.py nor
+        test_adapter.py exists in module_dir
+    """
+    category, platform = module_id.split("/", 1)
+    module_dir = Path(module_dir)
+
+    files: Dict[str, str] = {}
+    for filename in CODE_BUNDLE_FILES:
+        file_path = module_dir / filename
+        if file_path.exists():
+            files[f"{category}/{platform}/{filename}"] = file_path.read_text()
+
+    if not files:
+        return None
+
+    bundle = ArtifactBundleBuilder.build_from_dict(
+        files=files,
+        job_id="code_bundle",
+        attempt_id=1,
+        module_id=module_id,
+    )
+    return bundle.bundle_sha256
 
 
 def verify_bundle_hash(index: ArtifactIndex, files: Dict[str, str]) -> bool:
