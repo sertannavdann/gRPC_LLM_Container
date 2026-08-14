@@ -262,6 +262,20 @@ def validate_module(module_id: str) -> Dict[str, Any]:
 
         manifest.validation_results = legacy_results
         manifest.status = ModuleStatus.VALIDATED if report.status == "VALIDATED" else ModuleStatus.FAILED
+
+        # D-08: generate a plain-language walkthrough once, only on VALIDATED reports.
+        # Never overwrite a previously generated walkthrough with an empty result, and
+        # never let generation failures affect the validation outcome or block save().
+        if report.status == "VALIDATED":
+            try:
+                from tools.builtin.module_walkthrough import generate_walkthrough
+
+                walkthrough = generate_walkthrough(module_id, manifest_file.parent)
+                if walkthrough:
+                    manifest.walkthrough = walkthrough
+            except Exception as e:
+                logger.warning(f"Walkthrough generation failed for {module_id}: {e}")
+
         manifest.save(MODULES_DIR)
 
     logger.info(f"Module validation {report.status}: {module_id}")

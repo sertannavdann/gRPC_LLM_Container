@@ -574,6 +574,129 @@ class LLMGateway:
         # All models failed
         raise AllModelsFailedError(purpose, errors)
 
+    async def generate_text(
+        self,
+        purpose: Purpose,
+        messages: List[ChatMessage],
+        job_id: Optional[str] = None,
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Generate plain-text prose with routing, budget, and fallback — no schema validation.
+
+        This lane is for prose outputs (walkthroughs, critiques, plain-language summaries)
+        where the caller must NOT expect structured JSON output. Unlike `generate()`, no
+        `response_format`/json_schema is attached to the request and the raw provider
+        response text is returned as-is. Routing, budget enforcement, retry-with-backoff,
+        and usage recording all behave identically to `generate()`.
+
+        Args:
+            purpose: Purpose lane for routing
+            messages: Chat messages
+            job_id: Optional job ID for budget tracking
+            temperature: Sampling temperature (default 0.3, lower than generate()'s 0.7
+                since prose lanes like walkthroughs benefit from more deterministic output)
+            max_tokens: Optional token cap; defaults to budget_config.max_tokens_per_request
+
+        Returns:
+            Tuple of (raw response text, metadata dict with provider/model/usage)
+
+        Raises:
+            ValueError: If no model preferences configured for purpose
+            BudgetExceededError: If budget exceeded
+            AllModelsFailedError: If all models fail
+        """
+        # Get model preferences for this purpose
+        preferences = self.routing_policy.get_preferences(purpose)
+        if not preferences:
+            raise ValueError(f"No model preferences configured for purpose: {purpose}")
+
+        # Check budget before attempting
+        if max_tokens is None:
+            max_tokens = self.budget_config.max_tokens_per_request
+        self._check_budget(job_id, max_tokens)
+
+        # Try each model in order until success
+        errors = []
+        for pref in preferences:
+            provider = self.providers.get(pref.provider_name)
+            if not provider:
+                error_msg = f"Provider '{pref.provider_name}' not registered"
+                errors.append(error_msg)
+                logger.warning(error_msg)
+                continue
+
+            try:
+                logger.info(
+                    f"Attempting text generation with {pref.provider_name}/{pref.model_name} "
+                    f"for purpose={purpose}"
+                )
+
+                # Build request — NO response_format/json_schema, this is a prose lane
+                request = ChatRequest(
+                    messages=messages,
+                    model=pref.model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+                # Call provider with retry logic
+                response = await self._call_provider_with_retry(
+                    provider=provider,
+                    request=request,
+                    provider_name=pref.provider_name,
+                    model_name=pref.model_name,
+                )
+
+                # Record usage
+                self._record_usage(job_id, response)
+
+                # Success - return raw text and metadata
+                metadata = {
+                    "provider": pref.provider_name,
+                    "model": pref.model_name,
+                    "usage": response.usage,
+                    "attempt": len(errors) + 1,
+                }
+
+                logger.info(
+                    f"Text generation successful with {pref.provider_name}/{pref.model_name} "
+                    f"(attempt {metadata['attempt']})"
+                )
+
+                return response.content, metadata
+
+            except ProviderAuthError as e:
+                # Auth error - not retryable
+                error_msg = f"Auth error with {pref.provider_name}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                continue
+
+            except (ProviderRateLimitError, ProviderConnectionError) as e:
+                # Transient error - try next model
+                error_msg = (
+                    f"Transient error with {pref.provider_name}/{pref.model_name}: "
+                    f"{str(e)}"
+                )
+                errors.append(error_msg)
+                logger.warning(error_msg)
+                continue
+
+            except Exception as e:
+                # Unknown error - try next model
+                error_msg = (
+                    f"Unexpected error with {pref.provider_name}/{pref.model_name}: "
+                    f"{str(e)}"
+                )
+                errors.append(error_msg)
+                logger.error(error_msg)
+                continue
+
+        # All models failed
+        raise AllModelsFailedError(purpose, errors)
+
     def get_routing_info(self) -> Dict[str, Any]:
         """
         Get current routing configuration information.

@@ -70,6 +70,11 @@ def set_llm_gateway(gateway: LLMGateway) -> None:
     _llm_gateway = gateway
 
 
+def get_llm_gateway() -> Optional[LLMGateway]:
+    """Read accessor for the gateway wired by set_llm_gateway (one wiring point, read from many callers)."""
+    return _llm_gateway
+
+
 REPAIR_SYSTEM_PROMPT = """\
 You are a Python adapter code repair agent for the NEXUS module system.
 
