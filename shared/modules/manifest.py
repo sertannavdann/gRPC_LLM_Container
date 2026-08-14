@@ -90,6 +90,9 @@ class ModuleManifest:
 
     # Validation
     validation_results: ValidationResults = field(default_factory=ValidationResults)
+    # Plain-language explanation of the adapter, generated once at validation time
+    # (D-08); surfaced by GET /admin/modules/{cat}/{plat}/review
+    walkthrough: str = ""
 
     # Runtime stats
     failure_count: int = 0

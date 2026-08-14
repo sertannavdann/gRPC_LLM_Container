@@ -67,6 +67,24 @@ class StubProvider(BaseProvider):
         return True
 
 
+VALID_ADAPTER_SOURCE = '''\
+from shared.adapters.base import BaseAdapter
+from shared.adapters.registry import register_adapter
+
+
+@register_adapter
+class ClashRoyaleAdapter(BaseAdapter):
+    def fetch_raw(self):
+        return {}
+
+    def transform(self, raw):
+        return []
+
+    def get_schema(self):
+        return {}
+'''
+
+
 def _make_gateway(provider: StubProvider, purpose: Purpose = Purpose.CRITIC) -> LLMGateway:
     policy = RoutingPolicy()
     prefs = [ModelPreference(provider_name="stub", model_name="stub-model", priority=0)]
@@ -327,12 +345,7 @@ def validated_module(tmp_path, monkeypatch):
     module_dir = modules_dir / "gaming" / "clashroyale"
     module_dir.mkdir(parents=True)
 
-    (module_dir / "adapter.py").write_text(
-        "from shared.adapters.base import BaseAdapter\n\n"
-        "class ClashRoyaleAdapter(BaseAdapter):\n"
-        "    def fetch_raw(self):\n"
-        "        return {}\n"
-    )
+    (module_dir / "adapter.py").write_text(VALID_ADAPTER_SOURCE)
 
     manifest = {
         "name": "clashroyale",
