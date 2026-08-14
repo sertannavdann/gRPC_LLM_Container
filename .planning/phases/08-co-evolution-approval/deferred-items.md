@@ -58,3 +58,22 @@ Verified by running each at the base commit in a throwaway worktree — none cau
 - `tests/integration/cross_feature/test_feature_test_gating.py` — collection error: imports `tools.builtin.feature_test_harness`, deleted in 05-05 dead-code cleanup (14e6d7a)
 - `tests/integration/cross_feature/test_contract_enforcement_pipeline.py` — 2 failures (`ImportPolicy` not iterable; orchestrator source assertion)
 - `tests/integration/cross_feature/test_policy_propagation.py` — 2 failures (`ImportPolicy` not iterable)
+
+## 08-05 Task 2 (pre-existing, confirmed 0 caused by rate limiting)
+
+Discovered while running the full `tests/integration/admin/` suite locally (Docker gate
+satisfied via a temporary listening socket on port 50054) to verify the 429-safety
+requirement. None of these are 429 responses — confirmed zero rate-limit regressions.
+Reproduces identically with `RateLimitMiddleware` wiring absent (files unrelated to this
+plan's `files_modified` list), so out of scope — not touched:
+
+- `tests/integration/admin/test_billing_endpoints.py::TestBillingWithUsage` (3 tests) —
+  `AttributeError: 'UsageStore' object has no attribute 'record_usage'`. The test file
+  calls a method that does not exist on `shared/billing/usage_store.py::UsageStore`.
+  Pre-existing since Phase 4 Plan 02 (`8ea0bbb`), which added both the test file and
+  `UsageStore` in the same plan without this method ever being defined.
+- `tests/integration/admin/test_module_crud.py::TestModuleCRUDEndpoints::test_disable_module_not_found`
+  — `assert 200 == 500` (endpoint no longer raises on a nonexistent module).
+- `tests/integration/admin/test_module_crud.py::TestModuleWithMockModule` (2 tests) —
+  `AttributeError: 'str' object has no attribute 'module_id'`, a mock/fixture shape
+  mismatch in the test's mock module setup.
