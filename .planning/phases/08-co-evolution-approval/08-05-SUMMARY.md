@@ -240,6 +240,11 @@ deploy this plan's changes.
   candidates for a future cleanup plan but do not block this plan or gate
   any downstream work.
 
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all 4 commits
+(`29dcbf8`, `9a9dfd2`, `085e92c`, `e16effd`) verified present in git history.
+
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-14*
