@@ -194,3 +194,73 @@ class TestEnableSwitch:
 
         warnings = [r for r in caplog.records if "DISABLED" in r.message]
         assert len(warnings) == 1
+
+
+class TestProductionDefaultsAndSuiteSafety:
+    """Task 2 (Plan 08-05): assertions against the shipped PRODUCTION
+    DEFAULT_RATE_LIMIT_RULES (no custom burst override), always run (no
+    Docker gate), mirroring/complementing
+    tests/integration/admin/test_inbound_rate_limit.py.
+    """
+
+    def test_429_retry_after_contract_under_production_defaults(self):
+        """Mirrors the integration test's 429 + Retry-After assertion, but
+        exercises the shipped defaults directly against the strictest rule
+        (/admin/bootstrap: 0.2 rps, burst=3).
+        """
+        app = FastAPI()
+
+        @app.get("/admin/bootstrap")
+        def bootstrap():
+            return {"ok": True}
+
+        app.add_middleware(RateLimitMiddleware, enabled=True)
+        client = TestClient(app)
+
+        responses = [
+            client.get(
+                "/admin/bootstrap", headers={"X-API-Key": "prod-defaults-key"}
+            )
+            for _ in range(4)
+        ]
+        statuses = [r.status_code for r in responses]
+        assert 429 in statuses
+
+        throttled = next(r for r in responses if r.status_code == 429)
+        body = throttled.json()
+        assert body["error"] == "rate_limit_exceeded"
+        assert isinstance(body["retry_after"], float)
+        assert int(throttled.headers["Retry-After"]) >= 1
+
+    def test_suite_safety_zero_429s_under_admin_suite_replay(self):
+        """Replays the heaviest single-bucket pattern the admin integration
+        suites produce: 20 back-to-back requests to one
+        /admin/modules/{category}/{platform} path, then 20 more to
+        /admin/audit-logs, all with ONE X-API-Key — under the shipped
+        PRODUCTION DEFAULT_RATE_LIMIT_RULES. Proves the shipped defaults
+        leave headroom above real suite usage (each admin test mints its
+        own key, so per-bucket volume is far below this in practice).
+        """
+        app = FastAPI()
+
+        @app.get("/admin/modules/{category}/{platform}")
+        def get_module(category: str, platform: str):
+            return {"ok": True}
+
+        @app.get("/admin/audit-logs")
+        def audit_logs():
+            return {"ok": True}
+
+        app.add_middleware(RateLimitMiddleware, enabled=True)
+        client = TestClient(app)
+
+        headers = {"X-API-Key": "suite-safety-key"}
+        responses = [
+            client.get("/admin/modules/test/demo", headers=headers)
+            for _ in range(20)
+        ]
+        responses += [
+            client.get("/admin/audit-logs", headers=headers) for _ in range(20)
+        ]
+
+        assert all(r.status_code != 429 for r in responses)

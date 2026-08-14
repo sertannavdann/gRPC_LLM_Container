@@ -20,6 +20,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.testclient import TestClient
 
+from shared.auth.rate_limit_middleware import RATE_LIMIT_ENABLED_ENV
+
 # Import the components we need directly (avoiding orchestrator/__init__.py)
 from orchestrator.config_manager import ConfigManager
 from orchestrator.routing_config import RoutingConfig, CategoryRouting, TierConfig, PerformanceConstraints
@@ -38,6 +40,30 @@ from shared.modules.registry import ModuleRegistry
 
 # We need to re-create the admin API app here to avoid importing orchestrator package
 # This is a simplified version that includes only what we need for testing
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_inbound_rate_limiting():
+    """Guarantee this whole directory is 429-free (Plan 08-05, T-08-59).
+
+    The pre-existing admin suites (test_approval_gate.py, test_module_crud.py,
+    ...) fire requests back-to-back with no pacing. `admin_app`/
+    `create_test_admin_app()` below deliberately does NOT add the inbound
+    rate limiter (production wiring lives only in
+    `orchestrator/admin_api.py::start_admin_server()`, which this factory
+    intentionally avoids importing) — but this autouse fixture makes the
+    429-free guarantee EXPLICIT rather than incidental, so even a future app
+    factory or an imported production app can never throttle a test in this
+    directory.
+
+    The ONE file allowed to exercise real throttling
+    (`test_inbound_rate_limit.py`) does so by passing `enabled=True`
+    explicitly to the middleware's constructor, which overrides this env var
+    per Task 1 (`enabled=True` beats `RATE_LIMIT_ENABLED`).
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(RATE_LIMIT_ENABLED_ENV, "false")
+        yield
 
 
 def create_test_admin_app():
@@ -760,6 +786,16 @@ def admin_app(
         api_key_store=api_key_store,
         public_paths=["/admin/health"],
     )
+
+    # Deliberately NOT adding the inbound rate limiter here (Plan 08-05).
+    # This app.state-based, function-scoped `admin_app` fixture already mints a
+    # FRESH plaintext API key per test (see `admin_headers`/`operator_headers`
+    # / etc. below), so each test naturally lands in its own bucket even if
+    # this were ever changed — but production rate-limit wiring lives only
+    # in `orchestrator/admin_api.py::start_admin_server()`, which this
+    # factory intentionally avoids importing, and the `RATE_LIMIT_ENABLED`
+    # session-scoped autouse fixture above makes the 429-free guarantee for
+    # this whole directory explicit regardless.
 
     return app
 

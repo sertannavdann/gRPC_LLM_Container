@@ -28,6 +28,7 @@ from shared.audit import AuditContextMiddleware, audit_action
 from shared.auth import User, get_current_user
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
+from shared.auth.rate_limit_middleware import RateLimitMiddleware
 
 from .aggregator import DashboardAggregator, UserConfig
 from .bank_service import BankService
@@ -352,6 +353,14 @@ app.add_middleware(
         "/",
     ],
 )
+
+# RateLimitMiddleware runs OUTSIDE (before) auth so invalid-key brute force
+# is throttled too (REQ-020), but INSIDE CORS — resulting order is
+# CORS (outermost) -> RateLimit -> Auth -> AuditContext (innermost). A 429
+# short-circuits here, before every mutation handler, so the audit
+# fail-closed guarantee is unaffected (no unaudited state change is
+# possible when a request never reaches its handler).
+app.add_middleware(RateLimitMiddleware)
 
 # Instrument FastAPI with OpenTelemetry (if available)
 if _HAS_FASTAPI_INSTRUMENTOR:

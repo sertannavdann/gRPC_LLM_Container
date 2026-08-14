@@ -37,6 +37,7 @@ from shared.audit import (
 )
 from shared.auth.api_keys import APIKeyStore
 from shared.auth.middleware import APIKeyAuthMiddleware
+from shared.auth.rate_limit_middleware import RateLimitMiddleware
 from shared.auth.models import Role, User
 from shared.auth.rbac import Permission, get_current_user, require_permission
 from shared.billing import UsageStore, QuotaManager
@@ -2100,6 +2101,16 @@ def start_admin_server(
             "/redoc",
         ],
     )
+
+    # RateLimitMiddleware is added LAST so it is the OUTERMOST middleware on
+    # the admin app — it runs before APIKeyAuthMiddleware, throttling
+    # invalid-key brute force too (REQ-020). CORS is added at module import
+    # time above, so it is INNER of the limiter here; the 429 response
+    # therefore carries its own Access-Control-Allow-Origin header. A 429
+    # short-circuits before any handler runs, so no mutation (and therefore
+    # no audit write) is ever skipped mid-flight — the audit fail-closed
+    # guarantee is unaffected.
+    _app.add_middleware(RateLimitMiddleware)
 
     def _run():
         # Use Config + Server so we can disable signal handlers
