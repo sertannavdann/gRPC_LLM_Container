@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 1/1 | Complete   | 2026-08-13 |
+| 8 | Co-Evolution & Approval | 4/13 | In Progress|  |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -434,15 +434,15 @@ Wave 4 — Stability + Synchronization Extension:
 Plans:
 **Wave 1**
 
-- [ ] 08-02-PLAN.md — Attestation integrity (CR-01/WR-01) + individual-admin attribution and ISO-8601/audit hygiene (WR-02..WR-05)
-- [ ] 08-03-PLAN.md — SSE payload extension: manifest-scanned pending-approval modules with status/pending_approval/build_stage
+- [x] 08-02-PLAN.md — Attestation integrity (CR-01/WR-01) + individual-admin attribution and ISO-8601/audit hygiene (WR-02..WR-05)
+- [x] 08-03-PLAN.md — SSE payload extension: manifest-scanned pending-approval modules with status/pending_approval/build_stage
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 08-01-PLAN.md — Backend enforcement core: install guard raised to APPROVED, approve/reject core, admin endpoints, policy scaffold
 - [ ] 08-04-PLAN.md — Shared GC + tiered retention worker (REQ-017, D-10/D-11/D-12)
 - [ ] 08-05-PLAN.md — Inbound token-bucket rate limiting with 429 + Retry-After on both HTTP services (REQ-020)
-- [ ] 08-06-PLAN.md — LLM walkthrough generated at validation time + manifest field (D-08)
+- [x] 08-06-PLAN.md — LLM walkthrough generated at validation time + manifest field (D-08)
 - [ ] 08-07-PLAN.md — adminClient approval fetchers + pipelinePageMachine (XState v5, D-14)
 
 **Wave 3** *(blocked on Wave 2 completion)*
