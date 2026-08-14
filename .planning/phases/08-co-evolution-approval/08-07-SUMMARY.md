@@ -92,3 +92,12 @@ None - no external service configuration required.
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-14*
+
+## Self-Check: PASSED
+
+- FOUND: `ui_service/src/machines/pipelinePage.ts`
+- FOUND: `.planning/phases/08-co-evolution-approval/08-07-SUMMARY.md`
+- FOUND: `approveModule` in `ui_service/src/lib/adminClient.ts`
+- FOUND: commit `f1271c3` (Task 1)
+- FOUND: commit `8a8b302` (Task 2)
+- FOUND: commit `1d7b17d` (SUMMARY)
