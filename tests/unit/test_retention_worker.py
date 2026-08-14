@@ -1,10 +1,13 @@
 """
-Unit tests for tiered per-org usage retention pruning (REQ-017).
+Unit tests for tiered per-org usage retention pruning (REQ-017) and the
+shared GC/retention worker pass (D-11).
 
 Covers UsageStore.delete_before/list_org_ids and
 orchestrator.retention_worker.prune_expired_usage against a real
 UsageStore(tmp_path SQLite DB) seeded with rows at explicit created_at
-values across tiers, plus a stub api_key_store.
+values across tiers, plus a stub api_key_store. Also covers
+gc_and_retention_pass()'s fault isolation between the GC and retention
+policies (D-11).
 """
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -12,7 +15,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from shared.billing.usage_store import UsageStore
-from orchestrator.retention_worker import TIER_RETENTION_DAYS, prune_expired_usage
+from orchestrator.retention_worker import (
+    TIER_RETENTION_DAYS,
+    gc_and_retention_pass,
+    prune_expired_usage,
+)
 
 
 class StubOrg:
@@ -214,3 +221,85 @@ def test_retention_worker_no_manual_z_suffix():
 
     source = inspect.getsource(rw)
     assert 'isoformat() + "Z"' not in source
+
+
+# ── gc_and_retention_pass: fault isolation (D-11) ────────────────────
+
+
+def test_gc_and_retention_pass_runs_both_policies(tmp_path, usage_store):
+    modules_dir = tmp_path / "modules"
+    artifacts_dir = tmp_path / "artifacts"
+    modules_dir.mkdir()
+    artifacts_dir.mkdir()
+    _insert_record(usage_store, "org-a", _iso_days_ago(10))
+    api_key_store = StubAPIKeyStore({"org-a": StubOrg("free")})
+
+    result = gc_and_retention_pass(
+        modules_dir,
+        artifacts_dir,
+        usage_store=usage_store,
+        api_key_store=api_key_store,
+        version_manager=None,
+    )
+
+    assert result["gc"] == {"scanned": 0, "purged": [], "protected": [], "errors": []}
+    assert result["retention"]["pruned"]["org-a"] == 1
+
+
+def test_gc_and_retention_pass_gc_failure_does_not_block_retention(tmp_path, usage_store, monkeypatch):
+    modules_dir = tmp_path / "modules"
+    artifacts_dir = tmp_path / "artifacts"
+    modules_dir.mkdir()
+    artifacts_dir.mkdir()
+    _insert_record(usage_store, "org-a", _iso_days_ago(10))
+    api_key_store = StubAPIKeyStore({"org-a": StubOrg("free")})
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("gc exploded")
+
+    import shared.modules.gc as gc_module
+    monkeypatch.setattr(gc_module, "sweep_gc_pending", _boom)
+
+    result = gc_and_retention_pass(
+        modules_dir,
+        artifacts_dir,
+        usage_store=usage_store,
+        api_key_store=api_key_store,
+        version_manager=None,
+    )
+
+    assert "error" in result["gc"]
+    assert result["retention"]["pruned"]["org-a"] == 1
+
+
+def test_gc_and_retention_pass_retention_failure_does_not_block_gc(tmp_path):
+    modules_dir = tmp_path / "modules"
+    artifacts_dir = tmp_path / "artifacts"
+    modules_dir.mkdir()
+    artifacts_dir.mkdir()
+
+    class FailingUsageStore:
+        def list_org_ids(self):
+            raise RuntimeError("retention exploded")
+
+    result = gc_and_retention_pass(
+        modules_dir,
+        artifacts_dir,
+        usage_store=FailingUsageStore(),
+        api_key_store=None,
+        version_manager=None,
+    )
+
+    assert result["gc"] == {"scanned": 0, "purged": [], "protected": [], "errors": []}
+    assert "errors" in result["retention"] and result["retention"]["errors"]
+
+
+def test_gc_and_retention_pass_no_usage_store_skips_retention(tmp_path):
+    modules_dir = tmp_path / "modules"
+    artifacts_dir = tmp_path / "artifacts"
+    modules_dir.mkdir()
+    artifacts_dir.mkdir()
+
+    result = gc_and_retention_pass(modules_dir, artifacts_dir, usage_store=None)
+
+    assert result["retention"] == {"skipped": "no usage_store provided"}

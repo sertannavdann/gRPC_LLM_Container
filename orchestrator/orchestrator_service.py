@@ -1857,6 +1857,22 @@ def serve(config: Optional[OrchestratorConfig] = None):
         audit_store=orchestrator_service.audit_store,
     )
 
+    # Start the shared GC/retention worker (D-11) — one daemon thread running
+    # both artifact-GC (D-10/D-12) and tiered usage retention (REQ-017) on a
+    # daily interval. Reuses the same store instances start_admin_server just
+    # constructed/received (admin_module._api_key_store), never a second
+    # VersionManager/UsageStore.
+    from . import admin_api as admin_module
+    from .retention_worker import start_retention_worker
+
+    start_retention_worker(
+        modules_dir=Path(os.getenv("MODULES_DIR", "/app/modules")),
+        artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "/app/data/artifacts")),
+        usage_store=orchestrator_service._usage_store,
+        api_key_store=admin_module._api_key_store,
+        version_manager=_version_manager,
+    )
+
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
