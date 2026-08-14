@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
-from shared.modules.artifacts import ArtifactBundleBuilder
+from shared.modules.artifacts import compute_code_bundle_hash
 from tools.builtin import module_installer
 
 
@@ -83,7 +83,11 @@ def create_test_module(modules_dir: Path, module_id: str, status: str) -> tuple:
     Create test module with manifest and files.
 
     Returns:
-        Tuple of (manifest, bundle_sha256)
+        Tuple of (manifest, bundle_sha256) — bundle_sha256 is the code-only
+        hash (adapter.py + test_adapter.py; manifest.json excluded, CR-01
+        fix). When status is APPROVED, manifest.approved_bundle_sha256 is
+        also set to this hash so the unconditional install-time guard
+        (WR-01) accepts the fixture.
     """
     category, platform = module_id.split("/")
     module_dir = modules_dir / category / platform
@@ -123,19 +127,13 @@ def test_adapter():
     (module_dir / "adapter.py").write_text(adapter_code)
     (module_dir / "test_adapter.py").write_text(test_code)
 
-    # Compute bundle hash
-    bundle = ArtifactBundleBuilder.build_from_dict(
-        files={
-            f"{category}/{platform}/manifest.json": (module_dir / "manifest.json").read_text(),
-            f"{category}/{platform}/adapter.py": adapter_code,
-            f"{category}/{platform}/test_adapter.py": test_code,
-        },
-        job_id="test",
-        attempt_id=1,
-        module_id=module_id
-    )
+    bundle_sha256 = compute_code_bundle_hash(module_dir, module_id)
 
-    return manifest, bundle.bundle_sha256
+    if status == ModuleStatus.APPROVED.value:
+        manifest.approved_bundle_sha256 = bundle_sha256
+        manifest.save(modules_dir)
+
+    return manifest, bundle_sha256
 
 
 def test_approved_bundle_installs_successfully(setup_installer_deps, temp_modules_dir):

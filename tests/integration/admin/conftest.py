@@ -12,7 +12,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import pytest
 from fastapi import FastAPI, Depends
@@ -350,9 +350,10 @@ def create_test_admin_app():
         module_id = f"{category}/{platform}"
         result = approve_module(
             module_id=module_id,
-            actor=user.org_id,
+            actor=user.user_id,
             audit_log=app.state.audit_log,
             modules_dir=app.state.modules_dir,
+            org_id=user.org_id,
         )
         if result.get("status") != "success":
             raise HTTPException(status_code=400, detail=result.get("error", "Approval failed"))
@@ -373,9 +374,10 @@ def create_test_admin_app():
         result = reject_module(
             module_id=module_id,
             feedback=request.feedback,
-            actor=user.org_id,
+            actor=user.user_id,
             audit_log=app.state.audit_log,
             modules_dir=app.state.modules_dir,
+            org_id=user.org_id,
         )
         if result.get("status") != "success":
             raise HTTPException(status_code=400, detail=result.get("error", "Rejection failed"))
@@ -451,6 +453,8 @@ def create_test_admin_app():
         user: User = Depends(require_permission(Permission.MANAGE_MODULES)),
     ):
         from fastapi import HTTPException
+        from shared.modules.audit import BuildAuditLog
+
         if app.state.modules_dir is None:
             raise HTTPException(status_code=503, detail="Approval gate not initialized")
 
@@ -459,12 +463,21 @@ def create_test_admin_app():
         if not module_dir.exists():
             raise HTTPException(status_code=404, detail=f"Module not found: {module_id}")
 
-        events = []
-        if app.state.audit_log is not None:
-            events = [
-                e.to_dict() for e in app.state.audit_log.get_events(module_id=module_id)
-            ]
-        return {"module_id": module_id, "attempts": events}
+        # WR-04: read the same data source as production
+        # (orchestrator/admin_api.py's audit_module) — BuildAuditLog attempt
+        # records glob'd from the audit dir, NOT DevModeAuditLog JSONL events.
+        attempts: List[Dict[str, Any]] = []
+        audit_dir = app.state.audit_log.audit_dir if app.state.audit_log is not None else None
+        if audit_dir is not None and Path(audit_dir).exists():
+            for audit_file in Path(audit_dir).glob("*_audit.json"):
+                try:
+                    log = BuildAuditLog.load(audit_file)
+                except Exception:
+                    continue
+                if log.module_id == module_id:
+                    attempts.extend(a.to_dict() for a in log.attempts)
+
+        return {"module_id": module_id, "attempts": attempts}
 
     # ------------------------------------------------------------------
     # Audit query API (REQ-012, Phase 07-03) — mirrors orchestrator/
@@ -763,10 +776,20 @@ def test_org(api_key_store):
     return api_key_store.create_organization("test-org", "Test Organization")
 
 
+ADMIN_TEST_USER_ID = "admin-user-1"
+
+
 @pytest.fixture
 def admin_headers(api_key_store, test_org):
-    """Create admin API key and return headers."""
-    plaintext_key, _ = api_key_store.create_key(test_org.org_id, "admin")
+    """Create admin API key and return headers.
+
+    Explicitly assigns user_id (distinct from test_org.org_id) so tests can
+    assert that audit `actor` fields record the individual admin identity,
+    not the tenant organization (WR-02).
+    """
+    plaintext_key, _ = api_key_store.create_key(
+        test_org.org_id, "admin", user_id=ADMIN_TEST_USER_ID
+    )
     return {"X-API-Key": plaintext_key}
 
 

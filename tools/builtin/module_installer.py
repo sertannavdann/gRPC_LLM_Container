@@ -11,7 +11,12 @@ if needed.
 Security features:
 - Attestation-based install guard: only APPROVED bundles can be installed
   (an admin must explicitly approve a VALIDATED module first — D-16)
-- Hash verification: bundle_sha256 must match validation attestation
+- Hash verification is UNCONDITIONAL: on every install, the on-disk code
+  bundle (adapter.py + test_adapter.py) is recomputed and compared against
+  the hash the admin recorded at approval time
+  (manifest.approved_bundle_sha256) — not merely an optional attestation
+  argument. Post-approval tampering is rejected regardless of whether the
+  caller passes validation_attestation (CR-01/WR-01 fix).
 - Audit trail: all install attempts (success and rejection) are logged
 """
 import hashlib
@@ -21,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
-from shared.modules.artifacts import ArtifactBundleBuilder
+from shared.modules.artifacts import ArtifactBundleBuilder, compute_code_bundle_hash
 from shared.modules.identifiers import parse_module_id
 
 logger = logging.getLogger(__name__)
@@ -107,7 +112,44 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
             ),
         }
 
-    # ========== PRE-INSTALL CHECK 2: Bundle hash verification ==========
+    # ========== PRE-INSTALL CHECK 2: Bundle hash verification (unconditional) ==========
+    # Recompute the code-bundle hash and compare it against the hash the
+    # admin approved (manifest.approved_bundle_sha256) — this runs on EVERY
+    # install regardless of whether an attestation argument is passed
+    # (CR-01/WR-01 fix: install-time integrity was previously only checked
+    # when a caller opted in with an attestation).
+    current_hash = compute_code_bundle_hash(module_dir, module_id)
+
+    if not manifest.approved_bundle_sha256:
+        _log_install_rejection(
+            module_id,
+            "missing_approval_hash",
+            "Module was approved before integrity binding existed (no approved_bundle_sha256 recorded)",
+        )
+        return {
+            "status": "error",
+            "error": (
+                f"Module {module_id} was approved before integrity binding existed "
+                f"and has no recorded approval hash. It requires re-approval by an "
+                f"admin to establish a verifiable install hash."
+            ),
+        }
+
+    if current_hash != manifest.approved_bundle_sha256:
+        _log_install_rejection(
+            module_id,
+            "hash_mismatch",
+            f"Expected {manifest.approved_bundle_sha256}, got {current_hash}"
+        )
+        return {
+            "status": "error",
+            "error": (
+                f"Artifact integrity failure: bundle hash mismatch. "
+                f"Expected {manifest.approved_bundle_sha256}, got {current_hash}. "
+                f"Files may have been modified after approval."
+            ),
+        }
+
     if validation_attestation:
         attested_hash = validation_attestation.get("bundle_sha256")
 
@@ -120,31 +162,10 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
                 "error": "Validation attestation missing bundle_sha256 field",
             }
 
-        # Compute current bundle hash
-        adapter_file = module_dir / "adapter.py"
-        test_file = module_dir / "test_adapter.py"
-
-        current_files = {}
-        if adapter_file.exists():
-            current_files[f"{category}/{platform}/adapter.py"] = adapter_file.read_text()
-        if test_file.exists():
-            current_files[f"{category}/{platform}/test_adapter.py"] = test_file.read_text()
-        if manifest_path.exists():
-            current_files[f"{category}/{platform}/manifest.json"] = manifest_path.read_text()
-
-        # Build artifact bundle to get current hash
-        from shared.modules.artifacts import ArtifactBundleBuilder
-
-        current_bundle = ArtifactBundleBuilder.build_from_dict(
-            files=current_files,
-            job_id="install_check",
-            attempt_id=1,
-            module_id=module_id
-        )
-        current_hash = current_bundle.bundle_sha256
-
-        # Verify hashes match
-        if current_hash != attested_hash:
+        # Verify the attestation's hash agrees with the current code bundle
+        # (already verified above against the approval-time hash; this
+        # additionally binds whatever attestation the caller supplied).
+        if attested_hash != current_hash:
             _log_install_rejection(
                 module_id,
                 "hash_mismatch",
@@ -158,9 +179,6 @@ def install_module(module_id: str, validation_attestation: Optional[Dict[str, An
                     f"Files may have been modified after validation."
                 ),
             }
-
-    if not _module_loader:
-        return {"status": "error", "error": "Module loader not available"}
 
     # ========== INSTALL APPROVED ==========
 

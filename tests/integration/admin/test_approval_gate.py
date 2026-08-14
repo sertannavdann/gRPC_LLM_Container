@@ -20,6 +20,8 @@ import pytest
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
 
+from conftest import ADMIN_TEST_USER_ID
+
 
 def _create_module(modules_dir, module_id: str, status: str) -> ModuleManifest:
     """Create a minimal module manifest + adapter files on disk."""
@@ -163,6 +165,12 @@ class TestApproveModule:
         assert last_event.actor
         assert "bundle_sha256" in last_event.details
         assert "timestamp" in last_event.details
+
+        # WR-02: actor must be the individual admin's user_id, NOT the
+        # tenant org_id — org context is preserved separately in details.
+        assert last_event.actor == ADMIN_TEST_USER_ID
+        assert last_event.actor != "test-org"
+        assert last_event.details.get("org_id") == "test-org"
 
 
 class TestRejectModule:

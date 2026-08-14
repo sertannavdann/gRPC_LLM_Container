@@ -41,7 +41,7 @@ from shared.auth.models import Role, User
 from shared.auth.rbac import Permission, get_current_user, require_permission
 from shared.billing import UsageStore, QuotaManager
 from shared.modules.approval import approve_module, reject_module
-from shared.modules.manifest import ModuleManifest, ModuleStatus
+from shared.modules.manifest import ModuleManifest
 
 from .config_manager import ConfigManager
 from .routing_config import CategoryRouting, RoutingConfig
@@ -936,9 +936,10 @@ def approve_module_endpoint(
     module_id = f"{category}/{platform}"
     result = approve_module(
         module_id=module_id,
-        actor=user.org_id,
+        actor=user.user_id,
         audit_log=_draft_manager.audit_log,
         modules_dir=_MODULES_DIR,
+        org_id=user.org_id,
     )
 
     if result.get("status") != "success":
@@ -968,9 +969,10 @@ def reject_module_endpoint(
     result = reject_module(
         module_id=module_id,
         feedback=request.feedback,
-        actor=user.org_id,
+        actor=user.user_id,
         audit_log=_draft_manager.audit_log,
         modules_dir=_MODULES_DIR,
+        org_id=user.org_id,
     )
 
     if result.get("status") != "success":
@@ -1025,7 +1027,7 @@ def audit_module(
         raise HTTPException(404, f"Module not found: {module_id}")
 
     attempts: List[Dict[str, Any]] = []
-    audit_dir = Path(os.getenv("AUDIT_DIR", "/app/data/audit"))
+    audit_dir = Path(os.getenv("AUDIT_DIR", "data/audit"))
     if audit_dir.exists():
         for audit_file in audit_dir.glob("*_audit.json"):
             try:

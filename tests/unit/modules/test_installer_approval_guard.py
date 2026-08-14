@@ -13,6 +13,7 @@ import importlib
 import pytest
 from unittest.mock import MagicMock, patch
 
+from shared.modules.artifacts import compute_code_bundle_hash
 from shared.modules.manifest import ModuleManifest, ModuleStatus
 from shared.modules.policy import ApprovalPolicy, DEFAULT_APPROVAL_POLICY
 
@@ -77,6 +78,12 @@ def _create_module(modules_dir, module_id: str, status: str) -> None:
     module_dir = modules_dir / category / platform
     (module_dir / "adapter.py").write_text("class A: pass\n")
     (module_dir / "test_adapter.py").write_text("def test_a(): assert True\n")
+
+    if status == ModuleStatus.APPROVED.value:
+        # Approval-time hash must be recorded for the unconditional install
+        # guard (CR-01/WR-01) to accept this module.
+        manifest.approved_bundle_sha256 = compute_code_bundle_hash(module_dir, module_id)
+        manifest.save(modules_dir)
 
 
 class TestInstallGuardRequiresApproved:
