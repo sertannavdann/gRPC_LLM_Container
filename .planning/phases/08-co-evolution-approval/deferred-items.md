@@ -48,3 +48,13 @@ unrelated to the current task's changes).
   Out of scope for 08-02 — not touched (would require generating protos or
   restructuring the test's import chain, both architectural changes beyond
   this plan's scope).
+
+## Pre-existing test breakage confirmed at base 956ab7c (Wave 1 post-merge gate, 2026-08-14)
+
+Verified by running each at the base commit in a throwaway worktree — none caused by Phase 8:
+
+- `tests/unit/test_context_bridge.py` — collection error: imports `_normalize_context_for_tools`, removed in 05-05 refactor (46ccd2a)
+- `tests/unit/providers/test_fallback_chain.py::test_fallback_order_matches_priority` — provider order assertion fails
+- `tests/integration/cross_feature/test_feature_test_gating.py` — collection error: imports `tools.builtin.feature_test_harness`, deleted in 05-05 dead-code cleanup (14e6d7a)
+- `tests/integration/cross_feature/test_contract_enforcement_pipeline.py` — 2 failures (`ImportPolicy` not iterable; orchestrator source assertion)
+- `tests/integration/cross_feature/test_policy_propagation.py` — 2 failures (`ImportPolicy` not iterable)

@@ -20,7 +20,7 @@ import pytest
 
 from shared.modules.manifest import ModuleManifest, ModuleStatus
 
-from conftest import ADMIN_TEST_USER_ID
+from integration.admin.conftest import ADMIN_TEST_USER_ID
 
 
 def _create_module(modules_dir, module_id: str, status: str) -> ModuleManifest:
