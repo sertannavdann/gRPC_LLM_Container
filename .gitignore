@@ -122,3 +122,4 @@ dashboard_service/Bank/*.csv
 data/conversations/**
 
 /.claude
+.planning/spikes/*/*.tsbuildinfo
