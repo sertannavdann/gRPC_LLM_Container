@@ -23,14 +23,18 @@ import {
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useMachine } from '@xstate/react';
 import { Zap, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 
 import { ServiceNode } from '@/components/pipeline/ServiceNode';
 import { StageNode, type StageNodeData } from '@/components/pipeline/StageNode';
 import { ToolNode } from '@/components/pipeline/ToolNode';
 import { AdapterNode } from '@/components/pipeline/AdapterNode';
+import { ModuleNode, type ModuleNodeData } from '@/components/pipeline/ModuleNode';
 import { NodeDetailPanel } from '@/components/pipeline/NodeDetailPanel';
+import type { SelectedNode } from '@/store/nexusStore';
 import { useNexusStore } from '@/store/nexusStore';
+import { pipelinePageMachine } from '@/machines/pipelinePage';
 
 // ── Node types ──
 const nodeTypes = {
@@ -38,6 +42,7 @@ const nodeTypes = {
   stage: StageNode,
   tool: ToolNode,
   adapter: AdapterNode,
+  module: ModuleNode,
 };
 
 // ── Static pipeline stages (Row 0) ──
@@ -77,40 +82,45 @@ const toolToAdapterEdge = (source: string, target: string, state: string): Edge 
 });
 
 export default function PipelinePage() {
-  const {
-    pipeline,
-    connected,
-    startSSE,
-    stopSSE,
-    fetchModules,
-    selectedNode,
-    selectNode,
-    testRunning,
-    testResult,
-    runModuleTests,
-  } = useNexusStore();
+  const { fetchModules, testRunning, testResult, runModuleTests } = useNexusStore();
+
+  // Page state (SSE connection, node selection, review panel) is machine-driven
+  // (D-14) — exactly one EventSource is owned by the machine's sseConnection actor.
+  const [state, send] = useMachine(pipelinePageMachine);
+  const pipeline = state.context.pipeline;
+  const connected = state.matches({ connection: 'connected' });
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([...STAGE_NODES]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([...STAGE_EDGES]);
 
-  // Start SSE on mount
+  // Populate the admin module list (module enable/disable actions) on mount.
+  // SSE transport itself is owned by pipelinePageMachine's connection region.
   useEffect(() => {
-    startSSE();
     fetchModules();
-    return () => stopSSE();
-  }, [startSSE, stopSSE, fetchModules]);
+  }, [fetchModules]);
 
-  // Node click handler
+  // Node click handler — routes through the machine so the reviewPanel region's
+  // hasModuleId guard can open review mode only for module nodes.
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      selectNode({
-        type: node.type ?? 'stage',
-        id: node.id,
-        data: node.data as Record<string, unknown>,
+      send({
+        type: 'SELECT_NODE',
+        nodeId: node.id,
+        moduleId: node.type === 'module' ? (node.data as ModuleNodeData).moduleId : undefined,
       });
     },
-    [selectNode],
+    [send],
   );
+
+  // Build the currently-selected node's SelectedNode shape from the machine's
+  // selectedNodeId by looking it up in the live nodes array.
+  const selectedNode: SelectedNode | null = useMemo(() => {
+    const nodeId = state.context.selectedNodeId;
+    if (!nodeId) return null;
+    const found = nodes.find((n) => n.id === nodeId);
+    if (!found) return null;
+    return { type: found.type ?? 'stage', id: found.id, data: found.data as Record<string, unknown> };
+  }, [state.context.selectedNodeId, nodes]);
 
   // Rebuild nodes when pipeline state updates
   useEffect(() => {
@@ -250,6 +260,38 @@ export default function PipelinePage() {
       });
     });
 
+    // ── Row 3: Module nodes (y=600, below adapters) ──
+    // Pending-approval modules sort first (leftmost) — UI-SPEC's focal-point rule.
+    const modules = pipeline.modules ?? [];
+    const sortedModules = [...modules].sort((a, b) => {
+      const aPending = a.pending_approval ? 0 : 1;
+      const bPending = b.pending_approval ? 0 : 1;
+      return aPending - bPending;
+    });
+    const moduleAnchorId = dynamicNodes.some((n) => n.id === 'tool-module_installer')
+      ? 'tool-module_installer'
+      : 'stage-tools';
+
+    sortedModules.forEach((m, i) => {
+      const moduleNodeId = `module-${m.id}`;
+      dynamicNodes.push({
+        id: moduleNodeId,
+        type: 'module',
+        position: { x: i * 190, y: 600 },
+        data: {
+          label: m.name,
+          category: m.category ?? '',
+          state: m.state,
+          moduleId: m.id,
+          pendingApproval: m.pending_approval ?? false,
+          status: m.status,
+          buildStage: m.build_stage,
+        } satisfies ModuleNodeData,
+      });
+
+      dynamicEdges.push(toolToAdapterEdge(moduleAnchorId, moduleNodeId, m.state));
+    });
+
     setNodes(dynamicNodes);
     setEdges(dynamicEdges);
   }, [pipeline, setNodes, setEdges]);
@@ -338,7 +380,7 @@ export default function PipelinePage() {
       {/* Node detail panel */}
       <NodeDetailPanel
         node={selectedNode}
-        onClose={() => selectNode(null)}
+        onClose={() => send({ type: 'CLOSE_PANEL' })}
         testRunning={testRunning}
         testResult={testResult}
         onRunTests={handleRunTests}
