@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 4/13 | In Progress|  |
+| 8 | Co-Evolution & Approval | 8/13 | In Progress|  |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -440,15 +440,15 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 08-01-PLAN.md — Backend enforcement core: install guard raised to APPROVED, approve/reject core, admin endpoints, policy scaffold
-- [ ] 08-04-PLAN.md — Shared GC + tiered retention worker (REQ-017, D-10/D-11/D-12)
-- [ ] 08-05-PLAN.md — Inbound token-bucket rate limiting with 429 + Retry-After on both HTTP services (REQ-020)
+- [x] 08-04-PLAN.md — Shared GC + tiered retention worker (REQ-017, D-10/D-11/D-12)
+- [x] 08-05-PLAN.md — Inbound token-bucket rate limiting with 429 + Retry-After on both HTTP services (REQ-020)
 - [x] 08-06-PLAN.md — LLM walkthrough generated at validation time + manifest field (D-08)
-- [ ] 08-07-PLAN.md — adminClient approval fetchers + pipelinePageMachine (XState v5, D-14)
+- [x] 08-07-PLAN.md — adminClient approval fetchers + pipelinePageMachine (XState v5, D-14)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [ ] 08-08-PLAN.md — Pending-approval module nodes + machine-driven pipeline page (D-01/D-04/D-13)
-- [ ] 08-10-PLAN.md — Chat approval backend: session identity from API key + RBAC-guarded approve/reject strategies (D-02/D-17)
+- [x] 08-10-PLAN.md — Chat approval backend: session identity from API key + RBAC-guarded approve/reject strategies (D-02/D-17)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
