@@ -49,6 +49,23 @@ page-state architecture from Phase 6 (06-CONTEXT.md) and the SSE-driven pipeline
   arrays), and entity hygiene (automatic vs. manual cleanup on remove/recycle). bitECS's
   documented `set()` helper is also a silent no-op without a separately-registered `onSet`
   observer — an easy, undetected footgun.
+- **ECS belongs at the entity-collection layer only, not at the per-interaction-behavior layer.**
+  (Spike 004) A stateless derivation triggered by a UI event (e.g. highlight-on-hover) built as
+  an ECS "system" produced identical correctness and identical measured performance (465 node
+  renders, ~430ms for a 10x stress sweep, both implementations) to a plain pure function in
+  NEXUS's existing `resolveLifecycle`-style pattern — but took 3x more code (54 vs 17 lines) to
+  do it. Canvas behaviors that only derive a value from already-known data (validation,
+  highlighting, layout hints) should stay as plain functions. Only behaviors that need to
+  read/write the live, SSE-churning entity collection itself belong in ECS.
+
+## Overall Recommendation
+
+If NEXUS pursues an ECS-backed pipeline canvas, scope it narrowly: miniplex (not bitECS) as the
+entity store for the live SSE-driven service/module graph, using the buffered React Flow pattern
+(spike 001) with XState remaining the source of truth for entity existence and any
+XState-owned state that cross-references an entity id (spike 002). Do not route stateless
+per-interaction behaviors (validation, highlighting, layout) through ECS systems (spike 004) —
+keep those as plain derivation functions, matching the codebase's existing convention.
 
 ## Spikes
 
@@ -58,4 +75,4 @@ page-state architecture from Phase 6 (06-CONTEXT.md) and the SSE-driven pipeline
 | 002 | ecs-xstate-coexistence | standard | ECS world composes with existing XState v5 page machines without ownership conflicts | ⚠ PARTIAL | ecs, xstate, architecture |
 | 003a | ecs-lib-miniplex | comparison | miniplex ergonomics/TS typing/React integration for this use case | ✓ WINNER | ecs, miniplex, comparison |
 | 003b | ecs-lib-bitecs | comparison | bitECS ergonomics/TS typing/React integration for this use case | ✗ INVALIDATED | ecs, bitecs, comparison |
-| 004 | ecs-systems-as-canvas-behaviors | standard | ECS systems reduce boilerplate vs current ad-hoc node/panel code | PENDING | ecs, systems, canvas |
+| 004 | ecs-systems-as-canvas-behaviors | standard | ECS systems reduce boilerplate vs current ad-hoc node/panel code | ✗ INVALIDATED | ecs, systems, canvas |
