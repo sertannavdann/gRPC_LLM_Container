@@ -88,6 +88,11 @@ ui_service/node_modules/
 ui_service/build/
 ui_service/.env.local
 
+# Ignore spike experiment dependencies/artifacts (source + README are kept)
+.planning/spikes/*/node_modules/
+.planning/spikes/*/evidence/
+.planning/spikes/*/dist/
+
 # Ignore dashboard service data
 dashboard_service/data/
 dashboard_service/logs/
