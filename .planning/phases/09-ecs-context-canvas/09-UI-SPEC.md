@@ -82,6 +82,7 @@ Declared values — inherited from Phase 6/8, unchanged:
 | xl | 32px | Layout gaps |
 | 2xl | 48px | Major section breaks (page-level, not used inside panels) |
 | 3xl | 64px | Page-level spacing |
+| *(exception)* | 6px (`p-1.5`) | Icon-button padding for Undo/Redo toolbar buttons — inherited Refresh-button precedent, formally tracked here per ui-checker Dimension 5 recommendation |
 
 Exceptions: none new this phase. The Undo/Redo toolbar buttons reuse the existing Refresh
 button's exact sizing (`p-1.5` + `w-4 h-4` icon, ~28px hit area) — this is a non-destructive,
@@ -99,6 +100,7 @@ is reserved for the chat Reject-Module icon-only variant and does not apply here
 | Label | 12px (`text-xs`, uppercase, `tracking-wide`) | 600 (semibold) | 1.4 |
 | Heading | 16px (`text-base`) | 600 (semibold) | 1.3 |
 | Display | 20px (`text-xl`) | 600 (semibold) | 1.2 |
+| *(exception)* Node micro-chrome | 10px/11px (`text-[10px]`/`text-[11px]`) | 400/600 | 1.3 — React Flow node badges only (incl. this phase's proposal delta line + pending-confirmation label); formally tracked here per ui-checker Dimension 4 recommendation |
 
 Two weights: **400 regular** (diff values, delta line copy, toast copy) and **600 semibold**
 (labels, section headers). Inherited verbatim from `08-UI-SPEC.md` — no new sizes or weights.
