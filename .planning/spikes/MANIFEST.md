@@ -41,6 +41,14 @@ page-state architecture from Phase 6 (06-CONTEXT.md) and the SSE-driven pipeline
   even though the mirrored fields it's supposed to protect are preserved correctly. If this needs
   to survive brief flicker, the sync system needs debounced/grace-period removal or must carry
   ECS-only components across a remove/re-add pair by id.
+- **Use miniplex, not bitECS.** (Spike 003a/003b) bitECS's SoA design pays off at
+  thousands-of-entities, numeric-heavy, per-frame-loop scale — none of which describes the
+  pipeline canvas (dozens of entities, string-heavy labels/credential lists, no hot simulation
+  loop). miniplex won on TypeScript ergonomics (full entity-level type safety vs. bitECS's
+  untyped component-presence gap), non-numeric data handling (native vs. hand-rolled parallel
+  arrays), and entity hygiene (automatic vs. manual cleanup on remove/recycle). bitECS's
+  documented `set()` helper is also a silent no-op without a separately-registered `onSet`
+  observer — an easy, undetected footgun.
 
 ## Spikes
 
@@ -48,6 +56,6 @@ page-state architecture from Phase 6 (06-CONTEXT.md) and the SSE-driven pipeline
 |---|------|------|-----------|---------|------|
 | 001 | ecs-react-flow-render | standard | ECS-driven React Flow rendering stays stable under SSE-driven updates | ⚠ PARTIAL | ecs, react-flow, rendering |
 | 002 | ecs-xstate-coexistence | standard | ECS world composes with existing XState v5 page machines without ownership conflicts | ⚠ PARTIAL | ecs, xstate, architecture |
-| 003a | ecs-lib-miniplex | comparison | miniplex ergonomics/TS typing/React integration for this use case | PENDING | ecs, miniplex, comparison |
-| 003b | ecs-lib-bitecs | comparison | bitECS ergonomics/TS typing/React integration for this use case | PENDING | ecs, bitecs, comparison |
+| 003a | ecs-lib-miniplex | comparison | miniplex ergonomics/TS typing/React integration for this use case | ✓ WINNER | ecs, miniplex, comparison |
+| 003b | ecs-lib-bitecs | comparison | bitECS ergonomics/TS typing/React integration for this use case | ✗ INVALIDATED | ecs, bitecs, comparison |
 | 004 | ecs-systems-as-canvas-behaviors | standard | ECS systems reduce boilerplate vs current ad-hoc node/panel code | PENDING | ecs, systems, canvas |

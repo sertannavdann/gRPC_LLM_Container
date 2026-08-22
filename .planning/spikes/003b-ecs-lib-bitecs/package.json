@@ -1,0 +1,16 @@
+{
+  "name": "spike-003b-ecs-lib-bitecs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/demo.ts"
+  },
+  "dependencies": {
+    "bitecs": "^0.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
