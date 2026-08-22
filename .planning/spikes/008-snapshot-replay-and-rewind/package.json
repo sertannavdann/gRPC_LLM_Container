@@ -1,0 +1,10 @@
+{
+  "name": "spike-008-snapshot-replay-and-rewind",
+  "private": true,
+  "type": "module",
+  "scripts": { "run": "node run.mjs" },
+  "dependencies": {
+    "miniplex": "^2.0.0",
+    "gpt-tokenizer": "^3.0.1"
+  }
+}

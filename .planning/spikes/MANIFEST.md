@@ -73,6 +73,32 @@ page-state architecture from Phase 6 (06-CONTEXT.md) and the SSE-driven pipeline
   highlighting, layout hints) should stay as plain functions. Only behaviors that need to
   read/write the live, SSE-churning entity collection itself belong in ECS.
 
+## Requirements (Session 2 — context-substrate)
+
+- **miniplex stands as the library for the tri-consumer substrate.** The bitECS reversal
+  hypothesis was tested on its own best criteria and invalidated on both halves
+  (005a/005b snapshots, 006 deltas). bitECS's serialization module solves wire-transfer
+  problems NEXUS's SSE stream already solves, not context problems.
+- **`c_state` is produced by a canonical verbalizer**: sort by logical string id (entity
+  iteration order is unstable under churn in any ECS), compact-DSL-style structured
+  format. Never dump raw JSON into context — format choice is a 2.9× token multiplier.
+- **Iterative LLM invocations receive delta contexts** (changed/added entities + removed
+  ids since last invocation), with an explicit "unchanged entities omitted" header.
+  Savings scale from ~50% (26 entities) to ~95% (400). Dirty tracking rides the same
+  mutation choke points the 002 contract already mandates.
+- **All writers share one mediation path.** LLM output arrives as schema-validated
+  staged proposals (never direct mutation); re-validated at proposal time, on every SSE
+  snapshot (in the same transition, generalizing `clearSelectionIfMissing`), and at
+  approval time. Ownership policy: LLM ops may touch module entities only.
+- **Optimistic LLM-approved additions need pending-confirmation handling** or the next
+  backend snapshot without them will flicker them out (007-T6c).
+- **Rewind = clear-then-restore.** In-place restore over a drifted world duplicates
+  entities (005a probe). Snapshots capture full entity records (UI-only fields
+  included — closes the 002 gap for rewind), and restore marks everything dirty so
+  delta contexts and the React Flow buffer observe it.
+- **History = snapshot ring + semantic event log** with checkpoint marks; redo is
+  log-replay through the mediation layer, not inverse ops.
+
 ## Overall Recommendation
 
 If NEXUS pursues an ECS-backed pipeline canvas, scope it narrowly: miniplex (not bitECS) as the
@@ -95,7 +121,7 @@ keep those as plain derivation functions, matching the codebase's existing conve
 | 005b | world-snapshot-miniplex | comparison | Given the same world in miniplex with hand-rolled canonical JSON, when measured on the same criteria, then compare head-to-head | ✓ WINNER | ecs, miniplex, serialization, context-engineering |
 | 006 | delta-context-streaming | standard | Given an SSE-churning world and iterative LLM invocations, when invocation n receives only entities changed since n−1 (bitECS ObserverSerializer vs hand-rolled dirty tracking), then deltas apply correctly and cut token cost vs full snapshots | ✓ VALIDATED | ecs, deltas, context-engineering |
 | 007 | llm-writes-world | standard | Given schema-validated mutation ops from an LLM component, when applied through a single mediation function alongside SSE sync, then staged/live state coexist and the 002 ownership contract survives two writers | ✓ VALIDATED | ecs, llm-output, approval-gates |
-| 008 | snapshot-replay-and-rewind | standard | Given a snapshot ring buffer + delta log, when an approval gate rejects, then the world rewinds to pre-mutation state and a session replays deterministically | ○ PENDING | ecs, snapshots, replay |
+| 008 | snapshot-replay-and-rewind | standard | Given a snapshot ring buffer + delta log, when an approval gate rejects, then the world rewinds to pre-mutation state and a session replays deterministically | ✓ VALIDATED | ecs, snapshots, replay |
 
 **Note on 003a/003b:** the miniplex verdict stands for the *UI-store* criteria it tested.
 Spikes 005a/b re-open the library question under *context-substrate* criteria
