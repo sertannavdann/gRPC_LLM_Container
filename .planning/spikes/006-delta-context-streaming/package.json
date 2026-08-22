@@ -1,0 +1,13 @@
+{
+  "name": "spike-006-delta-context-streaming",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "node run.mjs"
+  },
+  "dependencies": {
+    "bitecs": "^0.4.0",
+    "miniplex": "^2.0.0",
+    "gpt-tokenizer": "^3.0.1"
+  }
+}
