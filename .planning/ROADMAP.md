@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 12/13 | In Progress|  |
+| 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -461,7 +461,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 08-13-PLAN.md — Playwright SSE E2E: connect, reconnect after dashboard restart, error handling (REQ-018)
+- [x] 08-13-PLAN.md — Playwright SSE E2E: connect, reconnect after dashboard restart, error handling (REQ-018)
 
 ---
 
