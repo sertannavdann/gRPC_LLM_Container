@@ -5,6 +5,11 @@ question requires otherwise.
 
 ## Stack
 
+- **Fact/benchmark spikes (serialization, tokens, protocol semantics):** plain Node ESM
+  (`.mjs`, `node run.mjs`), no build step — deviation from the TS default is deliberate
+  where type ergonomics aren't under test (established in 005–008). Test rigs print
+  ✓/✗ checks and exit non-zero on failure; reports go to `evidence/report.json`.
+- **Token counting:** `gpt-tokenizer` (^3.0.1) — offline, real BPE counts.
 - **Frontend spikes:** Vite + React 18 + TypeScript, one spike = one standalone `npm` package
   under `.planning/spikes/NNN-name/` (own `package.json`, own dev server port in the 53xx range
   so multiple spikes can run concurrently without colliding).
@@ -63,6 +68,17 @@ question requires otherwise.
 - **Verify library API assumptions against installed source, not memory or docs alone.** Spike
   003b's `set()`/`onSet` finding came from reading `node_modules/bitecs/test/*.test.ts` after the
   documented pattern silently produced wrong data — `docs/API.md` alone was misleading here.
+- **Shared fixtures for comparison spikes are byte-identical copies** (`fixture.mjs`,
+  `verbalize.mjs` in 005a/005b/006/007/008), with a header comment declaring the invariant.
+  Deterministic data only — seeded LCG for churn scripts, never `Math.random`.
+- **Canonical verbalizer pattern (context substrate):** all LLM-facing state text sorts by
+  logical string id and uses a compact schema-headed format; delta contexts carry an explicit
+  "unchanged omitted" header (005/006).
+- **Single mediation path for world writers:** SSE sync, LLM proposals, and snapshot restore
+  all flow through the same add/remove/mutate choke points; dirty tracking and delta streaming
+  ride those choke points for free (006/007/008).
+- **Rewind is clear-then-restore** — never restore a snapshot into a drifted world in place
+  (005a: silent entity duplication).
 
 ## Tools & Libraries
 
