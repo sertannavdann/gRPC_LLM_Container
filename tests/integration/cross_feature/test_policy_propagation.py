@@ -19,7 +19,7 @@ from sandbox_service.policy import (
     ImportCategory,
     FORBIDDEN_IMPORTS,
 )
-from sandbox_service.runner import StaticImportChecker
+from sandbox_service.runner import _check_imports_with_policy
 from shared.modules.contracts import AdapterContractSpec
 from shared.modules.audit import BuildAuditLog, AttemptRecord, AttemptStatus, FailureType
 
@@ -30,9 +30,9 @@ class TestPolicyPropagation:
         self, forbidden_import_adapter_code
     ):
         """Sandbox import violation aligns with AdapterContractSpec error."""
-        # StaticImportChecker catches it
+        # Policy-aware static import check catches it
         policy = ImportPolicy.module_validation()
-        violations = StaticImportChecker.check_imports(
+        violations = _check_imports_with_policy(
             forbidden_import_adapter_code, policy
         )
         subprocess_violations = [
@@ -140,6 +140,6 @@ class TestPolicyPropagation:
         ]
 
         for name, policy in profiles:
-            violations = StaticImportChecker.check_imports(code, policy.imports)
+            violations = _check_imports_with_policy(code, policy.imports)
             subprocess_found = any("subprocess" in v.module_name for v in violations)
             assert subprocess_found, f"{name} policy did not block subprocess"
