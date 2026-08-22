@@ -90,6 +90,20 @@ export default function PipelinePage() {
   const pipeline = state.context.pipeline;
   const connected = state.matches({ connection: 'connected' });
 
+  // Explicit `matches` derivation (preferred over casting `state.value`) for the
+  // reviewPanel region's current substate — drives NodeDetailPanel's review UI.
+  const reviewState = state.matches({ reviewPanel: 'loading' })
+    ? 'loading'
+    : state.matches({ reviewPanel: 'open' })
+      ? 'open'
+      : state.matches({ reviewPanel: 'approving' })
+        ? 'approving'
+        : state.matches({ reviewPanel: 'rejecting' })
+          ? 'rejecting'
+          : state.matches({ reviewPanel: 'error' })
+            ? 'error'
+            : 'closed';
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([...STAGE_NODES]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([...STAGE_EDGES]);
 
@@ -384,6 +398,13 @@ export default function PipelinePage() {
         testRunning={testRunning}
         testResult={testResult}
         onRunTests={handleRunTests}
+        review={state.context.review}
+        audit={state.context.audit}
+        reviewState={reviewState}
+        actionError={state.context.actionError}
+        onApprove={() => send({ type: 'APPROVE' })}
+        onReject={(feedback) => send({ type: 'REJECT', feedback })}
+        onRetryReview={() => send({ type: 'RETRY' })}
       />
     </div>
   );
