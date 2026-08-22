@@ -785,6 +785,20 @@ audit-test:
 	@printf '$(CYAN)Running audit trail unit + integration tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_audit_store.py unit/test_audit_decorator.py integration/admin/test_audit_capture.py integration/admin/test_audit_query_api.py -v --tb=short
 
+# Pipeline SSE E2E tests (REQ-018) — run against the REAL docker-compose
+# stack, never a mocked EventSource (RESEARCH.md Pitfall 4). Requires
+# `make up` first. Non-disruptive: does not restart/stop any service.
+ui-e2e:
+	@printf '$(CYAN)Running Pipeline SSE E2E tests (requires services up — run `make up` first)...$(RESET)\n'
+	@cd ui_service && npx playwright test
+
+# Same as ui-e2e, plus the disruptive reconnect/error scenarios that
+# actually restart the dashboard service. Safe for a local dev stack — the
+# dashboard is always restored, but expect a brief service interruption.
+ui-e2e-full:
+	@printf '$(CYAN)Running Pipeline SSE E2E tests including disruptive dashboard restart scenarios...$(RESET)\n'
+	@cd ui_service && E2E_ALLOW_RESTART=1 npx playwright test
+
 billing-test:
 	@printf '$(CYAN)Running billing unit tests...$(RESET)\n'
 	@cd tests && python -m pytest unit/test_billing.py -v --tb=short
