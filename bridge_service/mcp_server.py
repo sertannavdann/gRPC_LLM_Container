@@ -600,6 +600,7 @@ TIP: Works best when calendar and task data is available in the context.""",
     
     async def handle_jsonrpc(self, request: web.Request) -> web.Response:
         """JSON-RPC 2.0 endpoint for MCP."""
+        req_id = None
         try:
             body = await request.json()
             method = body.get("method")
@@ -642,7 +643,7 @@ TIP: Works best when calendar and task data is available in the context.""",
             return web.json_response({
                 "jsonrpc": "2.0",
                 "error": {"code": -32603, "message": str(e)},
-                "id": body.get("id") if "body" in dir() else None
+                "id": req_id
             }, status=500)
     
     # =========================================================================
@@ -851,8 +852,11 @@ TIP: Works best when calendar and task data is available in the context.""",
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
-            except:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch live tool list from orchestrator "
+                    f"({self.config.orchestrator_addr}): {e}; using static fallback list"
+                )
         
         # Fallback: return known tools
         return {
