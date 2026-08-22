@@ -134,3 +134,15 @@ None for this plan's own deliverables. To run the suite live: `make up` (bring u
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-22*
+
+## Self-Check: PASSED
+
+- FOUND: ui_service/playwright.config.ts
+- FOUND: ui_service/e2e/global-setup.ts
+- FOUND: ui_service/e2e/util.ts
+- FOUND: ui_service/e2e/pipeline-sse.spec.ts
+- FOUND: .planning/phases/08-co-evolution-approval/08-13-SUMMARY.md
+- FOUND: commit 6525204 (Task 1)
+- FOUND: commit 5522ec7 (Task 2)
+- FOUND: commit 9567262 (Rule 1 fix)
+- FOUND: commit 106c0d4 (SUMMARY.md)
