@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 9/13 | In Progress|  |
+| 8 | Co-Evolution & Approval | 10/13 | In Progress|  |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -452,7 +452,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 08-09-PLAN.md — Review surface: five collapsible layers, progressive blueprint, walkthrough, approve/reject footer (D-05/D-06/D-15)
+- [x] 08-09-PLAN.md — Review surface: five collapsible layers, progressive blueprint, walkthrough, approve/reject footer (D-05/D-06/D-15)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
