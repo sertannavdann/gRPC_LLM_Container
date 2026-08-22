@@ -88,6 +88,11 @@ ui_service/node_modules/
 ui_service/build/
 ui_service/.env.local
 
+# Playwright E2E artifacts (REQ-018)
+ui_service/test-results/
+ui_service/playwright-report/
+ui_service/blob-report/
+
 # Ignore dashboard service data
 dashboard_service/data/
 dashboard_service/logs/
