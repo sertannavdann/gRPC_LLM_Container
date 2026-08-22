@@ -39,6 +39,7 @@ import {
 import type { TestRunResult, ModuleReview, ModuleAuditAttempt } from '@/lib/adminClient';
 import type { SelectedNode } from '@/store/nexusStore';
 import { BlueprintCard } from './BlueprintCard';
+import { ModulePanel } from './ModulePanel';
 import { DegradedBanner } from '@/components/ui/error-states';
 
 interface NodeDetailPanelProps {
@@ -203,6 +204,15 @@ export function NodeDetailPanel({
   const pendingApproval = Boolean(d.pendingApproval);
   const showReviewSurface = isModule && pendingApproval;
 
+  // Auto-generated module output panel (D-07, plan 08-12) — mutually
+  // exclusive with the review surface above: a module is either awaiting
+  // approval (review surface) or has an output surface (this), never both.
+  const moduleId = (d.moduleId as string) ?? '';
+  const moduleStatus = (d.status as string) ?? '';
+  const isModuleInstalled = moduleStatus === 'installed' || state === 'running';
+  const showModulePanel = isModule && !pendingApproval && isModuleInstalled && Boolean(moduleId);
+  const showModuleUnavailableNotice = isModule && !pendingApproval && !isModuleInstalled;
+
   const [rejectFeedback, setRejectFeedback] = React.useState('');
   const [confirmingReject, setConfirmingReject] = React.useState(false);
 
@@ -325,6 +335,30 @@ export function NodeDetailPanel({
                   )}
                 </div>
               </section>
+
+              {/* Auto-generated module output panel (D-07) — installed,
+                  non-pending modules only; the review surface above owns
+                  pending-approval modules exclusively. */}
+              {showModulePanel && <ModulePanel moduleId={moduleId} />}
+
+              {/* Explicit status line for modules with neither a review
+                  surface nor an output surface (e.g. failed, validating) —
+                  Phase 6 no-silent-fallback: the panel body must never be
+                  left blank for a module node. */}
+              {showModuleUnavailableNotice && (
+                <section>
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-2">
+                    Module Output
+                  </h3>
+                  <p className="text-xs text-zinc-500">
+                    {moduleStatus === 'failed' || moduleStatus === 'rejected'
+                      ? 'This module failed validation and has no output surface.'
+                      : moduleStatus === 'validating' || moduleStatus === 'pending'
+                        ? 'This module is still being validated — no output surface yet.'
+                        : `No output surface available for this module (status: ${moduleStatus || 'unknown'}).`}
+                  </p>
+                </section>
+              )}
 
               {/* Auth section (adapters only) */}
               {isAdapter && (

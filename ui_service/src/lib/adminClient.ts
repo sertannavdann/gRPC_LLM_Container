@@ -226,6 +226,58 @@ export interface ConfigVersionResponse {
   etag: string;
 }
 
+// ── Module Run Types (Phase 8 Plan 12, D-07) ────────────────────────────────
+// Mirrors shared/modules/output_contract.py AdapterRunResult — the canonical
+// envelope every installed module's GET /modules/{category}/{platform}/run
+// response validates as.
+
+export interface RunDataPoint {
+  schema_ref: string;
+  data: Record<string, unknown>;
+  timestamp?: string;
+}
+
+export interface RunArtifact {
+  type: string; // "chart" | "file" | "log" | "report"
+  mime_type: string;
+  name: string;
+  bytes: string;
+  size?: number;
+}
+
+export interface RunError {
+  code: string;
+  message: string;
+  detail?: string;
+  source?: string;
+}
+
+export interface RunMetadata {
+  run_id: string;
+  org_id: string;
+  module_id: string;
+  version: string;
+  capability: string;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface RunMetering {
+  run_units: number;
+  tokens?: number;
+  duration_ms: number;
+  api_calls: number;
+}
+
+export interface AdapterRunResult {
+  run: RunMetadata;
+  status: string; // "success" | "partial" | "error"
+  data_points: RunDataPoint[];
+  artifacts: RunArtifact[];
+  errors: RunError[];
+  metering: RunMetering;
+}
+
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
 async function adminFetch<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -237,6 +289,21 @@ async function adminFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Admin API ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+// Same timeout/error-throwing shape as adminFetch, scoped to the dashboard
+// service (port 8001) instead of the admin API (port 8003).
+async function dashboardFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(`${DASHBOARD_BASE}${path}`, {
+    signal: opts?.signal ?? AbortSignal.timeout(ADMIN_REQUEST_TIMEOUT_MS),
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...opts?.headers },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Dashboard API ${res.status}: ${body}`);
   }
   return res.json();
 }
@@ -283,6 +350,11 @@ export const adminApi = {
 
   getModuleAudit: (category: string, platform: string) =>
     adminFetch<ModuleAuditLog>(`/admin/modules/${category}/${platform}/audit`),
+
+  // Generic module output panel (Phase 8 plan 08-12, D-07) — dashboard-scoped,
+  // not admin-scoped: triggers a real outbound adapter call, user-initiated only.
+  runModule: (category: string, platform: string) =>
+    dashboardFetch<AdapterRunResult>(`/modules/${category}/${platform}/run`),
 
   // Routing config
   getRoutingConfig: () => adminFetch<Record<string, unknown>>('/admin/routing-config'),

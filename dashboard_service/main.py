@@ -13,8 +13,9 @@ import os
 import mimetypes
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from pathlib import Path
 
@@ -34,6 +35,17 @@ from .aggregator import DashboardAggregator, UserConfig
 from .bank_service import BankService
 from .pipeline_stream import router as pipeline_router
 from shared.adapters import adapter_registry
+from shared.adapters.base import AdapterConfig
+from shared.modules.manifest import ModuleManifest, ModuleStatus
+from shared.modules.output_contract import (
+    AdapterError,
+    AdapterRunResult,
+    DataPoint,
+    ErrorCode,
+    MeteringData,
+    RunMetadata,
+    RunStatus,
+)
 
 # OpenTelemetry imports
 from opentelemetry import trace, metrics
@@ -655,6 +667,150 @@ async def get_module_chart_artifact(category: str, platform: str, chart_name: st
             pass
 
     return Response(content=content, media_type=mime_type)
+
+
+# =============================================================================
+# MODULE RUN ENDPOINT (D-07 — canonical AdapterRunResult envelope)
+# =============================================================================
+
+# Bounded response size — an adapter could in principle return an unbounded
+# number of canonical items; truncate before it ever reaches the browser
+# (T-08-51 — information disclosure / unbounded payload).
+_MAX_RUN_DATA_POINTS = 200
+
+
+def _load_module_manifest(category: str, platform: str) -> Optional[ModuleManifest]:
+    """Load a dynamically-loaded module's manifest.json if one exists on disk.
+
+    Built-in adapters (openweather, google_calendar, clashroyale) are
+    registered directly in adapter_registry at import time and have no
+    manifest.json — a missing manifest means "not managed by the module
+    lifecycle", not "not installed", and must NOT 404.
+    """
+    modules_dir = Path(os.getenv("MODULES_DIR", "/app/modules"))
+    manifest_path = modules_dir / category / platform / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return ModuleManifest.load(manifest_path)
+    except Exception as e:
+        logger.warning(f"Failed to load manifest for {category}/{platform}: {e}")
+        return None
+
+
+def _resolve_module_run_credentials(category: str, platform: str) -> dict:
+    """Resolve credentials for a module run using the SAME sources the
+    aggregator (get_aggregator, above) and the module-credentials admin
+    endpoints already use — env-var-backed built-in adapters first
+    (_CREDENTIAL_ENV_MAP), falling back to the encrypted module
+    CredentialStore for dynamically-built modules. No new credential
+    lookup mechanism is introduced.
+    """
+    credentials: dict[str, str] = {}
+    for (plat, field), env_var in _CREDENTIAL_ENV_MAP.items():
+        if plat != platform:
+            continue
+        value = os.getenv(env_var, "")
+        if value:
+            credentials[field] = value
+
+    if credentials:
+        return credentials
+
+    store = _get_credential_store()
+    stored = store.retrieve(f"{category}/{platform}")
+    return stored or {}
+
+
+@app.get("/modules/{category}/{platform}/run", tags=["Modules"])
+async def run_module(
+    category: str,
+    platform: str,
+    user: User = Depends(get_current_user),
+):
+    """
+    Run an installed module's adapter and return the canonical
+    AdapterRunResult envelope (D-07).
+
+    404s for unregistered adapters AND for modules whose manifest exists but
+    is not ModuleStatus.INSTALLED — the approval gate is not bypassable
+    through this run path (T-08-49). NOT in public_paths — authenticated and
+    rate-limited (T-08-50), since this endpoint triggers outbound
+    third-party API calls.
+    """
+    if not adapter_registry.has_adapter(category, platform):
+        raise HTTPException(status_code=404, detail=f"Module not found: {category}/{platform}")
+
+    manifest = _load_module_manifest(category, platform)
+    if manifest is not None and manifest.status != ModuleStatus.INSTALLED.value:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Module not installed: {category}/{platform} (status={manifest.status})",
+        )
+
+    credentials = _resolve_module_run_credentials(category, platform)
+    config = AdapterConfig(category=category, platform=platform, credentials=credentials)
+
+    run_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
+    start = time.perf_counter()
+    adapter = adapter_registry.create_adapter(category, platform, config)
+    result = await adapter.fetch(config)
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    run_meta = RunMetadata(
+        run_id=run_id,
+        org_id=getattr(user, "org_id", None) or "default",
+        module_id=f"{category}/{platform}",
+        version=manifest.version if manifest is not None else "unknown",
+        capability="fetch",
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+    metering = MeteringData(run_units=1.0, duration_ms=duration_ms, api_calls=1)
+
+    if result.success:
+        raw_items = result.data or []
+        truncated = len(raw_items) > _MAX_RUN_DATA_POINTS
+        data_points = [
+            DataPoint(
+                schema_ref=item.__class__.__name__,
+                data=item.to_dict() if hasattr(item, "to_dict") else item,
+                timestamp=result.fetched_at.isoformat(),
+            )
+            for item in raw_items[:_MAX_RUN_DATA_POINTS]
+        ]
+        run_result = AdapterRunResult(
+            run=run_meta,
+            status=RunStatus.SUCCESS,
+            data_points=data_points,
+            artifacts=[],
+            errors=[],
+            metering=metering,
+        )
+        payload = run_result.to_dict()
+        # Truncation record lives alongside (not inside) the strict contract
+        # fields — AdapterRunResult.from_dict() ignores unrecognized keys, so
+        # this stays a valid envelope while still surfacing the truncation.
+        payload["data_points_truncated"] = truncated
+        payload["data_points_total"] = len(raw_items)
+        return payload
+
+    error = AdapterError(
+        code=ErrorCode.INTERNAL_ERROR,
+        message=result.error or "Adapter fetch failed",
+        source=f"{category}/{platform}",
+    )
+    run_result = AdapterRunResult(
+        run=run_meta,
+        status=RunStatus.ERROR,
+        data_points=[],
+        artifacts=[],
+        errors=[error],
+        metering=metering,
+    )
+    return run_result.to_dict()
 
 
 @app.get("/context/summary/{user_id}", tags=["Context"])
