@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 11/13 | In Progress|  |
+| 8 | Co-Evolution & Approval | 12/13 | In Progress|  |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -457,7 +457,7 @@ Plans:
 **Wave 5** *(blocked on Wave 4 completion)*
 
 - [x] 08-11-PLAN.md — ApprovalActionCard chat surface with inline blueprint and feedback (D-02)
-- [ ] 08-12-PLAN.md — Generic auto-generated module output panel over AdapterRunResult (D-07)
+- [x] 08-12-PLAN.md — Generic auto-generated module output panel over AdapterRunResult (D-07)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
