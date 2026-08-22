@@ -1,18 +1,21 @@
 /**
  * NEXUS Pipeline Store (Zustand)
  *
- * Central state for the pipeline visualization page.
- * Manages SSE connection, service/module state, and admin actions.
+ * SSE transport and node/panel selection moved to `ui_service/src/machines/pipelinePage.ts`
+ * (D-14, plan 08-07/08-08) — `pipelinePageMachine`'s `sseConnection` fromCallback actor is
+ * now the sole EventSource owner, and its `selection`/`reviewPanel` regions own node
+ * selection and the review panel state. This store now covers module admin actions
+ * (enable/disable/reload) and the ad-hoc test runner only.
  */
 import { create } from 'zustand';
 import {
-  type PipelineState,
   type ModuleDetail,
   type TestRunResult,
-  connectPipelineSSE,
   adminApi,
 } from '@/lib/adminClient';
 
+// Kept for NodeDetailPanel.tsx, which imports this type — selection itself now
+// lives in pipelinePageMachine's `selection` region (D-14), not this store.
 export interface SelectedNode {
   type: string;
   id: string;
@@ -20,56 +23,27 @@ export interface SelectedNode {
 }
 
 interface NexusStore {
-  // SSE pipeline state
-  pipeline: PipelineState | null;
-  connected: boolean;
-  lastUpdate: number;
-
   // Module list (from admin API)
   modules: ModuleDetail[];
   modulesLoading: boolean;
 
-  // Node selection + test runner
-  selectedNode: SelectedNode | null;
+  // Test runner
   testRunning: boolean;
   testResult: TestRunResult | null;
 
   // Actions
-  startSSE: () => void;
-  stopSSE: () => void;
   fetchModules: () => Promise<void>;
   enableModule: (cat: string, plat: string) => Promise<void>;
   disableModule: (cat: string, plat: string) => Promise<void>;
   reloadModule: (cat: string, plat: string) => Promise<void>;
-  selectNode: (node: SelectedNode | null) => void;
   runModuleTests: (cat: string, plat: string) => Promise<void>;
 }
 
-let _eventSource: EventSource | null = null;
-
 export const useNexusStore = create<NexusStore>((set, get) => ({
-  pipeline: null,
-  connected: false,
-  lastUpdate: 0,
   modules: [],
   modulesLoading: false,
-  selectedNode: null,
   testRunning: false,
   testResult: null,
-
-  startSSE: () => {
-    if (_eventSource) return;
-    _eventSource = connectPipelineSSE(
-      (state) => set({ pipeline: state, connected: true, lastUpdate: Date.now() }),
-      () => set({ connected: false }),
-    );
-  },
-
-  stopSSE: () => {
-    _eventSource?.close();
-    _eventSource = null;
-    set({ connected: false });
-  },
 
   fetchModules: async () => {
     set({ modulesLoading: true });
@@ -95,8 +69,6 @@ export const useNexusStore = create<NexusStore>((set, get) => ({
     await adminApi.reloadModule(cat, plat);
     get().fetchModules();
   },
-
-  selectNode: (node) => set({ selectedNode: node, testResult: null }),
 
   runModuleTests: async (cat, plat) => {
     set({ testRunning: true, testResult: null });
