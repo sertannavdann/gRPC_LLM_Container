@@ -65,23 +65,3 @@ class RunUnitCalculator:
             tier=tier,
             tool_name=tool_name,
         )
-
-    def estimate_request_cost(
-        self,
-        tool_calls: list[dict],
-        tier: str = "standard",
-    ) -> float:
-        """
-        Sum run units for a list of tool call results.
-
-        Each dict must have at least 'tool_name' and 'latency_ms'.
-        """
-        total = 0.0
-        for call in tool_calls:
-            total += self.calculate_from_latency(
-                latency_ms=call.get("latency_ms", 0.0),
-                gpu_seconds=call.get("gpu_seconds", 0.0),
-                tier=tier,
-                tool_name=call.get("tool_name", "default"),
-            )
-        return round(total, 4)

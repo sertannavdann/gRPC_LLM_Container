@@ -90,26 +90,3 @@ class QuotaManager:
             org_id=org_id,
             plan=resolved_plan,
         )
-
-    def get_remaining(
-        self,
-        org_id: str,
-        plan: Optional[str] = None,
-    ) -> float:
-        """Get remaining run-units for current period. -1.0 means unlimited."""
-        result = self.check_quota(org_id, plan)
-        if result.limit < 0:
-            return -1.0
-        return result.remaining
-
-    def would_exceed(
-        self,
-        org_id: str,
-        estimated_units: float,
-        plan: Optional[str] = None,
-    ) -> bool:
-        """Pre-flight check: would adding estimated_units exceed quota?"""
-        result = self.check_quota(org_id, plan)
-        if result.limit < 0:
-            return False
-        return (result.current_usage + estimated_units) > result.limit

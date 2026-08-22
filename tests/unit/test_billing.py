@@ -114,17 +114,6 @@ class TestRunUnitCalculator:
         expected = calculator.calculate(cpu_seconds=0.5, tier="standard")
         assert abs(result - expected) < 0.001
 
-    def test_estimate_request_cost(self, calculator):
-        """estimate_request_cost sums multiple tool calls."""
-        calls = [
-            {"tool_name": "default", "latency_ms": 500.0},
-            {"tool_name": "sandbox_execute", "latency_ms": 1000.0},
-        ]
-        result = calculator.estimate_request_cost(calls, tier="standard")
-        expected_1 = 0.5 * 1.0 + 0.1  # 0.6
-        expected_2 = 1.0 * 1.0 + 0.2  # 1.2
-        assert abs(result - (expected_1 + expected_2)) < 0.001
-
     def test_four_decimal_rounding(self, calculator):
         """Results are rounded to 4 decimal places."""
         result = calculator.calculate(cpu_seconds=0.333333, tier="standard")
@@ -276,38 +265,6 @@ class TestQuotaManager:
         result = quota_manager.check_quota("org-1")
         assert result.plan == "free"
 
-    def test_would_exceed_true(self, quota_manager, usage_store):
-        """would_exceed returns True when addition crosses limit."""
-        for _ in range(95):
-            usage_store.record("org-1", "test_tool", 1.0)
-
-        assert quota_manager.would_exceed("org-1", 10.0, plan="free") is True
-
-    def test_would_exceed_false(self, quota_manager, usage_store):
-        """would_exceed returns False when within budget."""
-        for _ in range(10):
-            usage_store.record("org-1", "test_tool", 1.0)
-
-        assert quota_manager.would_exceed("org-1", 5.0, plan="free") is False
-
-    def test_would_exceed_enterprise_never(self, quota_manager, usage_store):
-        """Enterprise plan never exceeds."""
-        for _ in range(1000):
-            usage_store.record("org-1", "test_tool", 1.0)
-
-        assert quota_manager.would_exceed("org-1", 99999.0, plan="enterprise") is False
-
-    def test_get_remaining(self, quota_manager, usage_store):
-        """get_remaining returns correct value."""
-        usage_store.record("org-1", "test_tool", 30.0)
-        remaining = quota_manager.get_remaining("org-1", plan="free")
-        assert abs(remaining - 70.0) < 0.1
-
-    def test_get_remaining_enterprise(self, quota_manager):
-        """get_remaining returns -1.0 for unlimited plans."""
-        remaining = quota_manager.get_remaining("org-1", plan="enterprise")
-        assert remaining == -1.0
-
     def test_quota_result_model(self, quota_manager):
         """QuotaResult is a valid Pydantic model."""
         result = quota_manager.check_quota("org-1", plan="free")
@@ -346,9 +303,7 @@ class TestBillingIntegration:
             {"tool_name": "build_module", "latency_ms": 3000.0},
         ]
 
-        total = calculator.estimate_request_cost(calls, tier="standard")
-        assert total > 0
-
+        total = 0.0
         for call in calls:
             ru = calculator.calculate_from_latency(
                 latency_ms=call["latency_ms"],
@@ -356,6 +311,9 @@ class TestBillingIntegration:
                 tool_name=call["tool_name"],
             )
             usage_store.record("org-1", call["tool_name"], ru)
+            total += ru
+
+        assert total > 0
 
         summary = usage_store.get_usage_summary("org-1")
         assert summary["record_count"] == 3

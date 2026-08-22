@@ -75,22 +75,3 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         request.state.org_id = user.org_id
 
         return await call_next(request)
-
-
-def create_auth_middleware(
-    app,
-    db_path: str = "data/api_keys.db",
-    public_paths: Optional[list[str]] = None,
-) -> APIKeyStore:
-    """
-    Create APIKeyStore and add auth middleware to app.
-
-    Returns the store instance for bootstrapping/seeding keys.
-    """
-    store = APIKeyStore(db_path=db_path)
-    app.add_middleware(
-        APIKeyAuthMiddleware,
-        api_key_store=store,
-        public_paths=public_paths,
-    )
-    return store

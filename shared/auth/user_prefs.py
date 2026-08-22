@@ -189,13 +189,3 @@ class UserPrefsStore:
 
                 conn.commit()
                 return new_version
-
-    def delete_prefs(self, user_id: str) -> bool:
-        """Delete user preferences. Returns True if record existed."""
-        with self._connect() as conn:
-            result = conn.execute(
-                "DELETE FROM user_prefs WHERE user_id = ?",
-                (user_id,),
-            )
-            conn.commit()
-            return result.rowcount > 0
