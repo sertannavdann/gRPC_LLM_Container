@@ -195,7 +195,7 @@ class RelevanceEngine:
         
         # Check for health anomalies
         hrv = today.get("hrv")
-        if hrv and hrv < 30:  # Low HRV threshold
+        if hrv and hrv < 40:  # Canonical low-HRV threshold (matches formatters.py + HealthWidget.tsx)
             result["high"].append({
                 "type": "health",
                 "subtype": "hrv_alert",
