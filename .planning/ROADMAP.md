@@ -15,7 +15,7 @@
 | 5 | Refactoring | **complete** | — (5 plans) | Q3 2026 |
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
-| 8 | Co-Evolution & Approval | 8/13 | In Progress|  |
+| 8 | Co-Evolution & Approval | 9/13 | In Progress|  |
 | 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -447,7 +447,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 08-08-PLAN.md — Pending-approval module nodes + machine-driven pipeline page (D-01/D-04/D-13)
+- [x] 08-08-PLAN.md — Pending-approval module nodes + machine-driven pipeline page (D-01/D-04/D-13)
 - [x] 08-10-PLAN.md — Chat approval backend: session identity from API key + RBAC-guarded approve/reject strategies (D-02/D-17)
 
 **Wave 4** *(blocked on Wave 3 completion)*
