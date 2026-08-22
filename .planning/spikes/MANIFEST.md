@@ -1,6 +1,21 @@
 # Spike Manifest
 
-## Idea
+## Idea (Session 2 — 2026-08-23, context-substrate reframing)
+
+Revisit the ECS spikes through two papers: *A Survey of Context Engineering for LLMs*
+(context as `C = A(c1..cn)` with `c_state` assembled from world state; structured beats
+prose; deltas/compression beat full dumps; snapshot/restore as a core context-manager
+capability) and *LLMs as Software Components* (analyze per LLM component: Prompt State =
+Program, Frequency = Iterative, Output Consumer = Program with approval gates as the
+Revision mechanism). Under this lens the ECS world is not just a UI state store — it is a
+**tri-consumer substrate**: (1) React Flow renders it for the human, (2) XState governs
+flow control, (3) a context assembler serializes/diffs it into LLM context, and validated
+LLM output mutates it back. Spikes 003a/b compared the libraries only as UI stores; the
+serialization/snapshot/delta criteria were never tested. User's call: bitECS is the
+presumptive winner under the new criteria — spikes 005/006 validate or invalidate that
+with miniplex as control; 007/008 build the write path and replay on the winner.
+
+## Idea (Session 1)
 
 Explore an Entity Component System (ECS) — Bevy-style — as the state model for NEXUS's
 interactive "human machine interface" builder: the pipeline/module canvas where live
@@ -76,3 +91,12 @@ keep those as plain derivation functions, matching the codebase's existing conve
 | 003a | ecs-lib-miniplex | comparison | miniplex ergonomics/TS typing/React integration for this use case | ✓ WINNER | ecs, miniplex, comparison |
 | 003b | ecs-lib-bitecs | comparison | bitECS ergonomics/TS typing/React integration for this use case | ✗ INVALIDATED | ecs, bitecs, comparison |
 | 004 | ecs-systems-as-canvas-behaviors | standard | ECS systems reduce boilerplate vs current ad-hoc node/panel code | ✗ INVALIDATED | ecs, systems, canvas |
+| 005a | world-snapshot-bitecs | comparison | Given the pipeline world in bitECS (str()-branded strings — no interning needed), when serialized to a canonical structured c_state + binary snapshot, then it beats miniplex on the context-substrate criteria | ✗ INVALIDATED | ecs, bitecs, serialization, context-engineering |
+| 005b | world-snapshot-miniplex | comparison | Given the same world in miniplex with hand-rolled canonical JSON, when measured on the same criteria, then compare head-to-head | ✓ WINNER | ecs, miniplex, serialization, context-engineering |
+| 006 | delta-context-streaming | standard | Given an SSE-churning world and iterative LLM invocations, when invocation n receives only entities changed since n−1 (bitECS ObserverSerializer vs hand-rolled dirty tracking), then deltas apply correctly and cut token cost vs full snapshots | ○ PENDING | ecs, deltas, context-engineering |
+| 007 | llm-writes-world | standard | Given schema-validated mutation ops from an LLM component, when applied through a single mediation function alongside SSE sync, then staged/live state coexist and the 002 ownership contract survives two writers | ○ PENDING | ecs, llm-output, approval-gates |
+| 008 | snapshot-replay-and-rewind | standard | Given a snapshot ring buffer + delta log, when an approval gate rejects, then the world rewinds to pre-mutation state and a session replays deterministically | ○ PENDING | ecs, snapshots, replay |
+
+**Note on 003a/003b:** the miniplex verdict stands for the *UI-store* criteria it tested.
+Spikes 005a/b re-open the library question under *context-substrate* criteria
+(serialization, determinism, snapshot cost, delta streams) that 003 never measured.
