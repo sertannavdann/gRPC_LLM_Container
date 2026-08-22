@@ -29,7 +29,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Literal
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 import grpc
@@ -540,7 +540,7 @@ TIP: Works best when calendar and task data is available in the context.""",
     
     async def handle_health(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
-        return web.json_response({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
+        return web.json_response({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()})
     
     async def handle_list_tools(self, request: web.Request) -> web.Response:
         """List all available tools (MCP tools/list)."""
@@ -716,7 +716,7 @@ TIP: Works best when calendar and task data is available in the context.""",
                 "context_cache_size": len(self._context_cache),
                 "health_cache_size": len(self._health_cache),
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
     
     async def _tool_query_agent(self, args: Dict[str, Any]) -> Dict[str, Any]:

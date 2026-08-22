@@ -9,7 +9,7 @@ import hashlib
 import logging
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -94,7 +94,7 @@ class APIKeyStore:
         plaintext_key = self.generate_key()
         key_hash = self._hash_key(plaintext_key)
         key_id = secrets.token_urlsafe(16)
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         with self._connect() as conn:
             conn.execute(
@@ -129,7 +129,7 @@ class APIKeyStore:
             return None
 
         # Update last_used timestamp
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 "UPDATE api_keys SET last_used = ? WHERE key_id = ?",
@@ -173,7 +173,7 @@ class APIKeyStore:
             user_id=old_key["user_id"],
         )
 
-        grace_until = (datetime.utcnow() + timedelta(days=grace_days)).isoformat()
+        grace_until = (datetime.now(timezone.utc) + timedelta(days=grace_days)).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """UPDATE api_keys
@@ -232,7 +232,7 @@ class APIKeyStore:
         plan: str = "free",
     ) -> Organization:
         """Create a new organization."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO organizations (org_id, name, created_at, plan)
@@ -268,7 +268,7 @@ class APIKeyStore:
         email: Optional[str] = None,
     ) -> User:
         """Create a new user within an organization."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO users (user_id, org_id, email, role, created_at)
