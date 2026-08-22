@@ -16,7 +16,8 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
+| 9 | ECS Context-Substrate Canvas | not-started | — (spike-derived: 005a/b, 006, 007, 008) | Q3 2026 |
+| 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
 
@@ -465,7 +466,35 @@ Plans:
 
 ---
 
-## Phase 9: Enterprise & Marketplace (Future — Ideation Only)
+## Phase 9: ECS Context-Substrate Canvas
+
+**Milestone**: "Human-Machine Interface — Tri-Consumer World"
+
+**Goal**: Rebuild the pipeline canvas state layer on a miniplex ECS world that serves three consumers from one substrate: React Flow v12 rendering (buffered pattern), the locked XState v5 page machines (existence authority), and LLM context assembly (canonical verbalizer + delta streaming). Add the LLM write path — schema-validated ops as staged proposals behind Phase 8 approval gates — and snapshot/event-log history for rewind, undo/redo, and deterministic replay. All patterns are spike-proven (`.planning/spikes/` 001–008, session 2 requirements in MANIFEST.md; blueprint in `.claude/skills/spike-findings-grpc-llm/`).
+
+**Depends on:** Phase 6 (XState v5 page machines, pipeline page), Phase 8 (approval gates, SSE pipeline stream)
+
+### Deliverables
+
+- miniplex world + `touch()`/`useSyncExternalStore` reactivity bridge in `ui_service`
+- Buffered React Flow integration — ECS patches by id, position write-back on drag-stop only (spike 001)
+- `syncFromPipeline` sync system + `clearSelectionIfMissing` guard wired into `pipelinePage` machine (spike 002)
+- Canonical c_state verbalizer (compact DSL, sorted by logical id) exposed for orchestrator context assembly (spike 005)
+- Delta-context streaming: dirty tracking on mutation choke points, delta rendering with explicit omission header (spike 006)
+- Mediation layer: zod-validated LLM mutation ops, staged proposals with preview overlay, 3-point re-validation, pending-confirmation grace for optimistic adds (spike 007)
+- Snapshot ring + semantic event log: rewind on rejection, undo/redo, deterministic replay (spike 008)
+
+### Done Criteria
+
+- Pipeline canvas renders from the ECS world with no naive full-array re-derivation; stable under SSE churn (drag/hover verified via Playwright)
+- Stale selection clears on entity removal (A/B behavior from spike 002 reproduced in production page)
+- c_state export is byte-stable across churn for unchanged worlds; delta contexts reconstruct a mirror exactly
+- LLM proposal → preview → approve/reject flow works end-to-end; rejection rewinds cleanly; approved ops appear in next delta
+- Undo/redo works on the canvas via the snapshot ring
+
+---
+
+## Phase 10: Enterprise & Marketplace (Future — Ideation Only)
 
 **Milestone**: "Enterprise Scale + Revenue"
 
