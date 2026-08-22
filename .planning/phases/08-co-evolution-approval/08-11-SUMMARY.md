@@ -100,3 +100,11 @@ None — no external service configuration required. Manual/browser verification
 ---
 *Phase: 08-co-evolution-approval*
 *Completed: 2026-08-22*
+
+## Self-Check: PASSED
+
+- FOUND: ui_service/src/components/chat/ApprovalActionCard.tsx
+- FOUND: ui_service/src/components/chat/ChatContainer.tsx
+- FOUND: .planning/phases/08-co-evolution-approval/08-11-SUMMARY.md
+- FOUND commit e25c011 (Task 1)
+- FOUND commit edd6624 (Task 2)
