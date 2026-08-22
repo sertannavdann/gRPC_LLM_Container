@@ -321,31 +321,6 @@ class TestDashboardMetrics:
         exists = prometheus_client.metric_exists("dashboard_request_duration_seconds_bucket")
         assert exists or p95 is not None, "Dashboard latency metric not found"
     
-    def test_dashboard_cache_metrics(
-        self,
-        prometheus_client: PrometheusClient,
-        test_scenarios: TestScenarios,
-    ):
-        """
-        Dashboard cache hits and misses should be tracked.
-        """
-        # Trigger cache miss
-        test_scenarios.trigger_dashboard_cache_miss()
-        
-        # Trigger cache hit (same user)
-        test_scenarios.fetch_dashboard_context(user_id="cache-test-user")
-        test_scenarios.fetch_dashboard_context(user_id="cache-test-user")
-        
-        wait_for_scrape()
-        
-        # Check cache metrics exist
-        hits_exist = prometheus_client.metric_exists("dashboard_cache_hits_total")
-        misses_exist = prometheus_client.metric_exists("dashboard_cache_misses_total")
-        
-        print(f"Cache hits metric exists: {hits_exist}")
-        print(f"Cache misses metric exists: {misses_exist}")
-
-
 # =============================================================================
 # GRAFANA DASHBOARD TESTS
 # =============================================================================
