@@ -132,33 +132,6 @@ DASHBOARD_REQUEST_DURATION = Histogram(
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
 )
 
-# Aggregator metrics
-AGGREGATOR_FETCH_DURATION = Histogram(
-    "dashboard_aggregator_fetch_seconds",
-    "Time to fetch data from adapters",
-    ["category"],
-    buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
-)
-
-AGGREGATOR_CACHE_HITS = Counter(
-    "dashboard_cache_hits_total",
-    "Number of cache hits",
-    ["category"]
-)
-
-AGGREGATOR_CACHE_MISSES = Counter(
-    "dashboard_cache_misses_total",
-    "Number of cache misses",
-    ["category"]
-)
-
-# Context metrics
-CONTEXT_ITEMS = Gauge(
-    "dashboard_context_items",
-    "Number of items in user context",
-    ["user_id", "category", "relevance"]
-)
-
 ACTIVE_USERS = Gauge(
     "dashboard_active_users",
     "Number of active user aggregators"

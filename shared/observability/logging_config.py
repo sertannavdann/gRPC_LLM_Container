@@ -15,7 +15,7 @@ from contextvars import ContextVar
 
 try:
     import structlog
-    from structlog.contextvars import merge_contextvars, bind_contextvars, clear_contextvars
+    from structlog.contextvars import merge_contextvars, bind_contextvars
     STRUCTLOG_AVAILABLE = True
 except ImportError:
     STRUCTLOG_AVAILABLE = False
@@ -222,40 +222,3 @@ def bind_context(**kwargs) -> None:
         ctx = _log_context.get().copy()
         ctx.update(kwargs)
         _log_context.set(ctx)
-
-
-def clear_context() -> None:
-    """Clear the logging context (call at end of request)."""
-    if STRUCTLOG_AVAILABLE:
-        clear_contextvars()
-    else:
-        _log_context.set({})
-
-
-class LogContext:
-    """
-    Context manager for scoped logging context.
-
-    Usage:
-        with LogContext(user_id="123", action="process"):
-            logger.info("Starting")
-            # ... work ...
-            logger.info("Done")
-        # Context is cleared after the block
-    """
-
-    def __init__(self, **kwargs):
-        self.context = kwargs
-        self._token = None
-
-    def __enter__(self):
-        bind_context(**self.context)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if STRUCTLOG_AVAILABLE:
-            # structlog handles context automatically with contextvars
-            pass
-        else:
-            clear_context()
-        return False

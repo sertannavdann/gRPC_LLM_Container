@@ -377,29 +377,3 @@ class SandboxRunner:
         # 3. The enforcement mechanism is container-level, not Python-level
 
         return result
-
-    def execute_with_timeout(
-        self,
-        code: str,
-        environment: Optional[Dict[str, str]] = None
-    ) -> ExecutionResult:
-        """
-        Execute code with timeout enforcement.
-
-        This would use subprocess with timeout in production.
-        For now, delegates to execute().
-
-        Args:
-            code: Python source code to execute
-            environment: Optional environment variables
-
-        Returns:
-            ExecutionResult with timeout enforcement
-        """
-        # In production, this would use:
-        # - subprocess.run with timeout
-        # - Docker container with resource limits
-        # - Network policy enforcement via iptables/firewall
-        #
-        # For testing/development, we use in-process execution
-        return self.execute(code, environment)

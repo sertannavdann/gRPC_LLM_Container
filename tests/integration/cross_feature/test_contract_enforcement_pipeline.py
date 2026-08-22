@@ -19,7 +19,7 @@ from shared.modules.contracts import (
     FileChange,
     ErrorCode,
 )
-from sandbox_service.runner import StaticImportChecker
+from sandbox_service.runner import _check_imports_with_policy
 from sandbox_service.policy import ImportPolicy, ExecutionPolicy
 
 
@@ -64,9 +64,9 @@ class TestContractEnforcementPipeline:
         )
         assert "subprocess" in forbidden
 
-        # StaticImportChecker also catches it
+        # Policy-aware static import check also catches it
         policy = ImportPolicy.module_validation()
-        violations = StaticImportChecker.check_imports(
+        violations = _check_imports_with_policy(
             forbidden_import_adapter_code, policy
         )
         subprocess_violations = [
@@ -133,5 +133,7 @@ class TestContractEnforcementPipeline:
         repo_root = Path(__file__).resolve().parents[3]
         orchestrator_source = (repo_root / "orchestrator" / "orchestrator_service.py").read_text()
 
-        assert "self.tool_registry.register(build_module)" in orchestrator_source
-        assert "self.tool_registry.register(repair_module)" in orchestrator_source
+        # Registration now goes through the module pipeline tool with explicit names
+        assert 'name="build_module"' in orchestrator_source
+        assert 'name="repair_module"' in orchestrator_source
+        assert orchestrator_source.count("self.tool_registry.register(") >= 2

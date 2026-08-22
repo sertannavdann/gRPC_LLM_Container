@@ -336,6 +336,7 @@ class TestFallbackChain:
                 "anthropic": mock_provider3,
             },
             routing_policy=multi_model_routing_policy,
+            max_retries=2,  # keep backoff sleeps short; order logic is identical
         )
 
         # Execute
@@ -346,8 +347,15 @@ class TestFallbackChain:
             allowed_dirs=["modules/weather/openweather"],
         )
 
-        # Verify fallback order matches priority
-        assert call_order == ["github", "openai", "anthropic"]
+        # Verify fallback order matches priority. The gateway retries each
+        # failing provider max_retries times (rate-limit is a transient error)
+        # before falling back to the next provider in priority order.
+        expected_order = (
+            ["github"] * gateway.max_retries
+            + ["openai"] * gateway.max_retries
+            + ["anthropic"]
+        )
+        assert call_order == expected_order
         assert metadata["provider"] == "anthropic"
         assert metadata["attempt"] == 3
 

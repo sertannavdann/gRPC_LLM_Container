@@ -229,9 +229,9 @@ except Exception as e:
         # Cleanup temp file
         try:
             os.unlink(temp_file)
-        except:
-            pass
-            
+        except OSError as e:
+            logger.warning(f"Failed to clean up sandbox temp file {temp_file}: {e}")
+
     except subprocess.TimeoutExpired:
         result["timed_out"] = True
         result["exit_code"] = 124
@@ -239,8 +239,8 @@ except Exception as e:
         # Cleanup temp file
         try:
             os.unlink(temp_file)
-        except:
-            pass
+        except OSError as e:
+            logger.warning(f"Failed to clean up sandbox temp file {temp_file} after timeout: {e}")
     except Exception as e:
         result["exit_code"] = 1
         result["error_message"] = f"Sandbox error: {str(e)}"
