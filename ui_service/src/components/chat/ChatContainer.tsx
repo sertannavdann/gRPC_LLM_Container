@@ -9,12 +9,39 @@ import { Dashboard } from '../dashboard';
 import { Message, ChatResponse } from '@/types/chat';
 import { Bot, Settings, Save, FileText, LayoutDashboard, PanelRightClose, PanelRight, Maximize2 } from 'lucide-react';
 import { ActionCard, type ToolCall } from './ActionCard';
+import { ApprovalActionCard } from './ApprovalActionCard';
 import { nexusStore } from '@/stores/nexusStore';
 
 // Auto-save debounce delay in ms
 const AUTO_SAVE_DELAY = 2000;
 // Message threshold for auto-summarization
 const SUMMARIZE_THRESHOLD = 20;
+
+// ── Module approval discriminator (D-02) ────────────────────────────────────
+//
+// The agent proposes module approve/reject decisions via the `module_admin`
+// CompositeTool (tools/builtin/module_admin.py): `arguments.action` is
+// "approve_module" | "reject_module" and `arguments.module_id` is a
+// "category/platform" string (see ApproveModuleStrategy/RejectModuleStrategy
+// and CompositeTool.validate_input in tools/base.py). Every other tool call
+// falls through to the generic ActionCard, unchanged.
+function moduleApprovalIntent(
+  call: ToolCall
+): { moduleId: string; intent: 'approve' | 'reject' } | null {
+  const action = call.arguments?.action;
+  const moduleId = call.arguments?.module_id;
+
+  if (typeof action !== 'string' || typeof moduleId !== 'string') {
+    return null;
+  }
+  if (action === 'approve_module') {
+    return { moduleId, intent: 'approve' };
+  }
+  if (action === 'reject_module') {
+    return { moduleId, intent: 'reject' };
+  }
+  return null;
+}
 
 export function ChatContainer() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -138,7 +165,7 @@ export function ChatContainer() {
     setLastSaved(null);
   };
 
-  const handleApproveToolCall = async (toolCallId: string) => {
+  const handleApproveToolCall = async (toolCallId: string, feedback?: string) => {
     const toolCallData = pendingToolCalls.get(toolCallId);
     if (!toolCallData) return;
 
@@ -149,6 +176,12 @@ export function ChatContainer() {
       return updated;
     });
 
+    // A chat rejection carried with non-empty feedback merges into the
+    // executed arguments so reject_module's repair path (D-09) receives it.
+    const executedArguments = feedback
+      ? { ...toolCallData.call.arguments, feedback }
+      : toolCallData.call.arguments;
+
     try {
       // Execute the tool call via orchestrator
       const response = await fetch('/api/orchestrator', {
@@ -158,7 +191,7 @@ export function ChatContainer() {
           action: 'execute_tool',
           tool_call_id: toolCallId,
           tool_name: toolCallData.call.name,
-          arguments: toolCallData.call.arguments,
+          arguments: executedArguments,
           threadId,
         }),
       });
@@ -397,17 +430,35 @@ export function ChatContainer() {
         {/* Action Cards for pending tool calls */}
         {pendingToolCalls.size > 0 && (
           <div className="px-4 pb-4 space-y-3">
-            {Array.from(pendingToolCalls.entries()).map(([id, data]) => (
-              <ActionCard
-                key={id}
-                toolCall={data.call}
-                onApprove={handleApproveToolCall}
-                onReject={handleRejectToolCall}
-                status={data.status}
-                result={data.result}
-                error={data.error}
-              />
-            ))}
+            {Array.from(pendingToolCalls.entries()).map(([id, data]) => {
+              const approval = moduleApprovalIntent(data.call);
+              if (approval) {
+                return (
+                  <ApprovalActionCard
+                    key={id}
+                    toolCall={data.call}
+                    moduleId={approval.moduleId}
+                    intent={approval.intent}
+                    onApprove={handleApproveToolCall}
+                    onReject={handleRejectToolCall}
+                    status={data.status}
+                    result={data.result}
+                    error={data.error}
+                  />
+                );
+              }
+              return (
+                <ActionCard
+                  key={id}
+                  toolCall={data.call}
+                  onApprove={handleApproveToolCall}
+                  onReject={handleRejectToolCall}
+                  status={data.status}
+                  result={data.result}
+                  error={data.error}
+                />
+              );
+            })}
           </div>
         )}
 
