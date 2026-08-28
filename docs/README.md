@@ -10,6 +10,7 @@ Welcome to the gRPC LLM Agent Framework (NEXUS) documentation.
 ## Development
 - [Extension Guide](./EXTENSION-GUIDE.md) - Build modules and adapters
 - [API Reference](./API-REFERENCE.md) - REST and gRPC APIs
+- [NEXUS SOLID Validation](./NEXUS-SOLID-VALIDATION.md) - SRP, branch, sandbox, and deployment assessment
 - [Glossary](./GLOSSARY.md) - Terms and concepts
 
 ## Planning
