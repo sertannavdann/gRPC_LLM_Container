@@ -407,19 +407,22 @@ Verified patterns from spike sources (all citations are exact file:line referenc
 
 **If this table is empty:** N/A — see rows above. All other claims in this research are either `[VERIFIED]` (npm registry lookups, direct file reads of `ui_service`/`dashboard_service` source) or `[CITED]` (spike README/blueprint text, which the CONTEXT.md and skill system already established as user-verdict-approved, not re-litigated here).
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the mid-drag-removal edge case (Pitfall 3) need a dedicated task, or is the existing guard sufficient?**
+   - RESOLVED: guard kept; edge case verified via a blocking `checkpoint:human-verify` task in plan 09-10 (manual mid-drag removal check), not a dedicated build task.
    - What we know: the buffered pattern already checks `if (n && entity)` before writing position back.
    - What's unclear: whether React Flow's `NodeChange` event for a node removed mid-drag even reaches `onNodesChange`, or whether the removal (via the patch effect) races the drag-stop event in a way the guard doesn't cover.
    - Recommendation: planner should add a small manual/E2E verification step (not necessarily a full task) rather than block on it — CONTEXT.md itself calls this "worth a quick check before shipping this pattern for real," not a blocker.
 
 2. **Does the orchestrator's chat-driven approval flow for canvas proposals reuse Phase 8's `ActionCard`/`NodeDetailPanel` UI verbatim, or does it need a new review surface?**
+   - RESOLVED: extend, don't rebuild — plan 09-09 adds a `canvasOpApproval` panel inside the existing `NodeDetailPanel`/`reviewPanel` region; no new parallel XState region.
    - What we know: Phase 8 built a full review-panel pattern (D-01 through D-19) for *module build* approval (`ModuleReview`, `BuildAuditLog`, `NodeDetailPanel`'s `reviewPanel` region). Spike 007's op vocabulary (`set_status`, `move`, `add_module`, `remove_module`, `set_credentials`) is a different, narrower kind of proposal than "approve this built module."
    - What's unclear: whether canvas-op proposals get their own lightweight approve/reject UI (e.g., a toast/inline diff) or are folded into the existing `reviewPanel` XState region as a new substate.
    - Recommendation: treat as a planning-time design decision, not a research gap — CONTEXT.md's Claude's Discretion doesn't address it directly, but the "reuse, don't rebuild" principle from Phase 8's own `code_context` section ("React Flow node set — extend, don't rebuild") should apply: extend `pipelinePageMachine`'s existing regions rather than introduce a fourth parallel region, if the shape fits.
 
 3. **Does `GET /context/canvas` need auth (matching `ContextBridge`'s `X-API-Key` header pattern)?**
+   - RESOLVED (09-PATTERNS.md + plan 09-02): `APIKeyAuthMiddleware` prefix-matches the existing `"/context"` entry in `public_paths`, so the route is public by inheritance; accepted explicitly because `/stream/pipeline-state` already broadcasts the same source dict publicly. Mitigation is payload-level — the Python verbalizer emits no credential names/values (asserted by `test_no_credential_material_emitted`).
    - What we know: `ContextBridge._headers` sends `X-API-Key` when `DASHBOARD_API_KEY`/`INTERNAL_API_KEY` is set; other `/context/*` routes on `dashboard_service` do not appear to enforce auth at the FastAPI route level in the code read during this research (no `Depends(...)` auth guard visible on `/context` or `/context/{category}`).
    - What's unclear: whether Phase 1's RBAC/API-key middleware is applied globally to `dashboard_service` (via middleware, not per-route `Depends`) — this research did not read `dashboard_service/main.py`'s middleware stack in full.
    - Recommendation: the planner should verify whether dashboard-wide auth middleware already covers a new route automatically (likely, given Phase 1's "middleware rejects unauthenticated requests with 401" acceptance criterion in REQUIREMENTS.md REQ-001) before assuming a bespoke auth task is needed for `/context/canvas`.
