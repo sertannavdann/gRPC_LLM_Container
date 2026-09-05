@@ -63,7 +63,7 @@ const DEFAULT_PROVIDER_CATALOG: Record<string, { models: string[]; default: stri
 };
 
 const DEFAULT_LIDM_TIER_MODELS: Record<string, string[]> = {
-  heavy: ['Qwen2.5-14B-Instruct-Q4_K.gguf', 'Mistral-Small-24B-Instruct-2501.Q8_0.gguf'],
+  heavy: ['Qwen2.5-14B-Instruct-Q4_K_M.gguf', 'Mistral-Small-24B-Instruct-2501.Q8_0.gguf'],
   standard: ['qwen2.5-0.5b-instruct-q5_k_m.gguf'],
 };
 
@@ -300,7 +300,7 @@ export async function GET() {
         hasGoogleCalendarToken: !!envConfig.GOOGLE_CALENDAR_ACCESS_TOKEN,
         // LIDM delegation
         delegationEnabled: (envConfig.ENABLE_DELEGATION || 'false').toLowerCase() === 'true',
-        lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K.gguf',
+        lidmHeavyModel: envConfig.LIDM_HEAVY_MODEL || 'Qwen2.5-14B-Instruct-Q4_K_M.gguf',
         lidmStandardModel: envConfig.LIDM_STANDARD_MODEL || 'qwen2.5-0.5b-instruct-q5_k_m.gguf',
       },
       providerLocks,

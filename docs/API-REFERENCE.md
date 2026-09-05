@@ -78,7 +78,7 @@ Get current routing configuration.
       "temperature": 0.7
     },
     "heavy": {
-      "model": "Qwen2.5-14B-Instruct-Q4_K.gguf",
+      "model": "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
       "context_window": 6,
       "temperature": 0.7
     }
@@ -90,7 +90,7 @@ Get current routing configuration.
     }
   },
   "lidm_tier_models": {
-    "heavy": ["Qwen2.5-14B-Instruct-Q4_K.gguf"],
+    "heavy": ["Qwen2.5-14B-Instruct-Q4_K_M.gguf"],
     "standard": ["qwen2.5-0.5b-instruct-q5_k_m.gguf"]
   }
 }

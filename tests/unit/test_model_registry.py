@@ -25,7 +25,7 @@ class TestModelRegistry:
         assert spec.temperature == 0.15
 
     def test_known_model_qwen14b(self):
-        spec = resolve_model_spec("models/Qwen2.5-14B-Instruct-Q4_K.gguf")
+        spec = resolve_model_spec("models/Qwen2.5-14B-Instruct-Q4_K_M.gguf")
         assert spec is not None
         assert spec.recommended_ctx == 16_384
         assert spec.context_window == 131_072

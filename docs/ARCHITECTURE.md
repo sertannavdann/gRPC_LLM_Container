@@ -121,7 +121,7 @@ The gRPC LLM Agent Framework (NEXUS) is a self-evolving agent system built on:
 ```json
 {
   "lidm_tier_models": {
-    "heavy": ["Qwen2.5-14B-Instruct-Q4_K.gguf"],
+    "heavy": ["Qwen2.5-14B-Instruct-Q4_K_M.gguf"],
     "standard": ["qwen2.5-0.5b-instruct-q5_k_m.gguf"]
   }
 }
