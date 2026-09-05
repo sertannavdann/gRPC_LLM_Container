@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.15
 milestone_name: milestone
 status: unknown
-last_updated: "2026-08-14T00:13:22.553Z"
+last_updated: "2026-08-22T21:54:57.775Z"
 progress:
-  total_phases: 9
-  completed_phases: 7
+  total_phases: 10
+  completed_phases: 8
   total_plans: 43
-  completed_plans: 31
-  percent: 72
+  completed_plans: 43
+  percent: 80
 ---
 
 # NEXUS — Current State

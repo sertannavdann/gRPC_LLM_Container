@@ -8,7 +8,8 @@
   "workflow": {
     "research": true,
     "plan_check": true,
-    "verifier": true
+    "verifier": true,
+    "_auto_chain_active": false
   },
   "parallelization": true,
   "brave_search": false
