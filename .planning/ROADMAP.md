@@ -492,6 +492,40 @@ Plans:
 - LLM proposal → preview → approve/reject flow works end-to-end; rejection rewinds cleanly; approved ops appear in next delta
 - Undo/redo works on the canvas via the snapshot ring
 
+**Plans:** 10 plans (7 waves)
+
+Plans:
+**Wave 1**
+
+- [ ] 09-01-PLAN.md — Unit runner (vitest) + miniplex/zod install + shared ECS type & c_state DSL contract
+
+**Wave 2**
+
+- [ ] 09-02-PLAN.md — Backend c_state seam: canvas_context.py verbalizer port + GET /context/canvas + pytest
+- [ ] 09-03-PLAN.md — ECS core: world + touch bridge, dirty tracker, canonical verbalizer + 2 unit suites
+- [ ] 09-06-PLAN.md — clearSelectionIfMissing guard in pipelinePageMachine + machine unit suite
+
+**Wave 3**
+
+- [ ] 09-04-PLAN.md — Single mediation path: zod op schemas, OWNERSHIP policy, syncFromPipeline, 3-point re-validation
+
+**Wave 4**
+
+- [ ] 09-05-PLAN.md — History: snapshot ring, event log, clear-then-restore rewind, replay redo
+- [ ] 09-07-PLAN.md — Buffered React Flow rewire of page.tsx + pure canvasGraph builder + churn E2E spec
+
+**Wave 5**
+
+- [ ] 09-08-PLAN.md — Proposal preview overlay + pending-confirmation treatment on ModuleNode
+
+**Wave 6**
+
+- [ ] 09-09-PLAN.md — Ingress seam + canvasOpApproval panel + approve/reject/rewind flow + rewind toast
+
+**Wave 7**
+
+- [ ] 09-10-PLAN.md — Undo/redo toolbar & shortcuts, live delta handles, manual A3/A4 verification
+
 ---
 
 ## Phase 10: Enterprise & Marketplace (Future — Ideation Only)
