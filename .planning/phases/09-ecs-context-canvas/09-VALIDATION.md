@@ -40,14 +40,20 @@ Task IDs are assigned at planning time; this map binds decisions/criteria to tes
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | TBD | Buffered RF pattern (LOCKED, spike 001) | — | N/A | e2e | `npx playwright test e2e/pipeline-ecs-churn.spec.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | clearSelectionIfMissing + proposal re-validation (LOCKED, spikes 002/007) | T-09-02 | Stale id-refs cleared in same transition | e2e | new Playwright spec (SSE-driven removal → DOM assertion) | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | Delta mirror-reconstruction (spike 006) | — | N/A | unit | `npx vitest run src/ecs/__tests__/dirty.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | Canonical text stability under churn (spike 005b) | — | N/A | unit | `npx vitest run src/ecs/__tests__/verbalize.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | Rewind clear-then-restore, no duplication (spike 008) | — | N/A | unit | `npx vitest run src/ecs/__tests__/history.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | LLM op ownership policy (V4) | T-09-01 | LLM ops touch module entities only; services/stages refused | unit | `npx vitest run src/ecs/__tests__/mediation.test.ts` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | zod op-schema validation (V5) | T-09-01 | Malformed/unknown ops rejected with structured errors | unit | same mediation suite | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | `GET /context/canvas` auth posture | T-09-04 | Route covered by dashboard auth middleware (or explicitly gated) | integration | `pytest` against dashboard route (backend side) | ❌ W0 | ⬜ pending |
+| 09-07-T3 | 09-07 | 4 | Buffered RF pattern under churn (LOCKED, spike 001) | T-09-16 | N/A | e2e | `npx playwright test e2e/pipeline-ecs-churn.spec.ts` (Test 1) | ❌ W0→built in 09-07 | ⬜ pending |
+| 09-07-T3 | 09-07 | 4 | Drag verified via Playwright — drag-stop write-back persists across an SSE tick (Done Criterion wording) | T-09-17 | N/A | e2e | `npx playwright test e2e/pipeline-ecs-churn.spec.ts` (Test 2, real `page.mouse.down/move/up`) | ❌ built in 09-07 | ⬜ pending |
+| 09-07-T3 | 09-07 | 4 | Hover verified via Playwright — stability under churn, no page errors (UI-SPEC locks hover visually unchanged) | — | N/A | e2e | `npx playwright test e2e/pipeline-ecs-churn.spec.ts` (Test 3) | ❌ built in 09-07 | ⬜ pending |
+| 09-06-T2 | 09-06 | 2 | clearSelectionIfMissing transition logic (LOCKED, spike 002) | T-09-02 | Stale id-refs cleared in the same transition | unit | `npx vitest run src/machines/__tests__/pipelinePage.test.ts` | ❌ built in 09-06 | ⬜ pending |
+| 09-07-T3 | 09-07 | 4 | Stale selection clears in the PRODUCTION PAGE (Done Criterion: "reproduced in production page") | T-09-02 | Detail panel closes when the selected module leaves the snapshot | e2e | `npx playwright test e2e/pipeline-ecs-churn.spec.ts` (Test 4, throwaway `modules/e2e_probe` manifest created then deleted) | ❌ built in 09-07 | ⬜ pending |
+| 09-03-T3 | 09-03 | 2 | Delta mirror-reconstruction (spike 006) | — | N/A | unit | `npx vitest run src/ecs/__tests__/dirty.test.ts` | ❌ built in 09-03 | ⬜ pending |
+| 09-03-T3 | 09-03 | 2 | Canonical text stability under churn (spike 005b) | — | N/A | unit | `npx vitest run src/ecs/__tests__/verbalize.test.ts` | ❌ built in 09-03 | ⬜ pending |
+| 09-05-T2 | 09-05 | 4 | Rewind clear-then-restore, no duplication (spike 008) | T-09-12 | N/A | unit | `npx vitest run src/ecs/__tests__/history.test.ts` | ❌ built in 09-05 | ⬜ pending |
+| 09-04-T3 | 09-04 | 3 | LLM op ownership policy (V4) | T-09-01 | LLM ops touch module entities only; services/stages refused | unit | `npx vitest run src/ecs/__tests__/mediation.test.ts` | ❌ built in 09-04 | ⬜ pending |
+| 09-04-T3 | 09-04 | 3 | zod op-schema validation (V5) | T-09-05 | Malformed/unknown ops rejected with structured errors | unit | same mediation suite | ❌ built in 09-04 | ⬜ pending |
+| 09-08-T1 | 09-08 | 5 | Preview is a pure overlay; optimistic-add grace (LOCKED) | T-09-03, T-09-20 | Preview never mutates the world; no credential names in badges | unit | `npx vitest run src/ecs/__tests__/preview.test.ts` | ❌ built in 09-08 | ⬜ pending |
+| 09-09-T3 | 09-09 | 6 | LLM proposal → preview → approve/reject end-to-end; rejection rewinds cleanly; approved ops appear in next delta (Done Criterion) | T-09-01, T-09-02, T-09-22 | Approve re-validates against the live world; reject rewinds to a byte-identical c_state | e2e | `npx playwright test e2e/pipeline-canvas-ops.spec.ts` (3 tests, driven through the `window.__nexusCanvas` build-flagged dev seam) | ❌ built in 09-09 | ⬜ pending |
+| 09-02-T3 | 09-02 | 2 | `GET /context/canvas` auth posture + payload safety | T-09-04 | Route PUBLIC by explicit decision (inherits `/context` prefix); no credential material in the payload | integration | `cd tests && python -m pytest unit/test_canvas_context.py -v` | ❌ built in 09-02 | ⬜ pending |
+| 09-10-T3 | 09-10 | 7 | Undo/redo via the snapshot ring (Done Criterion) + assumptions A3/A4 | T-09-10, T-09-17, T-09-24 | StrictMode does not double-append history; shortcuts inert in text fields | manual (checkpoint) | MISSING — blocking `checkpoint:human-verify`; automated neighbours are `npm run test` + `npx playwright test e2e/` | n/a | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -60,7 +66,9 @@ Task IDs are assigned at planning time; this map binds decisions/criteria to tes
 - [ ] `ui_service/src/ecs/__tests__/dirty.test.ts` — delta mirror-reconstruction
 - [ ] `ui_service/src/ecs/__tests__/history.test.ts` — rewind/replay determinism
 - [ ] `ui_service/src/ecs/__tests__/mediation.test.ts` — op schema + ownership policy + 3-point re-validation
-- [ ] `ui_service/e2e/pipeline-ecs-churn.spec.ts` — buffered-pattern-under-churn (follows `e2e/pipeline-sse.spec.ts` structure)
+- [ ] `ui_service/src/machines/__tests__/pipelinePage.test.ts` — clearSelectionIfMissing transition logic (plan 09-06)
+- [ ] `ui_service/e2e/pipeline-ecs-churn.spec.ts` — churn stability + real drag with position persistence + hover stability + DOM-level stale-selection clearing (plan 09-07; follows `e2e/pipeline-sse.spec.ts` structure)
+- [ ] `ui_service/e2e/pipeline-canvas-ops.spec.ts` — propose → overlay → approve → delta, and approve → reject → rewind toast → byte-identical c_state (plan 09-09; requires the `NEXT_PUBLIC_CANVAS_DEV_SEAM=1` build flag in the compose image)
 
 ---
 
