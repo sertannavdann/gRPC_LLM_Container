@@ -45,13 +45,13 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         tier="heavy",
         backend="llama-cpp",
     ),
-    "Qwen2.5-14B-Instruct-Q4_K.gguf": ModelSpec(
+    "Qwen2.5-14B-Instruct-Q4_K_M.gguf": ModelSpec(
         name="Qwen2.5-14B-Instruct",
         context_window=131_072,
         recommended_ctx=16_384,
         max_tokens=2048,
         temperature=0.7,
-        description="Qwen 2.5 14B Q4_K – 128K ctx, recommended ≤16K GGUF",
+        description="Qwen 2.5 14B Q4_K_M – 128K ctx, recommended ≤16K GGUF",
         capabilities=("coding", "multilingual", "reasoning", "math", "finance"),
         tier="standard",
         backend="llama-cpp",
