@@ -35,7 +35,9 @@
       "Bash(chmod:*)",
       "Bash(node ./.claude/get-shit-done/bin/gsd-tools.cjs:*)",
       "Bash(wc:*)",
-      "Skill(gsd:discuss-phase)"
+      "Skill(gsd:discuss-phase)",
+      "Bash(cd *)",
+      "Bash(gsd-sdk query *)"
     ]
   }
 }
