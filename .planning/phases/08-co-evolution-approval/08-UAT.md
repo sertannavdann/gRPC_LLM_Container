@@ -8,21 +8,20 @@ updated: 2026-08-22T00:00:00Z
 
 ## Current Test
 
-number: 1
-name: Cold Start Smoke Test
+number: 2
+name: Pending Module Appears on Pipeline Page
 expected: |
-  From a stopped stack: `make up` (or `docker compose up -d`). All services boot without
-  errors — orchestrator (gRPC 50054 + admin :8003), dashboard (:8001), ui (:3000/:5001),
-  llm, chroma, bridge, sandbox, prometheus, grafana, cadvisor, otel-collector, tempo.
-  Orchestrator log shows the retention worker started. `curl http://localhost:8003/admin/health`
-  and `curl http://localhost:8001/health` (or /) return OK. UI loads in browser.
+  With the stack up, a module in VALIDATED state appears on the Pipeline page as a node
+  with a "Needs Review" badge within ~2s (SSE stream), without page refresh. If no validated
+  module exists, build one via chat ("build me a ...") or validate a draft first.
 awaiting: user response
 
 ## Tests
 
 ### 1. Cold Start Smoke Test
 expected: From stopped stack, `make up` boots all services cleanly; admin :8003 health OK, dashboard :8001 OK, UI loads; orchestrator log shows retention worker started (no startup errors from new middleware/worker wiring).
-result: [pending]
+result: pass
+reported: "make showroom: 4 passed 9 failed (unreachable)" — services were healthy; all 9 were HTTP 401 because scripts/showroom_test.sh never sent X-API-Key (pre-dates Phase 1 auth) and its SSE check timed out on the endless stream. Fixed in-place (auth header from ADMIN_API_KEY/.env, real HTTP status reporting, event-received SSE check). Re-run: 16/16 passed incl. module enable/reload/disable cycle.
 
 ### 2. Pending Module Appears on Pipeline Page
 expected: With the stack up, a module in VALIDATED state appears on the Pipeline page as a node with a "Needs Review" badge within ~2s (SSE stream), without page refresh. If no validated module exists, build one via chat ("build me a ...") or validate a draft first.
@@ -67,12 +66,22 @@ result: [pending]
 ## Summary
 
 total: 11
-passed: 0
+passed: 1
 issues: 0
-pending: 11
+pending: 10
 skipped: 0
 blocked: 0
 
 ## Gaps
 
-[none yet]
+- truth: "make showroom passes against a cold-started stack"
+  status: fixed
+  reason: "User reported: 4 passed 9 failed (unreachable)"
+  severity: major
+  test: 1
+  root_cause: "scripts/showroom_test.sh sent no X-API-Key (pre-dates Phase 1 auth boundary); curl -f mapped 401 to 'unreachable'; SSE check used --max-time on an endless stream"
+  artifacts:
+    - path: "scripts/showroom_test.sh"
+      issue: "no auth header; status codes collapsed; SSE timeout"
+  missing: []
+  debug_session: "fixed inline during UAT; 16/16 after fix"

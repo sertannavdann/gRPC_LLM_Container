@@ -16,6 +16,18 @@ ADMIN_URL="${ADMIN_URL:-http://localhost:8003}"
 PASS=0
 FAIL=0
 
+# Auth: every non-public endpoint requires X-API-Key (Phase 1 auth boundary).
+# Resolve from env, else from .env (ADMIN_API_KEY=...). Fail fast if absent.
+API_KEY="${ADMIN_API_KEY:-}"
+if [ -z "$API_KEY" ] && [ -f .env ]; then
+  API_KEY=$(grep -E '^ADMIN_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+fi
+if [ -z "$API_KEY" ]; then
+  printf "${RED}ADMIN_API_KEY not set (env or .env) — showroom cannot authenticate.${RESET}\n" >&2
+  exit 2
+fi
+AUTH=(-H "X-API-Key: $API_KEY")
+
 check() {
   local name="$1"
   local url="$2"
@@ -23,11 +35,15 @@ check() {
 
   printf "  %-45s " "$name"
 
-  resp=$(curl -sf --connect-timeout 3 --max-time 5 "$url" 2>/dev/null) || {
-    printf "${RED}FAIL${RESET} (unreachable)\n"
-    FAIL=$((FAIL + 1))
-    return
-  }
+  local tmp; tmp=$(mktemp)
+  local code
+  code=$(curl -s "${AUTH[@]}" --connect-timeout 3 --max-time 5 -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null) || code="000"
+  resp=$(cat "$tmp"); rm -f "$tmp"
+  if [ "$code" = "000" ]; then
+    printf "${RED}FAIL${RESET} (unreachable)\n"; FAIL=$((FAIL + 1)); return
+  elif [ "${code:0:1}" != "2" ]; then
+    printf "${RED}FAIL${RESET} (HTTP %s)\n" "$code"; FAIL=$((FAIL + 1)); return
+  fi
 
   if [ -n "$jq_filter" ] && command -v jq &>/dev/null; then
     result=$(echo "$resp" | jq -r "$jq_filter" 2>/dev/null || echo "$resp")
@@ -48,7 +64,18 @@ printf "${BOLD}${YELLOW}▸ Dashboard Service${RESET}\n"
 check "Health endpoint" "$DASHBOARD_URL/health" '.status'
 check "Adapters list" "$DASHBOARD_URL/adapters" '.categories | length | tostring + " categories"'
 check "Module list" "$DASHBOARD_URL/modules" '.total | tostring + " modules"'
-check "SSE endpoint reachable" "$DASHBOARD_URL/stream/pipeline-state" ''
+check_sse() {
+  local name="$1" url="$2"
+  printf "  %-45s " "$name"
+  local out
+  out=$(curl -s -N "${AUTH[@]}" --connect-timeout 3 --max-time 4 "$url" 2>/dev/null | head -c 400 || true)
+  if echo "$out" | grep -q "data:"; then
+    printf "${GREEN}OK${RESET}   event received\n"; PASS=$((PASS + 1))
+  else
+    printf "${RED}FAIL${RESET} (no SSE event within 4s)\n"; FAIL=$((FAIL + 1))
+  fi
+}
+check_sse "SSE endpoint reachable" "$DASHBOARD_URL/stream/pipeline-state"
 check "Prometheus metrics" "$DASHBOARD_URL/metrics" ''
 echo ""
 
@@ -66,7 +93,7 @@ check "Get module detail" "$ADMIN_URL/admin/modules/showroom/metrics_demo" '.mod
 
 # Try enable
 printf "  %-45s " "Enable module"
-enable_resp=$(curl -sf -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/enable" 2>/dev/null) || true
+enable_resp=$(curl -sf "${AUTH[@]}" -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/enable" 2>/dev/null) || true
 if echo "$enable_resp" | jq -e '.success' &>/dev/null; then
   printf "${GREEN}OK${RESET}   enabled\n"
   PASS=$((PASS + 1))
@@ -76,7 +103,7 @@ fi
 
 # Try reload
 printf "  %-45s " "Reload module"
-reload_resp=$(curl -sf -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/reload" 2>/dev/null) || true
+reload_resp=$(curl -sf "${AUTH[@]}" -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/reload" 2>/dev/null) || true
 if echo "$reload_resp" | jq -e '.success' &>/dev/null; then
   printf "${GREEN}OK${RESET}   reloaded\n"
   PASS=$((PASS + 1))
@@ -86,9 +113,9 @@ fi
 
 # Disable then re-enable
 printf "  %-45s " "Disable → Re-enable cycle"
-curl -sf -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/disable" &>/dev/null || true
+curl -sf "${AUTH[@]}" -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/disable" &>/dev/null || true
 sleep 0.5
-cycle_resp=$(curl -sf -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/enable" 2>/dev/null) || true
+cycle_resp=$(curl -sf "${AUTH[@]}" -X POST "$ADMIN_URL/admin/modules/showroom/metrics_demo/enable" 2>/dev/null) || true
 if echo "$cycle_resp" | jq -e '.success' &>/dev/null; then
   printf "${GREEN}OK${RESET}   cycle complete\n"
   PASS=$((PASS + 1))
