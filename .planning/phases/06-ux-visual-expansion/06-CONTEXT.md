@@ -223,3 +223,58 @@ Afternoon (Cursor — repo-aware wiring):
 | v0 Premium | $20/mo | $20 credits/mo + $2 free daily |
 | Cursor Pro | $20/mo | 500 fast requests/mo |
 | **Total** | **$40/mo** | |
+
+## Phase 06 Extension Addendum — Stability & Parametric Synchronization (2026-02-17)
+
+### Why this extension exists
+
+Runtime behavior exposed a reliability gap not covered by the original Phase 06 completion criteria: dashboard capability reads could fail into ambiguous UI states (all locked, blank cards, or generic fetch errors) when admin auth/CORS/network assumptions break.
+
+### Newly Observed Failure Modes (must be designed for)
+
+1. **Cross-origin admin dependency leak**
+   - Browser read path depended on direct admin API access, coupling UI stability to CORS/auth behavior.
+2. **Auth failure rendered as transport failure**
+   - `401` plus missing CORS headers surfaced as generic fetch failure, masking root cause and collapsing UX.
+3. **Silent/implicit fallback semantics**
+   - Empty or synthetic fallback payloads lacked explicit reason codes, so UI interpreted them as lock/no-data without context.
+4. **Split source-of-truth for lock state**
+   - Lock/visibility could be inferred from multiple places (capability payload, local assumptions, page logic), violating single-source behavior.
+5. **Route contract drift**
+   - Monitoring route shape/availability (`/api/monitoring/latency`) was not enforced as a hard contract in Phase 06 verification.
+
+### Assumptions to Replace
+
+| Previous Assumption | Revised Assumption (Extension Baseline) |
+|---|---|
+| Admin endpoint is directly reachable from browser | Browser never depends on direct admin origin; same-origin BFF is mandatory |
+| Empty capability payload is acceptable fallback | Fallback must be reason-coded and contract-valid |
+| Lock inference can be done in page components | Lock/degraded state must derive from one capability contract + XState mapping |
+| Generic fetch error is enough for UX | Error taxonomy must distinguish auth/degraded/network/empty-valid states |
+| Polling constants can be local to each machine | Polling/retry/timeout params must be centralized in one runtime config module |
+
+### Locked Decisions for Phase 06 Extension
+
+1. **Stability over feature breadth**: prioritize deterministic rendering and synchronization over new visuals.
+2. **Single-source contract truth**: backend capability contract is authoritative for lock/degraded/availability states.
+3. **SOLID boundary enforcement**:
+   - Backend defines truth (contract + reason metadata).
+   - State machine interprets truth (transitions/guards).
+   - UI renders declared state (no hidden inference).
+4. **No silent fallback**: all fallback paths must expose explicit reason and source metadata.
+5. **Centralized runtime parameters**: poll intervals, retries, and timeouts managed in one shared module.
+
+### Phase 5B Infrastructure Dependencies Relevant to Phase 06
+
+From the Phase 5B hardening plan, these are required inputs for stable Phase 06 behavior:
+- **05B-01** observability cost controls (instrumentation must not destabilize UI request paths).
+- **05B-02** deterministic service health protocol (unknown/serving/not-serving drives accurate UI state).
+- **05B-04** SQLite WAL + read optimization (capability reads must not stall under write load).
+
+### Added Success Criteria for Extension
+
+- Dashboard remains usable under auth/network degradation (no fatal blank/locked-only collapse).
+- Capability fallback is explicit and diagnosable via reason-coded metadata.
+- No browser-side cross-origin admin calls remain in UI runtime path.
+- Lock state and visualization derive from one contract path with tested XState mapping.
+- Monitoring latency route shape is always available and contract-stable.
