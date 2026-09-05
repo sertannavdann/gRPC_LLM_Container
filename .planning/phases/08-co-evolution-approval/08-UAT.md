@@ -21,7 +21,7 @@ awaiting: user response
 ### 1. Cold Start Smoke Test
 expected: From stopped stack, `make up` boots all services cleanly; admin :8003 health OK, dashboard :8001 OK, UI loads; orchestrator log shows retention worker started (no startup errors from new middleware/worker wiring).
 result: pass
-reported: "make showroom: 4 passed 9 failed (unreachable)" — services were healthy; all 9 were HTTP 401 because scripts/showroom_test.sh never sent X-API-Key (pre-dates Phase 1 auth) and its SSE check timed out on the endless stream. Fixed in-place (auth header from ADMIN_API_KEY/.env, real HTTP status reporting, event-received SSE check). Re-run: 16/16 passed incl. module enable/reload/disable cycle.
+reported: "make showroom: 4 passed 9 failed (unreachable)" — services were healthy; all 9 were HTTP 401 because scripts/showroom_test.sh never sent X-API-Key (pre-dates Phase 1 auth) and its SSE check timed out on the endless stream. Fixed in-place (auth header from ADMIN_API_KEY/.env, real HTTP status reporting, event-received SSE check). Re-run: 16/16 passed incl. module enable/reload/disable cycle. SECOND FINDING: that run hit STALE IMAGES — `make up` reused an orchestrator image built 2026-02-17 (no shared/audit, no rate limiter) and a 2-week-old dashboard; source is not volume-mounted. Rebuilt orchestrator/dashboard/ui/bridge/sandbox (`docker compose build ...`), recreated: all healthy in 4s, showroom 16/16 on current code, AuditStore initialized at /app/data/audit_events.db, retention worker started and completed a GC+retention pass (pruned 16 usage records, org=default free 7d), rate limiter buckets registered, UI :5001 200. NOTE for ops: `make up` must rebuild images after code changes (or add `--build`).
 
 ### 2. Pending Module Appears on Pipeline Page
 expected: With the stack up, a module in VALIDATED state appears on the Pipeline page as a node with a "Needs Review" badge within ~2s (SSE stream), without page refresh. If no validated module exists, build one via chat ("build me a ...") or validate a draft first.
@@ -53,7 +53,8 @@ result: [pending]
 
 ### 9. Rate Limiting
 expected: Rapid-fire requests to an admin endpoint (e.g. 5+ quick `curl` calls to :8003/admin/health with a key, or the bootstrap endpoint) eventually return HTTP 429 with a Retry-After header. Normal usage is unaffected.
-result: [pending]
+result: pass
+reported: "machine-verified during UAT: 35 rapid GETs to /admin/modules (5/s, burst 20) -> mix of 200 and 429; header 'retry-after: 1'; the earlier 25x200 on /admin was within its burst 40. Registered limiters logged at startup."
 
 ### 10. Playwright SSE E2E (REQ-018)
 expected: With the stack up: `make ui-e2e` runs 3 specs (connect / reconnect / error handling) against the real SSE stream — all pass.
@@ -66,9 +67,9 @@ result: [pending]
 ## Summary
 
 total: 11
-passed: 1
+passed: 2
 issues: 0
-pending: 10
+pending: 9
 skipped: 0
 blocked: 0
 
