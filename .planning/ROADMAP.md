@@ -16,7 +16,7 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | ECS Context-Substrate Canvas | 1/10 | In Progress|  |
+| 9 | ECS Context-Substrate Canvas | 4/10 | In Progress|  |
 | 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -501,9 +501,9 @@ Plans:
 
 **Wave 2**
 
-- [ ] 09-02-PLAN.md — Backend c_state seam: canvas_context.py verbalizer port + GET /context/canvas + pytest
-- [ ] 09-03-PLAN.md — ECS core: world + touch bridge, dirty tracker, canonical verbalizer + 2 unit suites
-- [ ] 09-06-PLAN.md — clearSelectionIfMissing guard in pipelinePageMachine + machine unit suite
+- [x] 09-02-PLAN.md — Backend c_state seam: canvas_context.py verbalizer port + GET /context/canvas + pytest
+- [x] 09-03-PLAN.md — ECS core: world + touch bridge, dirty tracker, canonical verbalizer + 2 unit suites
+- [x] 09-06-PLAN.md — clearSelectionIfMissing guard in pipelinePageMachine + machine unit suite
 
 **Wave 3**
 
