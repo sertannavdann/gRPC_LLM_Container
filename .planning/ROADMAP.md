@@ -16,7 +16,7 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | ECS Context-Substrate Canvas | not-started | — (spike-derived: 005a/b, 006, 007, 008) | Q3 2026 |
+| 9 | ECS Context-Substrate Canvas | 1/10 | In Progress|  |
 | 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -497,7 +497,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — Unit runner (vitest) + miniplex/zod install + shared ECS type & c_state DSL contract
+- [x] 09-01-PLAN.md — Unit runner (vitest) + miniplex/zod install + shared ECS type & c_state DSL contract
 
 **Wave 2**
 
