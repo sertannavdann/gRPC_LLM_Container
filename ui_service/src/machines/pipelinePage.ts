@@ -25,6 +25,38 @@ import {
   type ModuleReview,
   type ModuleAuditAttempt,
 } from '../lib/adminClient';
+import { entityIdFor } from '@/ecs/types';
+
+// ── Stage node ids (static scaffolding, never present in an SSE payload) ─────
+
+/**
+ * The four STATIC stage nodes rendered in `page.tsx` regardless of SSE data.
+ * They never appear in an SSE snapshot's collections, so `pipelineNodeIds`
+ * must always include them — without this, a valid stage selection would be
+ * cleared by the clearing guard on the very first tick. Plan 07's
+ * `canvasGraph.ts` imports this constant rather than redefining it.
+ */
+export const STAGE_NODE_IDS = [
+  'stage-intent',
+  'stage-routing',
+  'stage-tools',
+  'stage-synth',
+] as const;
+
+/**
+ * Builds the authoritative set of node ids present in a given SSE snapshot,
+ * plus the static stage ids. Missing/undefined collections are treated as
+ * empty — the SSE payload's `error` variant carries no collections at all,
+ * and this helper must never throw inside an `assign`.
+ */
+export function pipelineNodeIds(data: PipelineState): Set<string> {
+  const ids = new Set<string>(STAGE_NODE_IDS);
+  Object.keys(data.services ?? {}).forEach((name) => ids.add(entityIdFor('service', name)));
+  (data.tools ?? []).forEach((tool) => ids.add(entityIdFor('tool', tool.name)));
+  (data.adapters ?? []).forEach((adapter) => ids.add(entityIdFor('adapter', adapter.id)));
+  (data.modules ?? []).forEach((m) => ids.add(entityIdFor('module', m.id)));
+  return ids;
+}
 
 // ── Context & Events ─────────────────────────────────────────────────────────
 
@@ -147,6 +179,24 @@ export const pipelinePageMachine = setup({
       actionError: null,
     })),
 
+    // T-09-02: re-validate the selected node id against every new SSE
+    // snapshot in the SAME transition, before the reference can dangle.
+    // Resets the same fields as `clearSelection` — a dangling selection
+    // must also drop the review payload it was showing (T-09-15).
+    clearSelectionIfMissing: assign(({ context, event }) => {
+      if (event.type !== 'SSE_MESSAGE') return {};
+      if (context.selectedNodeId === null) return {};
+      const ids = pipelineNodeIds(event.data);
+      if (ids.has(context.selectedNodeId)) return {};
+      return {
+        selectedNodeId: null,
+        selectedModuleId: null,
+        review: null,
+        audit: [],
+        actionError: null,
+      };
+    }),
+
     storeReview: assign(({ event }) => {
       const doneEvent = event as unknown as {
         output?: { review: ModuleReview; audit: ModuleAuditAttempt[] };
@@ -189,18 +239,24 @@ export const pipelinePageMachine = setup({
       states: {
         connecting: {
           on: {
-            SSE_MESSAGE: { target: 'connected', actions: 'updatePipeline' },
+            SSE_MESSAGE: {
+              target: 'connected',
+              actions: ['updatePipeline', 'clearSelectionIfMissing'],
+            },
           },
         },
         connected: {
           on: {
-            SSE_MESSAGE: { actions: 'updatePipeline' },
+            SSE_MESSAGE: { actions: ['updatePipeline', 'clearSelectionIfMissing'] },
             SSE_ERROR: 'reconnecting',
           },
         },
         reconnecting: {
           on: {
-            SSE_MESSAGE: { target: 'connected', actions: 'updatePipeline' },
+            SSE_MESSAGE: {
+              target: 'connected',
+              actions: ['updatePipeline', 'clearSelectionIfMissing'],
+            },
           },
         },
       },
