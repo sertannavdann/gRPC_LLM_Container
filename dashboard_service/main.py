@@ -34,6 +34,8 @@ from shared.auth.rate_limit_middleware import RateLimitMiddleware
 from .aggregator import DashboardAggregator, UserConfig
 from .bank_service import BankService
 from .pipeline_stream import router as pipeline_router
+from .pipeline_stream import _build_pipeline_state
+from .canvas_context import build_canvas_context
 from shared.adapters import adapter_registry
 from shared.adapters.base import AdapterConfig
 from shared.modules.manifest import ModuleManifest, ModuleStatus
@@ -467,6 +469,39 @@ async def get_unified_context(
         return context.to_dict()
     except Exception as e:
         logger.error(f"Error fetching context for {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/context/canvas", tags=["Context"])
+async def get_canvas_context(request: Request):
+    """
+    Get the canvas c_state — a canonical, compact-DSL text projection of the
+    pipeline canvas re-derived server-side from `_build_pipeline_state()`
+    (the same dict the SSE `/stream/pipeline-state` route broadcasts every
+    2 seconds). No browser tab needs to be open for the orchestrator to read
+    this (09-RESEARCH.md Pitfall 5).
+
+    AUTH POSTURE (explicit decision, T-09-04): this route is PUBLIC. It
+    inherits the existing "/context" prefix entry in `public_paths` via
+    `APIKeyAuthMiddleware`'s `path.startswith(public + "/")` rule, exactly
+    like `/context/{category}` and the already-public `/stream/pipeline-state`
+    are. This is ACCEPTED, not overlooked: the payload is derived from the
+    same dict the SSE stream already broadcasts publicly, so gating this
+    route alone would add no confidentiality. The disclosure surface is
+    narrowed at the data layer instead — `canvas_context.py` emits no
+    credential names or values, only `auth_required`/`no_credentials` flags.
+    Gating this route later is a deliberate `public_paths` edit, not a bug
+    fix.
+
+    Not routed through `get_category_context` / `valid_categories` — the
+    `shared/context` aggregator subsystem is a different code path from
+    `pipeline_stream.py`'s state builder.
+    """
+    try:
+        state = await _build_pipeline_state(request.app)
+        return build_canvas_context(state)
+    except Exception as e:
+        logger.error(f"Error building canvas context: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
