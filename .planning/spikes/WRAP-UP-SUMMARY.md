@@ -1,9 +1,9 @@
 # Spike Wrap-Up Summary
 
-**Date:** 2026-08-22
-**Spikes processed:** 5
-**Feature areas:** ECS-Backed Pipeline Canvas
-**Skill output:** `./.claude/skills/spike-findings-grpc-llm/`
+**Dates:** 2026-08-22 (session 1), 2026-09-15 (session 2)
+**Spikes processed:** 10 (5 + 5)
+**Feature areas:** ECS-Backed Pipeline Canvas; LLM Context Substrate
+**Skill output:** `./.claude/skills/spike-findings-grpc-llm/` (local-only — `.claude/` is gitignored)
 
 ## Processed Spikes
 
@@ -14,26 +14,33 @@
 | 003a | ecs-lib-miniplex | comparison | ✓ WINNER | ECS-Backed Pipeline Canvas |
 | 003b | ecs-lib-bitecs | comparison | ✗ INVALIDATED | ECS-Backed Pipeline Canvas |
 | 004 | ecs-systems-as-canvas-behaviors | standard | ✗ INVALIDATED | ECS-Backed Pipeline Canvas |
+| 005a | world-snapshot-bitecs | comparison | ✗ INVALIDATED | LLM Context Substrate |
+| 005b | world-snapshot-miniplex | comparison | ✓ WINNER | LLM Context Substrate |
+| 006 | delta-context-streaming | standard | ✓ VALIDATED | LLM Context Substrate |
+| 007 | llm-writes-world | standard | ✓ VALIDATED | LLM Context Substrate |
+| 008 | snapshot-replay-and-rewind | standard | ✓ VALIDATED | LLM Context Substrate |
 
 ## Key Findings
 
-- **Naive ECS→React Flow rendering breaks outright** (Spike 001): deriving the `nodes` prop
-  fresh from `world.entities.map()` on every mutation produced a blank canvas and
-  ~2700–4900 renders/node/sec, independent of mutation rate — even at rest. The buffered
-  pattern (React Flow owns local state, ECS patches by id, position writes back on drag-stop)
-  stayed correct at 7–67 renders/node under the same stress.
-- **ECS and XState coexist only with an explicit ownership contract** (Spike 002): XState owns
-  entity existence; any id-referencing XState state (e.g. `selectedNodeId`) dangles after entity
-  removal unless re-validated per snapshot (`clearSelectionIfMissing` pattern, A/B-confirmed).
-  ECS-only fields (hover, drag count) are silently wiped by a remove+re-add cycle.
-- **miniplex beats bitECS for this domain** (Spikes 003a/003b): full entity-level type safety,
-  native string-heavy data, automatic entity hygiene. bitECS's `set()` helper is a silent no-op
-  without a separately-registered `onSet` observer — wrong data with zero errors.
-- **ECS "systems" are the wrong layer for stateless per-interaction behaviors** (Spike 004):
-  identical correctness and identical measured performance (465 renders, ~430ms stress sweep)
-  vs. a plain `resolveLifecycle`-style pure function — at 3x the code (54 vs 17 lines).
+### Session 1 — ECS as UI store
+- Naive ECS→React Flow rendering breaks outright (blank canvas); the buffered pattern is mandatory.
+- ECS and XState coexist only with an explicit ownership contract (XState owns existence;
+  `clearSelectionIfMissing`).
+- miniplex beats bitECS for UI ergonomics; bitECS `set()` is a silent no-op without `onSet`.
+- ECS "systems" are the wrong layer for stateless per-interaction behaviors (3× code, 0 benefit).
 
-**Overall recommendation:** if pursued, scope ECS narrowly — miniplex as the entity store for
-the live SSE-driven graph, buffered React Flow rendering, XState as existence source of truth,
-and plain derivation functions for per-interaction behaviors. Full blueprint in
-`./.claude/skills/spike-findings-grpc-llm/references/ecs-pipeline-canvas.md`.
+### Session 2 — ECS as LLM context substrate (context-engineering reframing)
+- The bitECS reversal hypothesis was tested on its own best criteria and invalidated twice:
+  binary snapshots 40× slower and non-canonical under churn, duplicate entities on same-world
+  restore, no win even on numeric-only 50k entities; delta packets opaque with a zero-skip gotcha.
+- Token cost is library-independent; format is a 2.9× lever (compact DSL 752 vs pretty JSON 2,175).
+- Delta contexts: 49% → 95% savings as world grows, mirror-reconstruction exact; the tracker is
+  ~30 lines because the 002 choke-point discipline already exists.
+- Single-path mediation with staged proposals + 3-point re-validation survived every two-writer
+  race (17/17); optimistic adds need pending-confirmation handling.
+- Snapshot ring + event log gives rewind/undo/redo/replay at ~80 LOC and closes the 002
+  ECS-only-field gap for rewind scenarios.
+
+**Overall recommendation:** miniplex world as the tri-consumer substrate (React Flow, XState,
+context assembler), buffered rendering, canonical verbalizer + delta contexts, one mediation path
+for all writers, clear-then-restore history. Planned as Phase 9 (`.planning/phases/09-ecs-context-canvas/`).
