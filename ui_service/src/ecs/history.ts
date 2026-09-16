@@ -79,14 +79,18 @@ export interface HistoryEvent {
 
 export function createEventLog() {
   let events: HistoryEvent[] = [];
+  let nextSeq = 0;
   return {
     record(type: HistoryEvent['type'], payload: unknown) {
-      events.push({ seq: events.length, type, payload });
+      events.push({ seq: nextSeq++, type, payload });
     },
     slice: (from = 0, to = events.length) => events.slice(from, to),
     length: () => events.length,
+    lastSeq: () => nextSeq - 1,
     // Checkpointing extension (beyond the spike): drop everything before
-    // upToSeq so the log cannot grow unbounded across a session.
+    // upToSeq so the log cannot grow unbounded across a session. seq is a
+    // monotonic counter independent of array length, so this is safe to
+    // call repeatedly without corrupting later seq assignments.
     dropPrefix(upToSeq: number) {
       events = events.filter((e) => e.seq >= upToSeq);
     },
@@ -138,15 +142,10 @@ export function createHistory(w: World, m: Mediation, { capacity = 20 }: { capac
     log.record('sync', records);
     // Checkpoint: drop the event-log prefix older than the oldest surviving
     // ring entry so the log cannot grow unbounded across a session (spike
-    // 008's explicit carry-forward constraint).
-    const oldest = ring.at(-(ring.size() - 1));
-    if (oldest) {
-      // Best-effort: without per-entry seq bookkeeping we checkpoint the
-      // entire log once the ring has filled past capacity — the log only
-      // ever needs to cover events since the oldest surviving snapshot.
-      const dropFrom = Math.max(0, log.length() - ring.size());
-      log.dropPrefix(dropFrom);
-    }
+    // 008's explicit carry-forward constraint). The ring's capacity bounds
+    // how far back a snapshot can restore, so the log only ever needs to
+    // retain events back to that same horizon.
+    log.dropPrefix(Math.max(0, log.lastSeq() - capacity + 1));
     cursor = 0;
   }
 
