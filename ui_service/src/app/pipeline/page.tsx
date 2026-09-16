@@ -40,6 +40,8 @@ import { pipelinePageMachine } from '@/machines/pipelinePage';
 import { buildCanvasGraph, STAGE_NODES, STAGE_EDGES } from './canvasGraph';
 import { subscribeWorld, getWorldVersion, canvasWorld } from '@/ecs/world';
 import { syncFromPipeline } from '@/ecs/sync';
+import { canvasMediation } from '@/ecs/mediation';
+import { proposalAnnotations, pendingConfirmations, type ProposalAnnotation } from '@/ecs/preview';
 import type { EntityRecord } from '@/ecs/types';
 
 // ── Node types ──
@@ -78,6 +80,15 @@ function dataFromEntity(nodeType: string | undefined, entity: EntityRecord): Rec
     default:
       return null;
   }
+}
+
+// Compare ProposalAnnotations by value, not object identity, per plan 08's
+// early-return-identical-reference requirement — a node whose annotation is
+// unchanged (even though `proposalAnnotations()` returns a fresh Map/object
+// every call) must still return the SAME node reference.
+function annotationKey(ann: ProposalAnnotation | undefined): string {
+  if (!ann) return '';
+  return `${ann.proposalId}|${ann.kind}|${ann.deltaLines.join('|')}`;
 }
 
 export default function PipelinePage() {
@@ -168,6 +179,50 @@ export default function PipelinePage() {
 
     syncFromPipeline(pipeline, layout);
 
+    // Resolve/expire optimistic add_module confirmations in the SAME
+    // transition as the sync above (T-09-03) — an id present in the fresh
+    // ECS world after syncFromPipeline was confirmed by the backend; an id
+    // that outlives its grace window is removed through the ECS choke point
+    // rather than left as a permanent ghost.
+    for (const id of pendingConfirmations.pendingIds()) {
+      if (canvasWorld.byId.has(id)) pendingConfirmations.resolve(id);
+    }
+    for (const id of pendingConfirmations.expired(Date.now())) {
+      canvasWorld.removeById(id);
+      pendingConfirmations.resolve(id);
+    }
+
+    // Ghost nodes for staged `add_module` proposals reference an entity id
+    // that does not exist in `pipeline`/ECS yet — appended here (not in
+    // canvasGraph.ts) using the same auto-layout row the real module nodes
+    // use, per plan 08 Task 3.
+    const existingIds = new Set(builtNodes.map((n) => n.id));
+    const moduleCount = builtNodes.filter((n) => n.type === 'module').length;
+    let ghostOffset = 0;
+    for (const [proposalId, proposal] of canvasMediation.proposals) {
+      if (proposal.status !== 'staged') continue;
+      for (const op of proposal.ops) {
+        if (op.op !== 'add_module') continue;
+        if (existingIds.has(op.rec.id)) continue;
+        builtNodes.push({
+          id: op.rec.id,
+          type: 'module',
+          position: { x: (moduleCount + ghostOffset) * 190, y: 600 },
+          data: {
+            label: op.rec.label,
+            category: op.rec.category ?? '',
+            // GhostModuleNode never reads `state` (there is no live status
+            // to reflect yet) — 'disabled' is a type-safe placeholder only.
+            state: 'disabled',
+            moduleId: op.rec.id,
+            proposal: { proposalId, kind: 'ghost', deltaLines: [] },
+          } satisfies ModuleNodeData,
+        });
+        existingIds.add(op.rec.id);
+        ghostOffset++;
+      }
+    }
+
     setNodes((prev) => {
       const prevIds = new Set(prev.map((n) => n.id));
       const builtIds = new Set(builtNodes.map((n) => n.id));
@@ -190,16 +245,38 @@ export default function PipelinePage() {
   // internal measurement tracking. Never builds the array from
   // a fresh mapping of the live entity collection; never replaces the whole array here.
   useEffect(() => {
+    // Computed once per run — a pure derivation from canvasMediation.proposals
+    // (D9-08: preview is a pure overlay, never touches the live world).
+    const annotations = proposalAnnotations(canvasMediation.proposals);
+    const pendingIds = new Set(pendingConfirmations.pendingIds());
+
     setNodes((prev) =>
       prev.map((n) => {
         const entity = canvasWorld.byId.get(n.id);
-        if (!entity) return n;
-        const patch = dataFromEntity(n.type, entity);
-        if (!patch) return n;
+        const mirroredPatch = entity ? dataFromEntity(n.type, entity) : null;
         const currentData = n.data as Record<string, unknown>;
-        const changed = Object.entries(patch).some(([k, v]) => currentData[k] !== v);
-        if (!changed) return n;
-        return { ...n, data: { ...currentData, ...patch } };
+
+        const ann = annotations.get(n.id);
+        const confirming = pendingIds.has(n.id);
+
+        const mirroredChanged = mirroredPatch
+          ? Object.entries(mirroredPatch).some(([k, v]) => currentData[k] !== v)
+          : false;
+        const annotationChanged =
+          annotationKey(ann) !== annotationKey(currentData.proposal as ProposalAnnotation | undefined);
+        const confirmingChanged = Boolean(currentData.confirming) !== confirming;
+
+        if (!mirroredChanged && !annotationChanged && !confirmingChanged) return n;
+
+        return {
+          ...n,
+          data: {
+            ...currentData,
+            ...(mirroredPatch ?? {}),
+            proposal: ann,
+            confirming,
+          },
+        };
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
