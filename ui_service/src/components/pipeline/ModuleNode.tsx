@@ -18,7 +18,7 @@
 import React, { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion, type MotionProps } from 'framer-motion';
-import { Puzzle, Power, PowerOff, Eye } from 'lucide-react';
+import { Puzzle, Power, PowerOff, Eye, Sparkles, Loader2 } from 'lucide-react';
 
 export interface ModuleNodeData {
   label: string;
@@ -29,6 +29,20 @@ export interface ModuleNodeData {
   pendingApproval?: boolean;
   status?: string;
   buildStage?: string;
+  /**
+   * Phase 9 plan 08: a staged LLM proposal overlay, derived by
+   * `ecs/preview.ts`'s `proposalAnnotations()`. Purely additive — never
+   * replaces the lifecycle rendering below (locked "preview is a pure
+   * overlay" decision, D9-08).
+   */
+  proposal?: { proposalId: string; kind: 'field' | 'ghost' | 'removal'; deltaLines: string[] };
+  /**
+   * Phase 9 plan 08: true while an optimistically-approved `add_module` is
+   * awaiting SSE confirmation (T-09-03's pending-confirmation grace). Ignored
+   * whenever `proposal` is also set — see precedence comment at the render
+   * site below.
+   */
+  confirming?: boolean;
   [key: string]: unknown;
 }
 
@@ -107,10 +121,13 @@ function NodeShell({
   );
 }
 
-function ModuleNodeComponent({ data }: NodeProps) {
-  const d = data as unknown as ModuleNodeData;
-  const lifecycle = resolveLifecycle(d);
-
+/**
+ * The six existing lifecycle renderings, extracted verbatim (UI-SPEC's
+ * Visual Regression Lock) into their own function so `ModuleNodeComponent`
+ * can wrap the result with the Phase 9 proposal/confirming overlays without
+ * touching a single line inside these branches.
+ */
+function renderLifecycleContent(d: ModuleNodeData, lifecycle: ModuleLifecycle) {
   // ---- legacy: original running/disabled/failed rendering, unchanged ----
   if (lifecycle === 'legacy') {
     const style = stateStyles[d.state] ?? stateStyles.disabled;
@@ -272,6 +289,96 @@ function ModuleNodeComponent({ data }: NodeProps) {
         {d.category}
       </span>
     </NodeShell>
+  );
+}
+
+/**
+ * Ghost node shell for a staged `add_module` proposal (Phase 9 plan 08) — the
+ * entity does not exist yet, so there is no live lifecycle rendering to
+ * overlay. 60% opacity, dashed violet border, no lifecycle badge.
+ */
+function GhostModuleNode({ d }: { d: ModuleNodeData }) {
+  return (
+    <div className="relative">
+      <Handle type="target" position={Position.Left} className="!bg-zinc-500" />
+      <div className="rounded-lg border-2 border-dashed border-violet-500/50 bg-violet-500/5 px-4 py-3 min-w-[170px] shadow-md opacity-60">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Sparkles className="w-4 h-4 text-violet-400" />
+          <span className="text-sm font-medium text-zinc-100 truncate">(proposed) {d.label}</span>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300">
+          {d.category}
+        </span>
+      </div>
+      <Handle type="source" position={Position.Right} className="!bg-zinc-500" />
+    </div>
+  );
+}
+
+/**
+ * Violet proposal overlay ('field' / 'removal') and zinc confirming
+ * treatment, layered around `renderLifecycleContent()`'s output WITHOUT
+ * modifying any of its six branches. `outline` (not `border`) is used so the
+ * overlay never affects box layout — matches the "pure overlay on views"
+ * constraint (D9-08). Precedence when both `proposal` and `confirming` are
+ * set: `proposal` wins — a staged proposal on a confirming node is the more
+ * actionable state for a human to see.
+ */
+function ProposalOverlay({ d, children }: { d: ModuleNodeData; children: React.ReactNode }) {
+  if (d.proposal?.kind === 'field') {
+    return (
+      <div className="relative rounded-lg outline outline-2 outline-dashed outline-violet-500/40 outline-offset-2">
+        <div className="absolute -top-2 -left-2 z-10 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center shadow-md">
+          <Sparkles className="w-2.5 h-2.5 text-white" />
+        </div>
+        {children}
+        {d.proposal.deltaLines.map((line, i) => (
+          <div key={i} className="text-[10px] text-violet-400 font-mono px-1">
+            {line}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (d.proposal?.kind === 'removal') {
+    return (
+      <div className="relative rounded-lg outline outline-2 outline-dashed outline-violet-500/40 outline-offset-2 opacity-50">
+        {children}
+        <div className="text-[10px] text-violet-400 px-1">· Proposed Removal</div>
+      </div>
+    );
+  }
+
+  if (!d.proposal && d.confirming) {
+    return (
+      <div className="relative rounded-lg outline outline-2 outline-dashed outline-zinc-500/50 outline-offset-2 opacity-70">
+        <div className="absolute -top-2 -right-2 z-10">
+          <Loader2 className="w-3 h-3 text-zinc-400 animate-spin" />
+        </div>
+        {children}
+        <div className="text-[10px] text-zinc-500 px-1">· Confirming…</div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+function ModuleNodeComponent({ data }: NodeProps) {
+  const d = data as unknown as ModuleNodeData;
+
+  // Ghost nodes (staged `add_module`) reference an entity id with no live
+  // state — nothing to overlay against, so they get a fully dedicated shell.
+  if (d.proposal?.kind === 'ghost') {
+    return <GhostModuleNode d={d} />;
+  }
+
+  const lifecycle = resolveLifecycle(d);
+  return (
+    <ProposalOverlay d={d}>
+      {renderLifecycleContent(d, lifecycle)}
+    </ProposalOverlay>
   );
 }
 
