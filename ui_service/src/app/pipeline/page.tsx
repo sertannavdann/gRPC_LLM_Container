@@ -10,7 +10,8 @@
  */
 'use client';
 
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useSyncExternalStore } from 'react';
 import {
   ReactFlow,
   Background,
@@ -20,6 +21,7 @@ import {
   useEdgesState,
   type Node,
   type Edge,
+  type NodeChange,
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -27,7 +29,7 @@ import { useMachine } from '@xstate/react';
 import { Zap, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 
 import { ServiceNode } from '@/components/pipeline/ServiceNode';
-import { StageNode, type StageNodeData } from '@/components/pipeline/StageNode';
+import { StageNode } from '@/components/pipeline/StageNode';
 import { ToolNode } from '@/components/pipeline/ToolNode';
 import { AdapterNode } from '@/components/pipeline/AdapterNode';
 import { ModuleNode, type ModuleNodeData } from '@/components/pipeline/ModuleNode';
@@ -35,6 +37,10 @@ import { NodeDetailPanel } from '@/components/pipeline/NodeDetailPanel';
 import type { SelectedNode } from '@/store/nexusStore';
 import { useNexusStore } from '@/store/nexusStore';
 import { pipelinePageMachine } from '@/machines/pipelinePage';
+import { buildCanvasGraph, STAGE_NODES, STAGE_EDGES } from './canvasGraph';
+import { subscribeWorld, getWorldVersion, canvasWorld } from '@/ecs/world';
+import { syncFromPipeline } from '@/ecs/sync';
+import type { EntityRecord } from '@/ecs/types';
 
 // ── Node types ──
 const nodeTypes = {
@@ -45,41 +51,34 @@ const nodeTypes = {
   module: ModuleNode,
 };
 
-// ── Static pipeline stages (Row 0) ──
-const STAGE_NODES: Node[] = [
-  { id: 'stage-intent', type: 'stage', position: { x: 60, y: 50 }, data: { label: 'Intent Detection', description: 'Pattern matching + NLU' } satisfies StageNodeData },
-  { id: 'stage-routing', type: 'stage', position: { x: 300, y: 50 }, data: { label: 'LIDM Routing', description: 'Tier selection & delegation' } satisfies StageNodeData },
-  { id: 'stage-tools', type: 'stage', position: { x: 540, y: 50 }, data: { label: 'Tool Execution', description: 'Function calls & RAG' } satisfies StageNodeData },
-  { id: 'stage-synth', type: 'stage', position: { x: 780, y: 50 }, data: { label: 'Synthesis', description: 'Response generation' } satisfies StageNodeData },
-];
-
-const STAGE_EDGES: Edge[] = [
-  { id: 'e-s1-s2', source: 'stage-intent', target: 'stage-routing', animated: true, style: { stroke: '#f97316', strokeWidth: 2 } },
-  { id: 'e-s2-s3', source: 'stage-routing', target: 'stage-tools', animated: true, style: { stroke: '#f97316', strokeWidth: 2 } },
-  { id: 'e-s3-s4', source: 'stage-tools', target: 'stage-synth', animated: true, style: { stroke: '#f97316', strokeWidth: 2 } },
-];
-
-// Edge style helpers
-const stageToToolEdge = (source: string, target: string): Edge => ({
-  id: `e-${source}-${target}`,
-  source,
-  sourceHandle: 'bottom',
-  target,
-  style: { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '6 3' },
-});
-
-const stateEdgeColor: Record<string, string> = {
-  running: '#22c55e',
-  error: '#ef4444',
-  disabled: '#71717a',
-};
-
-const toolToAdapterEdge = (source: string, target: string, state: string): Edge => ({
-  id: `e-${source}-${target}`,
-  source,
-  target,
-  style: { stroke: stateEdgeColor[state] ?? '#71717a', strokeWidth: 1.5 },
-});
+// Mirrored fields a rendered node's `data` carries — must stay in sync with
+// ecs/sync.ts's MIRRORED_FIELDS so the patch effect below only rewrites data
+// that actually changed.
+function dataFromEntity(nodeType: string | undefined, entity: EntityRecord): Record<string, unknown> | null {
+  switch (nodeType) {
+    case 'service':
+      return { label: entity.label, state: entity.status, latency_ms: entity.latency };
+    case 'tool':
+      return { label: entity.label, connectedAdapters: entity.flags.map((f) => f.replace(/^adapter:/, '')) };
+    case 'adapter':
+      return {
+        label: entity.label,
+        state: entity.status,
+        requiresAuth: entity.flags.includes('auth_required'),
+        hasCredentials: !entity.flags.includes('no_credentials'),
+      };
+    case 'module':
+      return {
+        label: entity.label,
+        state: entity.status,
+        status: entity.lifecycle,
+        buildStage: entity.detail,
+        pendingApproval: entity.flags.includes('pending_approval'),
+      };
+    default:
+      return null;
+  }
+}
 
 export default function PipelinePage() {
   const { fetchModules, testRunning, testResult, runModuleTests } = useNexusStore();
@@ -104,8 +103,18 @@ export default function PipelinePage() {
             ? 'error'
             : 'closed';
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([...STAGE_NODES]);
+  const [nodes, setNodes, onNodesChangeRF] = useNodesState<Node>([...STAGE_NODES]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([...STAGE_EDGES]);
+
+  // Subscribe to the ECS world's touch() bridge (world.ts) — the server
+  // snapshot arg (3rd) prevents a Next.js App Router SSR/hydration mismatch
+  // throw, since the world is a module-scope singleton with no server twin.
+  const version = useSyncExternalStore(subscribeWorld, getWorldVersion, getWorldVersion);
+
+  // Tracks the node id currently mid-drag so the drag-stop write-back below
+  // only ever touches the one entity that actually moved (skill blueprint's
+  // What-to-Avoid: never tag the whole array as user-touched).
+  const draggingId = useRef<string | null>(null);
 
   // Populate the admin module list (module enable/disable actions) on mount.
   // SSE transport itself is owned by pipelinePageMachine's connection region.
@@ -136,179 +145,92 @@ export default function PipelinePage() {
     return { type: found.type ?? 'stage', id: found.id, data: found.data as Record<string, unknown> };
   }, [state.context.selectedNodeId, nodes]);
 
-  // Rebuild nodes when pipeline state updates
+  // ── ECS ingestion effect: keyed on the pipeline reference itself (XState
+  // replaces it only on genuine new SSE data — never a raw `useEffect([])`,
+  // per 09-RESEARCH.md Pitfall 2 StrictMode double-invocation). Builds the
+  // graph, feeds `syncFromPipeline` the computed layout so plan 04's
+  // `toEntityRecords` can seed new entities, then replaces `nodes`/`edges`
+  // ONLY when the node id set (the topology) actually changed — a wholesale
+  // replace on every 2s tick is exactly what the buffered pattern exists to
+  // stop.
   useEffect(() => {
     if (!pipeline) return;
 
-    const dynamicNodes: Node[] = [...STAGE_NODES];
-    const dynamicEdges: Edge[] = [...STAGE_EDGES];
+    const currentEcsPositions = new Map<string, { x: number; y: number }>();
+    for (const [id, entity] of canvasWorld.byId) {
+      currentEcsPositions.set(id, { x: entity.x, y: entity.y });
+    }
 
-    // ── Row -1: Service nodes (y=-80, above stages) ──
-    const services = Object.values(pipeline.services);
-    services.forEach((svc, i) => {
-      const id = `svc-${svc.name}`;
-      dynamicNodes.push({
-        id,
-        type: 'service',
-        position: { x: 60 + i * 220, y: -80 },
-        data: { label: svc.name, state: svc.state, latency_ms: svc.latency_ms },
-      });
-      if (i === 0) {
-        dynamicEdges.push({
-          id: `e-${id}-intent`,
-          source: id,
-          target: 'stage-intent',
-          style: { stroke: '#71717a' },
-        });
-      }
+    const { nodes: builtNodes, edges: builtEdges, layout } = buildCanvasGraph(
+      pipeline,
+      currentEcsPositions,
+    );
+
+    syncFromPipeline(pipeline, layout);
+
+    setNodes((prev) => {
+      const prevIds = new Set(prev.map((n) => n.id));
+      const builtIds = new Set(builtNodes.map((n) => n.id));
+      const sameTopology =
+        prevIds.size === builtIds.size && [...prevIds].every((id) => builtIds.has(id));
+      return sameTopology ? prev : builtNodes;
     });
-
-    // ── Row 1: Tool nodes (y=230) ──
-    const tools = pipeline.tools ?? [];
-    // Group tools by stage for positioning
-    const toolsByStage: Record<string, typeof tools> = {};
-    tools.forEach((t) => {
-      const stage = t.stage ?? 'tools';
-      if (!toolsByStage[stage]) toolsByStage[stage] = [];
-      toolsByStage[stage].push(t);
+    setEdges((prev) => {
+      const prevIds = new Set(prev.map((e) => e.id));
+      const builtIds = new Set(builtEdges.map((e) => e.id));
+      const sameTopology =
+        prevIds.size === builtIds.size && [...prevIds].every((id) => builtIds.has(id));
+      return sameTopology ? prev : builtEdges;
     });
-
-    // Stage x-positions for aligning tools beneath
-    const stageX: Record<string, number> = {
-      intent: 60,
-      routing: 300,
-      tools: 540,
-      synth: 780,
-    };
-
-    Object.entries(toolsByStage).forEach(([stage, stageTools]) => {
-      const baseX = stageX[stage] ?? 540;
-      const totalWidth = stageTools.length * 170;
-      const startX = baseX - totalWidth / 2 + 85;
-
-      stageTools.forEach((tool, i) => {
-        const toolId = `tool-${tool.name}`;
-        dynamicNodes.push({
-          id: toolId,
-          type: 'tool',
-          position: { x: startX + i * 170, y: 230 },
-          data: {
-            label: tool.name,
-            connectedAdapters: tool.connected_adapters ?? [],
-            stage,
-          },
-        });
-
-        // Stage → Tool edge
-        const stageNodeId = `stage-${stage}`;
-        dynamicEdges.push(stageToToolEdge(stageNodeId, toolId));
-      });
-    });
-
-    // ── Row 2: Adapter nodes (y=420) ──
-    const adapters = pipeline.adapters ?? [];
-    // Track adapter positions to avoid overlap
-    const adapterPositions: Map<string, { x: number; y: number }> = new Map();
-    let adapterX = 0;
-
-    // First, compute x-positions per tool based on their connected adapters
-    tools.forEach((tool) => {
-      const connectedAdapters = tool.connected_adapters ?? [];
-      if (connectedAdapters.length === 0) return;
-
-      // Find tool node position
-      const toolId = `tool-${tool.name}`;
-      const toolNode = dynamicNodes.find((n) => n.id === toolId);
-      if (!toolNode) return;
-
-      const toolBaseX = toolNode.position.x;
-      const totalWidth = connectedAdapters.length * 160;
-      const startX = toolBaseX - totalWidth / 2 + 80;
-
-      connectedAdapters.forEach((adapterId, i) => {
-        if (!adapterPositions.has(adapterId)) {
-          adapterPositions.set(adapterId, { x: startX + i * 160, y: 420 });
-        }
-      });
-    });
-
-    // Add any unconnected adapters at the end
-    adapters.forEach((adapter) => {
-      if (!adapterPositions.has(adapter.id)) {
-        adapterPositions.set(adapter.id, { x: adapterX, y: 420 });
-        adapterX += 160;
-      }
-    });
-
-    adapters.forEach((adapter) => {
-      const adapterId = `adapter-${adapter.id}`;
-      const pos = adapterPositions.get(adapter.id) ?? { x: 0, y: 420 };
-      const locked = adapter.requires_auth && !adapter.has_credentials;
-
-      dynamicNodes.push({
-        id: adapterId,
-        type: 'adapter',
-        position: pos,
-        data: {
-          label: adapter.name,
-          adapterId: adapter.id,
-          category: adapter.category,
-          platform: adapter.platform,
-          state: adapter.state,
-          requiresAuth: adapter.requires_auth,
-          hasCredentials: adapter.has_credentials,
-        },
-      });
-
-      // Tool → Adapter edges
-      tools.forEach((tool) => {
-        if (tool.connected_adapters?.includes(adapter.id)) {
-          dynamicEdges.push(
-            toolToAdapterEdge(
-              `tool-${tool.name}`,
-              adapterId,
-              locked ? 'disabled' : adapter.state,
-            ),
-          );
-        }
-      });
-    });
-
-    // ── Row 3: Module nodes (y=600, below adapters) ──
-    // Pending-approval modules sort first (leftmost) — UI-SPEC's focal-point rule.
-    const modules = pipeline.modules ?? [];
-    const sortedModules = [...modules].sort((a, b) => {
-      const aPending = a.pending_approval ? 0 : 1;
-      const bPending = b.pending_approval ? 0 : 1;
-      return aPending - bPending;
-    });
-    const moduleAnchorId = dynamicNodes.some((n) => n.id === 'tool-module_installer')
-      ? 'tool-module_installer'
-      : 'stage-tools';
-
-    sortedModules.forEach((m, i) => {
-      const moduleNodeId = `module-${m.id}`;
-      dynamicNodes.push({
-        id: moduleNodeId,
-        type: 'module',
-        position: { x: i * 190, y: 600 },
-        data: {
-          label: m.name,
-          category: m.category ?? '',
-          state: m.state,
-          moduleId: m.id,
-          pendingApproval: m.pending_approval ?? false,
-          status: m.status,
-          buildStage: m.build_stage,
-        } satisfies ModuleNodeData,
-      });
-
-      dynamicEdges.push(toolToAdapterEdge(moduleAnchorId, moduleNodeId, m.state));
-    });
-
-    setNodes(dynamicNodes);
-    setEdges(dynamicEdges);
   }, [pipeline, setNodes, setEdges]);
+
+  // ── ECS patch effect: keyed on `version` (the touch() bridge). Looks each
+  // node up by id in the ECS `byId` map and returns the SAME node reference
+  // when nothing mirrored changed — this is what preserves React Flow's
+  // internal measurement tracking. Never builds the array from
+  // a fresh mapping of the live entity collection; never replaces the whole array here.
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.map((n) => {
+        const entity = canvasWorld.byId.get(n.id);
+        if (!entity) return n;
+        const patch = dataFromEntity(n.type, entity);
+        if (!patch) return n;
+        const currentData = n.data as Record<string, unknown>;
+        const changed = Object.entries(patch).some(([k, v]) => currentData[k] !== v);
+        if (!changed) return n;
+        return { ...n, data: { ...currentData, ...patch } };
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, setNodes]);
+
+  // Drag-stop write-back: only the entity that actually moved gets its x/y
+  // written into ECS, and only once the drag gesture completes — never
+  // mid-drag. `if (n && entity)` is the full extent of spike-tested
+  // protection against a node removed mid-drag (09-RESEARCH.md Pitfall 3,
+  // explicitly unverified); flagged here rather than building speculative
+  // machinery, slated for the plan-10 manual check.
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      for (const c of changes) {
+        if (c.type !== 'position') continue;
+        if (c.dragging) {
+          draggingId.current = c.id;
+        } else if (draggingId.current === c.id) {
+          draggingId.current = null;
+          const n = nodes.find((n) => n.id === c.id);
+          const entity = canvasWorld.byId.get(c.id);
+          if (n && entity && n.position) {
+            entity.x = n.position.x;
+            entity.y = n.position.y;
+          }
+        }
+      }
+      onNodesChangeRF(changes);
+    },
+    [nodes, onNodesChangeRF],
+  );
 
   const ago = useMemo(() => {
     if (!pipeline?.timestamp) return '';
