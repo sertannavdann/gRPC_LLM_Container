@@ -56,6 +56,15 @@ interface NodeDetailPanelProps {
   onApprove?: () => void;
   onReject?: (feedback?: string) => void;
   onRetryReview?: () => void;
+  // Canvas-op proposal review surface (Phase 9 plan 09)
+  canvasProposal?: {
+    proposalId: string;
+    status: 'staged' | 'approved' | 'rejected' | 'invalidated';
+    reason?: string;
+    rows: { field: string; value: string }[];
+  } | null;
+  onApproveChange?: () => void;
+  onRejectChange?: () => void;
 }
 
 const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -177,6 +186,9 @@ export function NodeDetailPanel({
   onApprove,
   onReject,
   onRetryReview,
+  canvasProposal,
+  onApproveChange,
+  onRejectChange,
 }: NodeDetailPanelProps) {
   const d = node?.data ?? {};
   const cfg = typeConfig[node?.type ?? ''] ?? typeConfig.stage;
@@ -335,6 +347,49 @@ export function NodeDetailPanel({
                   )}
                 </div>
               </section>
+
+              {/* Proposed Change section (canvasOpApproval, Phase 9 plan 09) —
+                  a single compact section, NOT an accordion (one proposal
+                  needs no collapse affordance). Rendered whenever a staged
+                  canvas-op proposal targets this node. */}
+              {canvasProposal && (
+                <section>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                    <span className="text-xs font-semibold text-violet-300 uppercase tracking-wide">
+                      Proposed Change
+                    </span>
+                  </div>
+
+                  {reviewState === 'error' ? (
+                    <DegradedBanner
+                      feature="Proposed change"
+                      reasons={[
+                        actionError ??
+                          "Couldn't load the proposed change. Check the pipeline for the latest state.",
+                      ]}
+                      onRetry={onRetryReview}
+                    />
+                  ) : canvasProposal.status === 'invalidated' ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-zinc-200">Proposal no longer valid</p>
+                      <p className="text-xs text-zinc-500">
+                        This entity changed before the proposal could be reviewed. Ask the
+                        assistant to try again.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {canvasProposal.rows.map((row) => (
+                        <div key={row.field} className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">{row.field}</span>
+                          <span className="text-violet-300 font-medium">{row.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
 
               {/* Auto-generated module output panel (D-07) — installed,
                   non-pending modules only; the review surface above owns
@@ -770,6 +825,41 @@ export function NodeDetailPanel({
                   </div>
                 </div>
               )}
+
+            {/* Sticky Approve/Reject Change footer (canvasOpApproval) — reuses
+                the module-approval footer shell/button styling verbatim.
+                Reject Change is deliberately a SINGLE click (no confirmation
+                step): the action is recoverable via the snapshot ring. */}
+            {canvasProposal && canvasProposal.status !== 'invalidated' && reviewState !== 'error' && (
+              <div className="border-t border-zinc-700 px-4 py-3 flex-shrink-0">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onApproveChange?.()}
+                    disabled={busy}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-green-500 hover:bg-green-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white transition-colors"
+                  >
+                    {reviewState === 'approving' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                    Approve Change
+                  </button>
+                  <button
+                    onClick={() => onRejectChange?.()}
+                    disabled={busy}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-red-500 hover:bg-red-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white transition-colors"
+                  >
+                    {reviewState === 'rejecting' ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <X className="w-4 h-4" />
+                    )}
+                    Reject Change
+                  </button>
+                </div>
+              </div>
+            )}
           </motion.div>
         </>
       )}
