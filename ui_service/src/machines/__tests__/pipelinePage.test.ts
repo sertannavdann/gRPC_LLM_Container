@@ -54,6 +54,8 @@ const testMachine = pipelinePageMachine.provide({
     })),
     approveAction: fromPromise(async () => fakeApprovalResult),
     rejectAction: fromPromise(async () => fakeApprovalResult),
+    approveChange: fromPromise(async () => ({ ok: true, label: 'pre-approve:prop-1' } as { ok: boolean; error?: string; label: string })),
+    rejectChange: fromPromise(async () => ({ ok: true, rewound: true } as { ok: boolean; rewound: boolean })),
   },
 });
 
@@ -148,5 +150,104 @@ describe('pipelinePageMachine — clearSelectionIfMissing', () => {
         'module-weather/openweather',
       ])
     );
+  });
+});
+
+describe('pipelinePageMachine — canvasOpApproval branch', () => {
+  it('CANVAS_PROPOSAL moves reviewPanel to open and sets canvasProposalId', () => {
+    const actor = createActor(testMachine).start();
+
+    actor.send({
+      type: 'CANVAS_PROPOSAL',
+      proposalId: 'prop-1',
+      nodeId: 'module-weather/openweather',
+    });
+
+    const snap = actor.getSnapshot();
+    expect(snap.matches({ reviewPanel: 'open' })).toBe(true);
+    expect(snap.context.canvasProposalId).toBe('prop-1');
+    expect(snap.context.selectedNodeId).toBe('module-weather/openweather');
+    actor.stop();
+  });
+
+  it('APPROVE_CHANGE from open reaches approvingChange and returns to closed', async () => {
+    const actor = createActor(testMachine).start();
+
+    actor.send({
+      type: 'CANVAS_PROPOSAL',
+      proposalId: 'prop-1',
+      nodeId: 'module-weather/openweather',
+    });
+    actor.send({ type: 'APPROVE_CHANGE' });
+    expect(actor.getSnapshot().matches({ reviewPanel: 'approvingChange' })).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(actor.getSnapshot().matches({ reviewPanel: 'closed' })).toBe(true);
+    actor.stop();
+  });
+
+  it('REJECT_CHANGE with a rewound result sets canvasRewound === true', async () => {
+    const actor = createActor(testMachine).start();
+
+    actor.send({
+      type: 'CANVAS_PROPOSAL',
+      proposalId: 'prop-1',
+      nodeId: 'module-weather/openweather',
+    });
+    actor.send({ type: 'REJECT_CHANGE' });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(actor.getSnapshot().context.canvasRewound).toBe(true);
+    actor.stop();
+  });
+
+  it('an SSE_MESSAGE omitting the proposal target node clears canvasProposalId', () => {
+    const actor = createActor(testMachine).start();
+
+    actor.send({
+      type: 'CANVAS_PROPOSAL',
+      proposalId: 'prop-1',
+      nodeId: 'module-weather/openweather',
+    });
+    actor.send({ type: 'SSE_MESSAGE', data: snapshot([], []) });
+
+    expect(actor.getSnapshot().context.canvasProposalId).toBeNull();
+    actor.stop();
+  });
+
+  it('a stubbed actor rejection routes to the error substate with actionError set', async () => {
+    const failingMachine = pipelinePageMachine.provide({
+      actors: {
+        sseConnection: fromCallback(() => () => {}),
+        loadReview: fromPromise(async () => ({
+          review: fakeReview,
+          audit: [] as ModuleAuditAttempt[],
+        })),
+        approveAction: fromPromise(async () => fakeApprovalResult),
+        rejectAction: fromPromise(async () => fakeApprovalResult),
+        approveChange: fromPromise((): Promise<{ ok: boolean; error?: string; label: string }> => {
+          throw new Error('Proposal is invalidated, not staged');
+        }),
+        rejectChange: fromPromise(async () => ({ ok: true, rewound: true } as { ok: boolean; rewound: boolean })),
+      },
+    });
+
+    const actor = createActor(failingMachine).start();
+
+    actor.send({
+      type: 'CANVAS_PROPOSAL',
+      proposalId: 'prop-1',
+      nodeId: 'module-weather/openweather',
+    });
+    actor.send({ type: 'APPROVE_CHANGE' });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const snap = actor.getSnapshot();
+    expect(snap.matches({ reviewPanel: 'error' })).toBe(true);
+    expect(snap.context.actionError).toBe('Proposal is invalidated, not staged');
+    actor.stop();
   });
 });

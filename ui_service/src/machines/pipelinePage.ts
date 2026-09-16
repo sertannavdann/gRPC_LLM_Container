@@ -26,6 +26,7 @@ import {
   type ModuleAuditAttempt,
 } from '../lib/adminClient';
 import { entityIdFor } from '@/ecs/types';
+import { canvasHistory } from '@/ecs/history';
 
 // ── Stage node ids (static scaffolding, never present in an SSE payload) ─────
 
@@ -68,6 +69,8 @@ export interface PipelinePageContext {
   review: ModuleReview | null;
   audit: ModuleAuditAttempt[];
   actionError: string | null;
+  canvasProposalId: string | null;
+  canvasRewound: boolean;
 }
 
 export type PipelinePageEvent =
@@ -77,7 +80,10 @@ export type PipelinePageEvent =
   | { type: 'CLOSE_PANEL' }
   | { type: 'APPROVE' }
   | { type: 'REJECT'; feedback?: string }
-  | { type: 'RETRY' };
+  | { type: 'RETRY' }
+  | { type: 'CANVAS_PROPOSAL'; proposalId: string; nodeId: string }
+  | { type: 'APPROVE_CHANGE' }
+  | { type: 'REJECT_CHANGE' };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +137,32 @@ const rejectAction = fromPromise(
   }
 );
 
+const approveChange = fromPromise(
+  async ({ input }: { input: { proposalId: string | null } }) => {
+    if (!input.proposalId) {
+      throw new Error('No canvas proposal selected to approve');
+    }
+    const result = canvasHistory.approveWithHistory(input.proposalId);
+    if (!result.ok) {
+      throw new Error(result.error ?? 'Approve failed');
+    }
+    return result;
+  }
+);
+
+const rejectChange = fromPromise(
+  async ({ input }: { input: { proposalId: string | null } }) => {
+    if (!input.proposalId) {
+      throw new Error('No canvas proposal selected to reject');
+    }
+    const result = canvasHistory.rejectWithRewind(input.proposalId);
+    if (!result.ok) {
+      throw new Error('Reject failed — proposal may already be resolved');
+    }
+    return result;
+  }
+);
+
 // ── XState v5 Machine Setup ─────────────────────────────────────────────────
 
 export const pipelinePageMachine = setup({
@@ -150,6 +182,8 @@ export const pipelinePageMachine = setup({
     loadReview,
     approveAction,
     rejectAction,
+    approveChange,
+    rejectChange,
   },
 
   guards: {
@@ -177,12 +211,26 @@ export const pipelinePageMachine = setup({
       review: null,
       audit: [],
       actionError: null,
+      canvasProposalId: null,
     })),
+
+    setCanvasProposal: assign(({ event }) => {
+      if (event.type !== 'CANVAS_PROPOSAL') return {};
+      return {
+        canvasProposalId: event.proposalId,
+        selectedNodeId: event.nodeId,
+      };
+    }),
 
     // T-09-02: re-validate the selected node id against every new SSE
     // snapshot in the SAME transition, before the reference can dangle.
     // Resets the same fields as `clearSelection` — a dangling selection
-    // must also drop the review payload it was showing (T-09-15).
+    // must also drop the review payload it was showing (T-09-15). Also
+    // clears `canvasProposalId` when its target node is absent from the
+    // snapshot — the same locked re-validation rule applied to the new
+    // id-referencing context field (the ECS-side revalidateStagedProposals
+    // guard already runs separately inside syncRecords, this only clears
+    // the machine's own reference so a stale panel does not linger).
     clearSelectionIfMissing: assign(({ context, event }) => {
       if (event.type !== 'SSE_MESSAGE') return {};
       if (context.selectedNodeId === null) return {};
@@ -194,6 +242,7 @@ export const pipelinePageMachine = setup({
         review: null,
         audit: [],
         actionError: null,
+        canvasProposalId: null,
       };
     }),
 
@@ -213,6 +262,11 @@ export const pipelinePageMachine = setup({
           : 'Action failed';
       return { actionError: message };
     }),
+
+    storeCanvasRewound: assign(({ event }) => {
+      const doneEvent = event as unknown as { output?: { rewound?: boolean } };
+      return { canvasRewound: Boolean(doneEvent.output?.rewound) };
+    }),
   },
 }).createMachine({
   id: 'pipelinePage',
@@ -225,6 +279,8 @@ export const pipelinePageMachine = setup({
     review: null,
     audit: [],
     actionError: null,
+    canvasProposalId: null,
+    canvasRewound: false,
   },
 
   states: {
@@ -290,6 +346,10 @@ export const pipelinePageMachine = setup({
               target: 'loading',
               guard: 'hasModuleId',
             },
+            CANVAS_PROPOSAL: {
+              target: 'open',
+              actions: 'setCanvasProposal',
+            },
           },
         },
         loading: {
@@ -304,6 +364,9 @@ export const pipelinePageMachine = setup({
           on: {
             APPROVE: 'approving',
             REJECT: 'rejecting',
+            CANVAS_PROPOSAL: { actions: 'setCanvasProposal' },
+            APPROVE_CHANGE: 'approvingChange',
+            REJECT_CHANGE: 'rejectingChange',
             CLOSE_PANEL: 'closed',
           },
         },
@@ -323,6 +386,22 @@ export const pipelinePageMachine = setup({
               feedback: event.type === 'REJECT' ? event.feedback : undefined,
             }),
             onDone: { target: 'closed', actions: 'clearSelection' },
+            onError: { target: 'error', actions: 'storeActionError' },
+          },
+        },
+        approvingChange: {
+          invoke: {
+            src: 'approveChange',
+            input: ({ context }) => ({ proposalId: context.canvasProposalId }),
+            onDone: { target: 'closed', actions: ['storeCanvasRewound', 'clearSelection'] },
+            onError: { target: 'error', actions: 'storeActionError' },
+          },
+        },
+        rejectingChange: {
+          invoke: {
+            src: 'rejectChange',
+            input: ({ context }) => ({ proposalId: context.canvasProposalId }),
+            onDone: { target: 'closed', actions: ['storeCanvasRewound', 'clearSelection'] },
             onError: { target: 'error', actions: 'storeActionError' },
           },
         },
