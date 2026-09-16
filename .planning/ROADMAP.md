@@ -16,7 +16,7 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | ECS Context-Substrate Canvas | 5/10 | In Progress|  |
+| 9 | ECS Context-Substrate Canvas | 7/10 | In Progress|  |
 | 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -511,8 +511,8 @@ Plans:
 
 **Wave 4**
 
-- [ ] 09-05-PLAN.md — History: snapshot ring, event log, clear-then-restore rewind, replay redo
-- [ ] 09-07-PLAN.md — Buffered React Flow rewire of page.tsx + pure canvasGraph builder + churn E2E spec
+- [x] 09-05-PLAN.md — History: snapshot ring, event log, clear-then-restore rewind, replay redo
+- [x] 09-07-PLAN.md — Buffered React Flow rewire of page.tsx + pure canvasGraph builder + churn E2E spec
 
 **Wave 5**
 
