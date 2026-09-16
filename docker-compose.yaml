@@ -266,6 +266,10 @@ services:
     build:
       context: .
       dockerfile: ui_service/Dockerfile
+      args:
+        # Local stack opts IN to the dev seam (Phase 9 plan 09); any other
+        # build path defaults to OFF via the Dockerfile's empty ARG default.
+        NEXT_PUBLIC_CANVAS_DEV_SEAM: "${NEXT_PUBLIC_CANVAS_DEV_SEAM:-1}"
     container_name: ui_service
     ports:
       - "5001:5000"

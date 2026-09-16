@@ -24,7 +24,7 @@
 
 import { z } from 'zod';
 import { STATUSES, LIFECYCLES, type EntityRecord, type CanvasView, type Status, type Lifecycle } from './types';
-import { canvasWorld, type createPipelineWorld } from './world';
+import { canvasWorld, touch, type createPipelineWorld } from './world';
 
 // ── Op schema (zod) ─────────────────────────────────────────────────────────
 
@@ -154,6 +154,13 @@ export function createMediation(w: World) {
     if (errors.length) return { accepted: false, errors };
     const proposalId = `prop-${++seq}`;
     proposals.set(proposalId, { ops, status: 'staged' });
+    // Staging a proposal changes what `proposalAnnotations()` derives for the
+    // target node (the violet badge/ghost/removal treatment) — touch() the
+    // ECS bridge so page.tsx's version-keyed patch effect picks it up on the
+    // very next render, rather than silently waiting for the next real SSE
+    // tick (up to 2s) to happen to also call touch(). Never touches the live
+    // world itself (D9-08) — this is purely a reactivity notification.
+    touch();
     return { accepted: true, proposalId };
   }
 
@@ -237,6 +244,12 @@ export function createMediation(w: World) {
     }
 
     p.status = 'approved';
+    // Same reactivity note as propose(): the mutation choke points above
+    // (w.mutate/w.add/w.removeById) mark entities dirty but do not
+    // themselves notify React — only sync.ts's syncRecords() and
+    // restoreSnapshot() called touch() before this. Without this call, the
+    // canvas would visibly lag the approval by up to one real SSE tick.
+    touch();
     return { ok: true };
   }
 
@@ -244,6 +257,7 @@ export function createMediation(w: World) {
     const p = proposals.get(proposalId);
     if (!p || p.status !== 'staged') return { ok: false };
     p.status = 'rejected';
+    touch(); // clears the staged-proposal badge immediately — see propose()'s note.
     return { ok: true };
   }
 

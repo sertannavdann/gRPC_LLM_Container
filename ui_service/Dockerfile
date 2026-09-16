@@ -22,6 +22,16 @@ COPY ui_service/ .
 RUN mkdir -p proto
 COPY shared/proto/agent.proto ./proto/agent.proto
 
+# Dev seam for LLM-authored canvas ops (Phase 9 plan 09, ecs/ingress.ts).
+# NEXT_PUBLIC_* vars are inlined by Next.js at BUILD time, so this must be
+# set here, immediately before `npm run build`, not just at runtime. Defaults
+# to EMPTY (off) so a hardened/production image ships without the
+# window.__nexusCanvas handle; only docker-compose.yaml's local stack opts in
+# via its build.args. Setting this to anything other than "1" removes the
+# handle entirely — see ecs/ingress.ts's guard.
+ARG NEXT_PUBLIC_CANVAS_DEV_SEAM=""
+ENV NEXT_PUBLIC_CANVAS_DEV_SEAM=${NEXT_PUBLIC_CANVAS_DEV_SEAM}
+
 # Build Next.js
 RUN npm run build
 
