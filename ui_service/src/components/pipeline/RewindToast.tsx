@@ -23,11 +23,18 @@ interface RewindToastProps {
 }
 
 export function RewindToast({ message, onDismiss }: RewindToastProps) {
+  // Ref, not a dependency: `onDismiss` is commonly passed as a fresh inline
+  // arrow function on every parent render (page.tsx re-renders every 2s on
+  // each SSE tick) — depending on it directly would restart this timer on
+  // every such render and the toast would never auto-dismiss.
+  const onDismissRef = React.useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
   React.useEffect(() => {
     if (!message) return;
-    const timer = setTimeout(onDismiss, 3000);
+    const timer = setTimeout(() => onDismissRef.current(), 3000);
     return () => clearTimeout(timer);
-  }, [message, onDismiss]);
+  }, [message]);
 
   return (
     <AnimatePresence>

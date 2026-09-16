@@ -46,6 +46,19 @@ function cState(): string {
   return toCompactDsl(canvasWorld.views());
 }
 
+/**
+ * Dev-seam helper: a single entity's compact-DSL line (or null if absent).
+ * Exists so E2E rewind assertions can verify byte-identical restoration of
+ * the entity a canvas op actually targeted, without being defeated by
+ * unrelated live SSE-driven telemetry (e.g. service latency_ms) that
+ * fluctuates independently of the rewind under test across the real
+ * docker-compose stack's 2s SSE tick.
+ */
+function entityLine(id: string): string | null {
+  const view = canvasWorld.viewOf(id);
+  return view ? toCompactDsl([view]).split('\n').slice(1).join('\n') : null;
+}
+
 // Guarded browser handle: the NODE_ENV-only guard is NOT sufficient because
 // ui_service/Dockerfile sets `ENV NODE_ENV=production` and the compose stack
 // Playwright targets is a production build — a dev-only guard would compile
@@ -61,5 +74,6 @@ if (
     submitCanvasOps,
     delta,
     cState,
+    entityLine,
   };
 }

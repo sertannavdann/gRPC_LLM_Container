@@ -34,6 +34,7 @@ import { ToolNode } from '@/components/pipeline/ToolNode';
 import { AdapterNode } from '@/components/pipeline/AdapterNode';
 import { ModuleNode, type ModuleNodeData } from '@/components/pipeline/ModuleNode';
 import { NodeDetailPanel } from '@/components/pipeline/NodeDetailPanel';
+import { RewindToast } from '@/components/pipeline/RewindToast';
 import type { SelectedNode } from '@/store/nexusStore';
 import { useNexusStore } from '@/store/nexusStore';
 import { pipelinePageMachine } from '@/machines/pipelinePage';
@@ -42,7 +43,20 @@ import { subscribeWorld, getWorldVersion, canvasWorld } from '@/ecs/world';
 import { syncFromPipeline } from '@/ecs/sync';
 import { canvasMediation } from '@/ecs/mediation';
 import { proposalAnnotations, pendingConfirmations, type ProposalAnnotation } from '@/ecs/preview';
+import '@/ecs/ingress';
 import type { EntityRecord } from '@/ecs/types';
+
+// Same "{field} → {value}" derivation preview.ts already uses for node-level
+// delta lines — reused here (not re-implemented) for the panel's row list so
+// the two surfaces can never drift in format.
+function opRow(op: import('@/ecs/mediation').MutationOpT): { field: string; value: string } | null {
+  if (op.op === 'set_status') return { field: 'status', value: op.value };
+  if (op.op === 'set_credentials') return { field: 'credentials', value: `${op.list.length} items` };
+  if (op.op === 'move') return { field: 'position', value: `(${op.x}, ${op.y})` };
+  if (op.op === 'add_module') return { field: 'add_module', value: op.rec.label };
+  if (op.op === 'remove_module') return { field: 'remove_module', value: op.id };
+  return null;
+}
 
 // ── Node types ──
 const nodeTypes = {
@@ -106,9 +120,9 @@ export default function PipelinePage() {
     ? 'loading'
     : state.matches({ reviewPanel: 'open' })
       ? 'open'
-      : state.matches({ reviewPanel: 'approving' })
+      : state.matches({ reviewPanel: 'approving' }) || state.matches({ reviewPanel: 'approvingChange' })
         ? 'approving'
-        : state.matches({ reviewPanel: 'rejecting' })
+        : state.matches({ reviewPanel: 'rejecting' }) || state.matches({ reviewPanel: 'rejectingChange' })
           ? 'rejecting'
           : state.matches({ reviewPanel: 'error' })
             ? 'error'
@@ -133,10 +147,32 @@ export default function PipelinePage() {
     fetchModules();
   }, [fetchModules]);
 
+  // Remembers the most recent canvas-op proposal id opened for a given node,
+  // even after it moves from `staged` to `approved` — `proposalAnnotations()`
+  // only annotates STAGED proposals (D9-08), so a node's live badge vanishes
+  // the instant it's approved. Without this, "reject an already-applied
+  // proposal" (a locked must-have truth) would be unreachable by clicking the
+  // node a second time, since `node.data.proposal` would already be gone.
+  const lastProposalByNodeRef = useRef<Map<string, string>>(new Map());
+
   // Node click handler — routes through the machine so the reviewPanel region's
   // hasModuleId guard can open review mode only for module nodes.
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      const proposal = (node.data as ModuleNodeData | undefined)?.proposal as
+        | ProposalAnnotation
+        | undefined;
+      if (proposal) {
+        lastProposalByNodeRef.current.set(node.id, proposal.proposalId);
+        send({ type: 'CANVAS_PROPOSAL', proposalId: proposal.proposalId, nodeId: node.id });
+        return;
+      }
+      const rememberedId = lastProposalByNodeRef.current.get(node.id);
+      const remembered = rememberedId ? canvasMediation.getProposal(rememberedId) : undefined;
+      if (rememberedId && remembered?.status === 'approved') {
+        send({ type: 'CANVAS_PROPOSAL', proposalId: rememberedId, nodeId: node.id });
+        return;
+      }
       send({
         type: 'SELECT_NODE',
         nodeId: node.id,
@@ -155,6 +191,61 @@ export default function PipelinePage() {
     if (!found) return null;
     return { type: found.type ?? 'stage', id: found.id, data: found.data as Record<string, unknown> };
   }, [state.context.selectedNodeId, nodes]);
+
+  // Derives the panel's canvasProposal prop from the machine's
+  // canvasProposalId plus the live proposal record in canvasMediation —
+  // converts ops into rows using the SAME "{field} → {value}" derivation
+  // preview.ts already exports (opRow() above), never a second formatter.
+  const canvasProposal = useMemo(() => {
+    const proposalId = state.context.canvasProposalId;
+    if (!proposalId) return null;
+    const proposal = canvasMediation.getProposal(proposalId);
+    if (!proposal) return null;
+    const rows = proposal.ops
+      .map(opRow)
+      .filter((r): r is { field: string; value: string } => r !== null);
+    return { proposalId, status: proposal.status, reason: proposal.reason, rows };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.context.canvasProposalId, version]);
+
+  const [rewindMessage, setRewindMessage] = React.useState<string | null>(null);
+  const prevRewindRef = useRef(false);
+
+  // Tracks add_module ids of the proposal currently being approved so that,
+  // once the approvingChange substate resolves back to closed, this effect
+  // can call pending.mark(id) — plan 08's optimistic confirming treatment —
+  // without the machine needing to know about the pending-confirmation
+  // registry at all.
+  const pendingApprovalAddIdsRef = useRef<string[]>([]);
+  const wasApprovingChangeRef = useRef(false);
+  const isApprovingChange = state.matches({ reviewPanel: 'approvingChange' });
+  useEffect(() => {
+    if (isApprovingChange) {
+      const proposalId = state.context.canvasProposalId;
+      const proposal = proposalId ? canvasMediation.getProposal(proposalId) : undefined;
+      pendingApprovalAddIdsRef.current = (proposal?.ops ?? [])
+        .filter((op): op is Extract<typeof op, { op: 'add_module' }> => op.op === 'add_module')
+        .map((op) => op.rec.id);
+    } else if (wasApprovingChangeRef.current) {
+      for (const id of pendingApprovalAddIdsRef.current) {
+        pendingConfirmations.mark(id);
+      }
+      pendingApprovalAddIdsRef.current = [];
+    }
+    wasApprovingChangeRef.current = isApprovingChange;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isApprovingChange]);
+
+  // A rejection of an APPLIED proposal sets canvasRewound; a rejection of a
+  // merely-staged proposal does not (two non-overlapping feedback paths —
+  // UI-SPEC Interaction Contracts). Only fires the toast on the transition
+  // into `true`, so it does not re-fire on unrelated re-renders.
+  useEffect(() => {
+    if (state.context.canvasRewound && !prevRewindRef.current) {
+      setRewindMessage('Change rejected — canvas rewound to the previous state.');
+    }
+    prevRewindRef.current = state.context.canvasRewound;
+  }, [state.context.canvasRewound]);
 
   // ── ECS ingestion effect: keyed on the pipeline reference itself (XState
   // replaces it only on genuine new SSE data — never a raw `useEffect([])`,
@@ -404,7 +495,15 @@ export default function PipelinePage() {
         onApprove={() => send({ type: 'APPROVE' })}
         onReject={(feedback) => send({ type: 'REJECT', feedback })}
         onRetryReview={() => send({ type: 'RETRY' })}
+        canvasProposal={canvasProposal}
+        onApproveChange={() => send({ type: 'APPROVE_CHANGE' })}
+        onRejectChange={() => send({ type: 'REJECT_CHANGE' })}
       />
+
+      {/* Rewind confirmation toast — fires only when a rejection actually
+          rewound applied state (canvasRewound), never for a plain reject of
+          a staged-only proposal. */}
+      <RewindToast message={rewindMessage} onDismiss={() => setRewindMessage(null)} />
     </div>
   );
 }
