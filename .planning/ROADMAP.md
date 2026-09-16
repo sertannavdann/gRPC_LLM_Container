@@ -16,7 +16,7 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | ECS Context-Substrate Canvas | 7/10 | In Progress|  |
+| 9 | ECS Context-Substrate Canvas | 8/10 | In Progress|  |
 | 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
@@ -516,7 +516,7 @@ Plans:
 
 **Wave 5**
 
-- [ ] 09-08-PLAN.md — Proposal preview overlay + pending-confirmation treatment on ModuleNode
+- [x] 09-08-PLAN.md — Proposal preview overlay + pending-confirmation treatment on ModuleNode
 
 **Wave 6**
 
