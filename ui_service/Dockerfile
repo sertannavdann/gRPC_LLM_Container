@@ -1,5 +1,5 @@
 # Multi-stage build for Next.js UI service with BuildKit caching
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -7,10 +7,10 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY ui_service/package.json ./
+COPY ui_service/package.json ui_service/package-lock.json ./
 # Use BuildKit cache mount for faster npm installs
 RUN --mount=type=cache,target=/root/.npm \
-    npm install
+    npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder

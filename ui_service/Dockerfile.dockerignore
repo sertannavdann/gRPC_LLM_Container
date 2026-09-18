@@ -1,0 +1,25 @@
+# BuildKit reads this file because the Dockerfile is ui_service/Dockerfile and
+# the compose build context is the repo root. ui_service/.dockerignore is NOT
+# read for that build. Paths here are relative to the repo root.
+#
+# The build only needs ui_service/** (minus host artifacts) and
+# shared/proto/agent.proto.
+ui_service/node_modules
+ui_service/.next
+ui_service/tsconfig.tsbuildinfo
+ui_service/test-results
+ui_service/playwright-report
+ui_service/.env*.local
+ui_service/*.log
+.git
+.claude
+.planning
+llm_service
+orchestrator
+dashboard_service
+bridge_service
+chroma_service
+sandbox_service
+logs
+data
+docs
