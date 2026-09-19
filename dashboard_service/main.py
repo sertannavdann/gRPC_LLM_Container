@@ -10,6 +10,7 @@ Provides endpoints for:
 - Prometheus metrics (/metrics)
 """
 import os
+import re
 import mimetypes
 import logging
 import time
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -224,15 +225,31 @@ _PLATFORM_CONNECT_FIELD = {
 }
 
 
+def _stored_credentials() -> dict[str, dict[str, str]]:
+    """Credentials saved from the UI (encrypted store), keyed by platform."""
+    stored: dict[str, dict[str, str]] = {}
+    try:
+        store = _get_credential_store()
+        for platform, category in _PLATFORM_CATEGORY.items():
+            creds = store.retrieve(f"{category}/{platform}")
+            if creds:
+                stored[platform] = {k: str(v) for k, v in creds.items() if v}
+    except Exception as e:  # the store must never take the dashboard down
+        logger.warning(f"Credential store unavailable, using environment only: {e}")
+    return stored
+
+
 def get_aggregator(user_id: str) -> DashboardAggregator:
     """Get or create an aggregator for a user."""
     if user_id not in _aggregators:
-        # Build credentials and settings from _CREDENTIAL_ENV_MAP (single source)
+        # Credentials/settings: a value stored from the UI wins over the
+        # environment (it is the newer intent); env vars remain the fallback.
+        stored = _stored_credentials()
         credentials: dict[str, dict[str, str]] = {}
         settings: dict[str, dict[str, str]] = {}
 
         for (platform, field), env_var in _CREDENTIAL_ENV_MAP.items():
-            value = os.getenv(env_var, "")
+            value = stored.get(platform, {}).get(field) or os.getenv(env_var, "")
             if not value:
                 continue
             if (platform, field) in _SETTINGS_FIELDS:
@@ -252,17 +269,21 @@ def get_aggregator(user_id: str) -> DashboardAggregator:
             connected_platforms["clashroyale"] = False
 
         weather_platforms = ["openweather"] if connected_platforms.get("openweather") else []
-        calendar_platforms = ["mock"]
-        if connected_platforms.get("google_calendar"):
-            calendar_platforms.append("google_calendar")
+        calendar_platforms = ["google_calendar"] if connected_platforms.get("google_calendar") else []
         gaming_platforms = ["clashroyale"] if connected_platforms.get("clashroyale") else []
+        # Finance is the user's real CSV exports (same directory the /bank
+        # endpoints read). No "mock" adapter is registered for any category,
+        # so an unconfigured category is simply absent, never invented.
+        settings.setdefault("cibc", {})["data_dir"] = os.getenv(
+            "BANK_DATA_DIR", "/app/dashboard_service/Bank"
+        )
 
         config = UserConfig(
             user_id=user_id,
-            finance=["mock"],
+            finance=["cibc"],
             calendar=calendar_platforms,
-            health=["mock"],
-            navigation=["mock"],
+            health=[],
+            navigation=[],
             weather=weather_platforms,
             gaming=gaming_platforms,
             credentials=credentials,
@@ -826,6 +847,9 @@ async def get_context_summary(
     user_id: str,
     destination: Optional[str] = Query(None, description="Specific destination for navigation"),
     force_refresh: bool = Query(default=False, description="Bypass cache"),
+    categories: Optional[List[str]] = Query(
+        None, description="Restrict the summary to these categories (default: all)"
+    ),
 ):
     """
     Get a natural language summary of all user context data.
@@ -835,9 +859,14 @@ async def get_context_summary(
     from .formatters import build_full_summary
 
     try:
+        wanted = [c for c in (categories or []) if c and c != "all"] or None
         aggregator = get_aggregator(user_id)
-        context = await aggregator.get_unified_context(force_refresh=force_refresh)
+        context = await aggregator.get_unified_context(
+            force_refresh=force_refresh, categories=wanted
+        )
         ctx_dict = context.to_dict().get("context", context.to_dict())
+        if wanted:
+            ctx_dict = {k: v for k, v in ctx_dict.items() if k in wanted}
         result = build_full_summary(ctx_dict, destination=destination)
         result["user_id"] = user_id
         result["timestamp"] = __import__("datetime").datetime.now().isoformat()
@@ -1171,6 +1200,44 @@ async def root_redirect():
 # =============================================================================
 # BANK DATA ENDPOINTS
 # =============================================================================
+
+_MAX_BANK_CSV_BYTES = 10 * 1024 * 1024
+
+
+@app.post("/bank/upload", tags=["Bank"])
+async def upload_bank_csv(file: UploadFile = File(...)):
+    """
+    Upload a bank CSV export and reload the bank data cache.
+
+    The file lands in BANK_DATA_DIR next to the existing exports; the CIBC
+    loader reads every .csv there and de-duplicates by transaction id, so
+    re-uploading a statement does not double count.
+    """
+    name = os.path.basename(file.filename or "")
+    if not name.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are accepted")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+
+    content = await file.read()
+    if len(content) > _MAX_BANK_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="CSV larger than 10 MB")
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="The file is empty")
+
+    data_dir = Path(os.getenv("BANK_DATA_DIR", "/app/dashboard_service/Bank"))
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / safe_name).write_bytes(content)
+    except OSError as e:
+        logger.error(f"Could not save uploaded CSV {safe_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not save the CSV: {e}")
+
+    count = await _bank_service.reload()
+    # Finance context comes from the same directory: drop the cached aggregate.
+    get_aggregator("default").clear_cache("default")
+    logger.info(f"Bank CSV uploaded: {safe_name} ({len(content)} bytes), {count} transactions loaded")
+    return {"success": True, "file": safe_name, "transactions": count}
+
 
 @app.get("/bank/transactions", tags=["Bank"])
 async def bank_transactions(

@@ -12,8 +12,10 @@ from typing import Dict, Any, List, Optional
 
 def build_calendar_summary(calendar_data: dict) -> str:
     """Build a natural language summary of calendar events."""
-    events = calendar_data.get('events', [])
+    events = calendar_data.get('events') or []
     if not events:
+        if not calendar_data.get('platforms'):
+            return "No calendar data available (no calendar connected)."
         return "No upcoming events scheduled."
 
     summaries = []
@@ -39,11 +41,14 @@ def build_calendar_summary(calendar_data: dict) -> str:
 
 def build_finance_summary(finance_data: dict) -> str:
     """Build a natural language summary of financial status."""
+    if not finance_data.get('platforms') and not finance_data.get('transactions'):
+        return "No finance data available (no bank CSV loaded; upload one on the Finance page)."
+
     summaries = []
 
-    net = finance_data.get('net_cashflow', 0)
-    expenses = finance_data.get('total_expenses_period', 0)
-    income = finance_data.get('total_income_period', 0)
+    net = finance_data.get('net_cashflow') or 0
+    expenses = finance_data.get('total_expenses_period') or 0
+    income = finance_data.get('total_income_period') or 0
 
     if net >= 0:
         summaries.append(f"Net cashflow: +${net:.2f} (healthy)")
@@ -73,9 +78,14 @@ def build_finance_summary(finance_data: dict) -> str:
 
 def build_health_summary(health_data: dict) -> str:
     """Build a natural language summary of health metrics."""
+    if not health_data.get('platforms') and not health_data.get('metrics'):
+        # No adapter configured: the aggregator's empty default shape. Say so
+        # instead of formatting zeros as if they were measurements.
+        return "No health data available."
+
     summaries = []
 
-    readiness = health_data.get('readiness', 0)
+    readiness = health_data.get('readiness') or 0
     if readiness >= 70:
         summaries.append(f"Readiness: {readiness}/100 (good)")
     elif readiness >= 50:
@@ -88,15 +98,15 @@ def build_health_summary(health_data: dict) -> str:
     progress = (steps / steps_goal * 100) if steps_goal > 0 else 0
     summaries.append(f"- Steps: {steps:,} / {steps_goal:,} ({progress:.0f}%)")
 
-    hrv = health_data.get('hrv', 50)
-    if hrv < 40:
+    hrv = health_data.get('hrv')
+    if hrv is not None and hrv < 40:
         summaries.append(f"Low HRV ({hrv}ms) - indicates stress or fatigue")
 
-    sleep_hours = health_data.get('sleep_hours', 0)
-    sleep_score = health_data.get('sleep_score', 0)
+    sleep_hours = health_data.get('sleep_hours') or 0
+    sleep_score = health_data.get('sleep_score') or 0
     summaries.append(f"- Sleep: {sleep_hours:.1f}h (score: {sleep_score}/100)")
 
-    hr = health_data.get('heart_rate', 0)
+    hr = health_data.get('heart_rate') or 0
     summaries.append(f"- Current heart rate: {hr} bpm")
 
     return "\n".join(summaries)
@@ -234,33 +244,36 @@ def extract_high_priority_alerts(context: dict) -> List[str]:
     """Extract high priority items that need immediate attention."""
     alerts = []
 
-    events = context.get('calendar', {}).get('events', [])
+    events = (context.get('calendar') or {}).get('events') or []
     for event in events:
         if event.get('urgency') == 'HIGH':
             alerts.append(f"'{event['title']}' starting soon")
 
-    finance = context.get('finance', {})
-    if finance.get('net_cashflow', 0) < 0:
+    finance = context.get('finance') or {}
+    if (finance.get('net_cashflow') or 0) < 0:
         alerts.append("Spending exceeds income this period")
 
-    pending = [t for t in finance.get('transactions', []) if t.get('pending')]
+    pending = [t for t in (finance.get('transactions') or []) if t.get('pending')]
     if pending:
         alerts.append(f"{len(pending)} pending transaction(s) to clear")
 
-    health = context.get('health', {})
-    if health.get('hrv', 50) < 40:
-        alerts.append(f"Low HRV ({health['hrv']}ms) - consider rest")
+    # Unconfigured categories carry None values, not measurements: no alerts.
+    health = context.get('health') or {}
+    hrv = health.get('hrv')
+    if hrv is not None and hrv < 40:
+        alerts.append(f"Low HRV ({hrv}ms) - consider rest")
 
-    if health.get('readiness', 70) < 50:
-        alerts.append(f"Low readiness score ({health['readiness']}) - take it easy")
+    readiness = health.get('readiness')
+    if readiness is not None and readiness < 50:
+        alerts.append(f"Low readiness score ({readiness}) - take it easy")
 
-    nav = context.get('navigation', {})
-    route = nav.get('primary_route', {})
+    nav = context.get('navigation') or {}
+    route = nav.get('primary_route') or {}
     if route.get('traffic_level') == 'heavy':
         alerts.append(f"Heavy traffic - {route.get('duration_minutes', 0)} min commute")
 
-    weather = context.get('weather', {})
-    current = weather.get('current', {})
+    weather = context.get('weather') or {}
+    current = weather.get('current') or {}
     temp = current.get('temperature_celsius')
     if temp is not None:
         if temp < -20:
