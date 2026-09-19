@@ -3,11 +3,15 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const ADMIN_API = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || process.env.X_API_KEY || '';
 const execAsync = promisify(exec);
 
 export async function POST() {
   try {
-    const res = await fetch(`${ADMIN_API}/admin/reload`, { method: 'POST' });
+    const res = await fetch(`${ADMIN_API}/admin/reload`, {
+      method: 'POST',
+      headers: { 'X-API-Key': ADMIN_API_KEY },
+    });
     const data = await res.json();
     if (!res.ok) {
       const isAuthError = res.status === 401 || String(data?.detail || '').toLowerCase().includes('api key');

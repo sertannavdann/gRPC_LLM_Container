@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getProviderUnlockHandler } from '@/lib/provider-lock/providers';
 import { getAdapterLockHandler } from '@/lib/adapter-lock/adapters';
+import { fetchCredentialedModuleIds } from '@/lib/adapter-lock/base';
 import type { ProviderLockStatus } from '@/lib/provider-lock/base';
 
 // Path to .env file — used for provider/LLM infrastructure config only
@@ -33,6 +34,7 @@ interface EnvConfig {
 
 // Admin API for provider/model config (single source of truth)
 const ADMIN_API = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || process.env.X_API_KEY || '';
 
 const DEFAULT_PROVIDER_CATALOG: Record<string, { models: string[]; default: string }> = {
   local: {
@@ -118,7 +120,10 @@ async function fetchProviderConfig(): Promise<{
   lidmTierModels: Record<string, string[]>;
 }> {
   try {
-    const res = await fetch(`${ADMIN_API}/admin/providers`, { cache: 'no-store' });
+    const res = await fetch(`${ADMIN_API}/admin/providers`, {
+      headers: { 'X-API-Key': ADMIN_API_KEY },
+      cache: 'no-store',
+    });
     if (!res.ok) throw new Error(`Admin API returned ${res.status}`);
     const data = await res.json();
     return {
@@ -167,8 +172,9 @@ function serializeEnvFile(config: Record<string, string>): string {
 }
 
 /**
- * Fetch adapter credential status from Admin API via adapter-lock handlers.
- * Replaces direct .env reading for adapter keys.
+ * Fetch adapter credential status from the Admin API module registry.
+ * One GET /admin/modules per request; only `has_credentials` is exposed —
+ * values such as city/playerTag are not readable by design, so defaults stay.
  */
 async function getAdapterStatusFromAdminAPI() {
   const adapters: Record<string, Record<string, unknown>> = {
@@ -178,35 +184,28 @@ async function getAdapterStatusFromAdminAPI() {
   };
 
   try {
-    const weatherHandler = getAdapterLockHandler('weather/openweather');
-    if (weatherHandler) {
-      const creds = await weatherHandler.fetchCredentials();
-      adapters.openweather = {
-        hasApiKey: !!creds.api_key,
-        city: (creds.base_url as string) || 'Toronto,CA',
-      };
-    }
+    const credentialed = await fetchCredentialedModuleIds();
 
-    const calendarHandler = getAdapterLockHandler('calendar/google_calendar');
-    if (calendarHandler) {
-      const creds = await calendarHandler.fetchCredentials();
-      adapters.google_calendar = {
-        hasClientId: !!creds.client_id,
-        hasClientSecret: !!creds.client_secret,
-        hasAccessToken: !!creds.oauth_token,
-        hasRefreshToken: !!creds.refresh_token,
-        connected: !!(creds.oauth_token && creds.refresh_token),
-      };
-    }
+    const hasWeather = credentialed.has('weather/openweather');
+    adapters.openweather = {
+      hasApiKey: hasWeather,
+      city: 'Toronto,CA',
+    };
 
-    const gamingHandler = getAdapterLockHandler('gaming/clashroyale');
-    if (gamingHandler) {
-      const creds = await gamingHandler.fetchCredentials();
-      adapters.clashroyale = {
-        hasApiKey: !!creds.api_key,
-        playerTag: (creds.player_tag as string) || '',
-      };
-    }
+    const hasCalendar = credentialed.has('calendar/google_calendar');
+    adapters.google_calendar = {
+      hasClientId: hasCalendar,
+      hasClientSecret: hasCalendar,
+      hasAccessToken: hasCalendar,
+      hasRefreshToken: hasCalendar,
+      connected: hasCalendar,
+    };
+
+    const hasGaming = credentialed.has('gaming/clashroyale');
+    adapters.clashroyale = {
+      hasApiKey: hasGaming,
+      playerTag: '',
+    };
   } catch (err) {
     console.warn('[Settings API] Failed to fetch adapter status from Admin API:', (err as Error).message);
   }
@@ -215,14 +214,14 @@ async function getAdapterStatusFromAdminAPI() {
 }
 
 /**
- * Store adapter credentials via Admin API credential store.
+ * Store adapter credentials via the dashboard credential store.
  * Maps UI field names to adapter-lock credential keys.
  */
 async function storeAdapterKeysViaAdminAPI(adapterKeys: Record<string, string | undefined>) {
   // Weather adapter
   const weatherCreds: Record<string, string> = {};
   if (adapterKeys.openweatherApiKey) weatherCreds.api_key = adapterKeys.openweatherApiKey;
-  if (adapterKeys.openweatherCity) weatherCreds.base_url = adapterKeys.openweatherCity;
+  if (adapterKeys.openweatherCity) weatherCreds.city = adapterKeys.openweatherCity;
   if (Object.keys(weatherCreds).length > 0) {
     const handler = getAdapterLockHandler('weather/openweather');
     if (handler) await handler.storeCredentials(weatherCreds);
@@ -232,7 +231,7 @@ async function storeAdapterKeysViaAdminAPI(adapterKeys: Record<string, string | 
   const calendarCreds: Record<string, string> = {};
   if (adapterKeys.googleCalendarClientId) calendarCreds.client_id = adapterKeys.googleCalendarClientId;
   if (adapterKeys.googleCalendarClientSecret) calendarCreds.client_secret = adapterKeys.googleCalendarClientSecret;
-  if (adapterKeys.googleCalendarAccessToken) calendarCreds.oauth_token = adapterKeys.googleCalendarAccessToken;
+  if (adapterKeys.googleCalendarAccessToken) calendarCreds.access_token = adapterKeys.googleCalendarAccessToken;
   if (adapterKeys.googleCalendarRefreshToken) calendarCreds.refresh_token = adapterKeys.googleCalendarRefreshToken;
   if (Object.keys(calendarCreds).length > 0) {
     const handler = getAdapterLockHandler('calendar/google_calendar');

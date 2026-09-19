@@ -1,14 +1,15 @@
 /**
  * Adapter registry API route
  *
- * Reads adapter status from Admin API module registry.
- * Stores/removes credentials through Admin API — no .env manipulation.
+ * Reads adapter status from the Admin API module registry (one GET
+ * /admin/modules per request; `has_credentials` per module_id).
+ * Stores/removes credentials through the dashboard credential store
+ * via the adapter-lock handlers — no .env manipulation.
  */
 
 import { NextResponse } from 'next/server';
 import { getAdapterLockHandler } from '@/lib/adapter-lock/adapters';
-
-const ADMIN_API_BASE = process.env.ADMIN_API_URL || 'http://localhost:8003';
+import { fetchCredentialedModuleIds } from '@/lib/adapter-lock/base';
 
 interface AdapterStatus {
   id: string;
@@ -24,20 +25,8 @@ interface AdapterStatus {
  */
 export async function GET() {
   try {
-    // Fetch installed modules from Admin API
-    let modules: any[] = [];
-    try {
-      const res = await fetch(`${ADMIN_API_BASE}/admin/modules`, {
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        modules = data.modules || data || [];
-      }
-    } catch {
-      // Admin API unreachable — return known adapters with error status
-    }
+    // One Admin API call: module_ids that have stored credentials
+    const credentialed = await fetchCredentialedModuleIds();
 
     // Known adapter categories to check
     const knownAdapters = [
@@ -53,16 +42,18 @@ export async function GET() {
       const handler = getAdapterLockHandler(adapter.id);
       if (!handler) continue;
 
-      const credentials = await handler.fetchCredentials();
-      const lockStatus = handler.toStatus(credentials);
+      // Credential values are not readable; locked = needs fields and none stored
+      const requiredFields = handler.getRequiredFields();
+      const requiredNames = requiredFields.filter((f) => f.required).map((f) => f.name);
+      const locked = requiredNames.length > 0 && !credentialed.has(adapter.id);
 
       results.push({
         id: adapter.id,
         name: adapter.name,
         category: adapter.category,
-        status: lockStatus.locked ? 'locked' : 'connected',
-        requiredFields: handler.getRequiredFields(),
-        missingFields: lockStatus.missingFields,
+        status: locked ? 'locked' : 'connected',
+        requiredFields,
+        missingFields: locked ? requiredNames : [],
       });
     }
 
@@ -98,7 +89,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Store credentials via Admin API
+    // Store credentials in the dashboard credential store
     const stored = await handler.storeCredentials(credentials);
     if (!stored) {
       return NextResponse.json(
@@ -138,13 +129,17 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // Remove credentials via Admin API
-    const res = await fetch(
-      `${ADMIN_API_BASE}/admin/modules/${encodeURIComponent(adapterId)}/credentials`,
-      { method: 'DELETE' }
-    );
+    const handler = getAdapterLockHandler(adapterId);
+    if (!handler) {
+      return NextResponse.json(
+        { error: `Unknown adapter: ${adapterId}` },
+        { status: 404 }
+      );
+    }
 
-    if (!res.ok) {
+    // Remove credentials from the dashboard credential store
+    const removed = await handler.deleteCredentials();
+    if (!removed) {
       return NextResponse.json(
         { error: 'Failed to remove credentials' },
         { status: 500 }

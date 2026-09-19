@@ -2,13 +2,16 @@
  * Dashboard Adapters API
  *
  * Lists available adapters and manages adapter connections.
- * Credentials flow through Admin API — no .env file manipulation.
+ * Connected status comes from one Admin API GET /admin/modules per request
+ * (`has_credentials`); credentials are written to the dashboard credential
+ * store through the adapter-lock handlers — no .env file manipulation.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdapterLockHandler } from '@/lib/adapter-lock/adapters';
-import type { CredentialConfig } from '@/lib/adapter-lock/base';
+import { fetchCredentialedModuleIds } from '@/lib/adapter-lock/base';
 
 const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:8001';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || process.env.X_API_KEY || '';
 
 type AdapterDef = {
   platform: string;
@@ -51,7 +54,7 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       auth_fields: [
         { key: 'googleCalendarClientId', label: 'Client ID', placeholder: 'xxxx.apps.googleusercontent.com', type: 'text', credentialKey: 'client_id' },
         { key: 'googleCalendarClientSecret', label: 'Client Secret', placeholder: 'GOCSPX-...', type: 'api_key', credentialKey: 'client_secret' },
-        { key: 'googleCalendarAccessToken', label: 'Access Token', placeholder: 'ya29...', type: 'oauth_token', credentialKey: 'oauth_token' },
+        { key: 'googleCalendarAccessToken', label: 'Access Token', placeholder: 'ya29...', type: 'oauth_token', credentialKey: 'access_token' },
         { key: 'googleCalendarRefreshToken', label: 'Refresh Token', placeholder: '1//...', type: 'oauth_token', credentialKey: 'refresh_token' },
       ],
     },
@@ -87,7 +90,7 @@ const ADAPTER_DEFINITIONS: Record<string, AdapterDef[]> = {
       auth_type: 'api_key',
       auth_fields: [
         { key: 'openweatherApiKey', label: 'API Key', placeholder: 'Your OpenWeather API key', type: 'api_key', credentialKey: 'api_key' },
-        { key: 'openweatherCity', label: 'City', placeholder: 'Toronto,CA', type: 'text', credentialKey: 'base_url' },
+        { key: 'openweatherCity', label: 'City', placeholder: 'Toronto,CA', type: 'text', credentialKey: 'city' },
       ],
     },
   ],
@@ -121,19 +124,13 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get('category');
 
+    // One Admin API call per request: module_ids that have stored credentials
+    const credentialed = await fetchCredentialedModuleIds();
+
     const buildAdapters = async (defs: AdapterDef[]) => {
       const results = [];
       for (const d of defs) {
-        let connected = false;
-        if (d.alwaysConnected) {
-          connected = true;
-        } else {
-          const handler = getAdapterLockHandler(d.moduleId);
-          if (handler) {
-            const credentials = await handler.fetchCredentials();
-            connected = !handler.isLocked(credentials);
-          }
-        }
+        const connected = Boolean(d.alwaysConnected) || credentialed.has(d.moduleId);
         results.push({
           platform: d.platform,
           name: d.name,
@@ -174,7 +171,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Connect/disconnect adapter via Admin API credential store
+// POST - Connect/disconnect adapter via the dashboard credential store
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -213,18 +210,19 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Store credentials via Admin API
+      // Store credentials in the dashboard credential store
       if (handler) {
         const stored = await handler.storeCredentials(credentialMap);
         if (!stored) {
-          console.warn(`[Adapters API] Admin API store failed for ${platform}, falling back to hot-reload`);
+          console.warn(`[Adapters API] Credential store failed for ${platform}, falling back to hot-reload`);
         }
       }
 
-      console.log(`[Adapters API] Connected ${category}/${platform} via Admin API`);
+      console.log(`[Adapters API] Connected ${category}/${platform}`);
 
       // Hot-reload credentials to dashboard_service (no container restart needed)
       let hotReloadOk = false;
+      let hotReloadStatus: number | string = 'unreachable';
       try {
         const credMap: Record<string, string> = {};
         const settingsMap: Record<string, string> = {};
@@ -240,11 +238,12 @@ export async function POST(request: NextRequest) {
 
         const hotReloadRes = await fetch(`${DASHBOARD_SERVICE}/admin/credentials?user_id=default`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': ADMIN_API_KEY },
           body: JSON.stringify({ category, platform, credentials: credMap, settings: settingsMap }),
           signal: AbortSignal.timeout(5000),
         });
         hotReloadOk = hotReloadRes.ok;
+        hotReloadStatus = hotReloadRes.status;
         if (hotReloadOk) {
           console.log(`[Adapters API] Hot-reloaded credentials for ${platform}`);
         } else {
@@ -261,23 +260,18 @@ export async function POST(request: NextRequest) {
         platform,
         message: hotReloadOk
           ? `Connected ${adapterDef.name}. Dashboard will refresh automatically.`
-          : `Connected ${adapterDef.name}. Run: docker compose restart dashboard to activate.`,
+          : `Connected ${adapterDef.name}, but the dashboard could not reload it (HTTP ${hotReloadStatus}). Check the dashboard logs.`,
         restartRequired: !hotReloadOk,
         hotReloaded: hotReloadOk,
       });
     }
 
     if (action === 'disconnect') {
-      // Remove credentials via Admin API
+      // Remove credentials from the dashboard credential store
       if (handler) {
-        try {
-          const ADMIN_API_BASE = process.env.ADMIN_API_URL || 'http://localhost:8003';
-          await fetch(
-            `${ADMIN_API_BASE}/admin/modules/${encodeURIComponent(adapterDef.moduleId)}/credentials`,
-            { method: 'DELETE' }
-          );
-        } catch (err) {
-          console.warn(`[Adapters API] Admin API delete failed for ${platform}:`, (err as Error).message);
+        const removed = await handler.deleteCredentials();
+        if (!removed) {
+          console.warn(`[Adapters API] Credential delete failed for ${platform}`);
         }
       }
 
@@ -287,7 +281,7 @@ export async function POST(request: NextRequest) {
       try {
         await fetch(`${DASHBOARD_SERVICE}/admin/disconnect?user_id=default`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': ADMIN_API_KEY },
           body: JSON.stringify({ category, platform, credentials: {}, settings: {} }),
           signal: AbortSignal.timeout(5000),
         });

@@ -16,8 +16,9 @@
 | 6 | UX/UI Visual Expansion | **complete** | REQ-031, REQ-032, REQ-033 | Q3 2026 |
 | 7 | Audit Trail | 3/3 | Complete   | 2026-08-13 |
 | 8 | Co-Evolution & Approval | 13/13 | Complete   | 2026-08-22 |
-| 9 | ECS Context-Substrate Canvas | 9/10 | In Progress|  |
-| 10 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
+| 9 | ECS Context-Substrate Canvas | 9/10 | Frozen (stopped after 09-09; 09-10 not executed) |  |
+| 10 | Foundations | In Progress | — | 2026-09-18 |
+| 11 | Enterprise & Marketplace | not-started | REQ-004, REQ-005, REQ-015, REQ-021–REQ-030 | Q4 2026+ |
 
 ---
 
@@ -528,7 +529,15 @@ Plans:
 
 ---
 
-## Phase 10: Enterprise & Marketplace (Future — Ideation Only)
+## Phase 10: Foundations
+
+**Status**: In Progress (started 2026-09-18)
+
+**Goal**: Repair the runtime foundations before any further canvas work — UI reachability through the keyed admin proxy, credential persistence via the dashboard credential store, finance CSV upload, settings usability, and a frozen Pipeline page (Phase 9 stopped after 09-09).
+
+---
+
+## Phase 11: Enterprise & Marketplace (Future — Ideation Only)
 
 **Milestone**: "Enterprise Scale + Revenue"
 

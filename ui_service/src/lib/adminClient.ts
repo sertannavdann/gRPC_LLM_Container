@@ -3,13 +3,20 @@
  *
  * Typed fetch wrappers for the orchestrator admin API (port 8003)
  * and dashboard SSE stream (port 8001).
+ *
+ * In the browser, admin calls go through the same-origin keyed proxy at
+ * src/app/api/admin/[...path]/route.ts, which attaches X-API-Key and
+ * prepends /admin to the upstream path itself.
  */
 
 import { ADMIN_REQUEST_TIMEOUT_MS } from './runtime-params';
 
+// Browser base is '/api' (not '/api/admin'): every method below already
+// appends '/admin/...', and the proxy adds its own '/admin/' prefix, so
+// '/api/admin' would produce /api/admin/admin/... upstream.
 const ADMIN_BASE =
   typeof window !== 'undefined'
-    ? '/api/admin'
+    ? '/api'
     : 'http://localhost:8003';
 
 const DASHBOARD_BASE =

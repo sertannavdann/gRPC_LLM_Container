@@ -1,15 +1,17 @@
 /**
  * Finance Page Statechart (XState v5)
  *
- * Hierarchical state machine managing finance page lock/unlock flow.
+ * Hierarchical state machine managing the finance page data flow.
  * States:
- *   - checking: Initial state, transitions via guard to locked/unlocked
- *   - locked: Sub-states for connection test flow (idle -> testing -> succeeded/failed)
- *   - unlocked: Sub-states for data loading (loading -> loaded/error)
+ *   - unlocked: Sub-states for data loading (loading -> loaded/error) and
+ *     CSV upload (uploading -> loading, so the table refetches)
+ *
+ * The CIBC finance adapter needs no credentials, so there is no locked flow:
+ * CSV exports are uploaded straight to the dashboard (POST /bank/upload).
  *
  * Invoked actors (not ad-hoc useEffect):
- *   - testConnection: Calls POST /api/adapters for connection test
  *   - fetchFinanceData: Calls GET /api/dashboard/finance for financial data
+ *   - uploadCsv: POSTs multipart FormData to /api/dashboard/finance/upload
  *
  * Uses setup() API for full TypeScript typing of context, events, guards.
  */
@@ -21,10 +23,12 @@ import type { CapabilityEnvelope } from '../lib/adminClient';
 
 export interface FinancePageContext {
   envelope: CapabilityEnvelope | null;
-  credentials: Record<string, string> | null;
   transactions: Transaction[];
   summary: FinanceSummary | null;
   error: string | null;
+  pendingFile: File | null;
+  uploadError: string | null;
+  lastUpload: UploadResult | null;
 }
 
 export interface Transaction {
@@ -50,53 +54,17 @@ export interface FinanceSummary {
   available_categories: string[];
 }
 
-export type FinancePageEvent =
-  | { type: 'SUBMIT_CREDENTIALS'; credentials: Record<string, string> }
-  | { type: 'DISMISS' }
-  | { type: 'RETRY' }
-  | { type: 'REFRESH' };
-
-// ── Guards ───────────────────────────────────────────────────────────────────
-
-function financeAdapterLocked(context: FinancePageContext): boolean {
-  const financeAdapter = context.envelope?.adapters.find(
-    (a) => a.category === 'finance'
-  );
-  return financeAdapter?.locked ?? true;
+export interface UploadResult {
+  file: string;
+  transactions: number;
 }
+
+export type FinancePageEvent =
+  | { type: 'RETRY' }
+  | { type: 'REFRESH' }
+  | { type: 'UPLOAD_CSV'; file: File };
 
 // ── Invoked Actors ───────────────────────────────────────────────────────────
-
-async function testConnection({
-  input,
-}: {
-  input: { credentials: Record<string, string> };
-}): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await fetch('/api/adapters', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        category: 'finance',
-        action: 'test_connection',
-        credentials: input.credentials,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return { success: false, error: data.error || 'Connection test failed' };
-    }
-
-    return { success: true };
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Network error',
-    };
-  }
-}
 
 async function fetchFinanceData(): Promise<{
   transactions: Transaction[];
@@ -133,6 +101,42 @@ async function fetchFinanceData(): Promise<{
   }
 }
 
+async function uploadCsv({
+  input,
+}: {
+  input: { file: File | null };
+}): Promise<UploadResult> {
+  if (!input.file) {
+    throw new Error('No CSV file selected');
+  }
+
+  const form = new FormData();
+  form.append('file', input.file, input.file.name);
+
+  const response = await fetch('/api/dashboard/finance/upload', {
+    method: 'POST',
+    body: form,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.success === false) {
+    const detail = data.detail ?? data.error;
+    throw new Error(
+      typeof detail === 'string'
+        ? detail
+        : detail
+          ? JSON.stringify(detail)
+          : `Upload failed (HTTP ${response.status})`
+    );
+  }
+
+  return {
+    file: data.file || input.file.name,
+    transactions: Number(data.transactions) || 0,
+  };
+}
+
 // ── XState v5 Machine Setup ──────────────────────────────────────────────────
 
 export const financePageMachine = setup({
@@ -143,18 +147,16 @@ export const financePageMachine = setup({
   },
 
   actors: {
-    testConnection: fromPromise(testConnection),
     fetchFinanceData: fromPromise(fetchFinanceData),
-  },
-
-  guards: {
-    financeAdapterLocked: ({ context }) => financeAdapterLocked(context),
+    uploadCsv: fromPromise(uploadCsv),
   },
 
   actions: {
-    storeCredentials: ({ context, event }) => {
-      if (event.type === 'SUBMIT_CREDENTIALS') {
-        context.credentials = event.credentials;
+    storePendingFile: ({ context, event }) => {
+      if (event.type === 'UPLOAD_CSV') {
+        context.pendingFile = event.file;
+        context.uploadError = null;
+        context.lastUpload = null;
       }
     },
 
@@ -180,89 +182,19 @@ export const financePageMachine = setup({
   },
 }).createMachine({
   id: 'financePage',
-  initial: 'checking',
+  initial: 'unlocked',
   context: ({ input }) => ({
     envelope: input.envelope,
-    credentials: null,
     transactions: [],
     summary: null,
     error: null,
+    pendingFile: null,
+    uploadError: null,
+    lastUpload: null,
   }),
 
   states: {
-    // Check initial lock status
-    checking: {
-      always: [
-        {
-          guard: 'financeAdapterLocked',
-          target: 'locked',
-        },
-        {
-          target: 'unlocked',
-        },
-      ],
-    },
-
-    // Finance adapter locked — need credentials
-    locked: {
-      initial: 'idle',
-      states: {
-        idle: {
-          on: {
-            SUBMIT_CREDENTIALS: {
-              target: 'testing',
-              actions: ['storeCredentials', 'clearError'],
-            },
-          },
-        },
-
-        testing: {
-          invoke: {
-            src: 'testConnection',
-            input: ({ context }) => ({ credentials: context.credentials || {} }),
-            onDone: [
-              {
-                guard: ({ event }) => event.output.success,
-                target: 'succeeded',
-              },
-              {
-                target: 'failed',
-                actions: ({ context, event }) => {
-                  context.error = event.output.error || 'Connection test failed';
-                },
-              },
-            ],
-            onError: {
-              target: 'failed',
-              actions: ({ context, event }) => {
-                context.error =
-                  (event.error as Error)?.message || 'Connection test error';
-              },
-            },
-          },
-        },
-
-        failed: {
-          on: {
-            SUBMIT_CREDENTIALS: {
-              target: 'testing',
-              actions: ['storeCredentials', 'clearError'],
-            },
-            DISMISS: 'idle',
-          },
-        },
-
-        succeeded: {
-          type: 'final',
-        },
-      },
-
-      onDone: {
-        target: 'unlocked',
-      },
-    },
-
-    // Finance adapter unlocked — fetch data
+    // Finance adapter needs no credentials — fetch data
     unlocked: {
       initial: 'loading',
       states: {
@@ -290,12 +222,44 @@ export const financePageMachine = setup({
         loaded: {
           on: {
             REFRESH: 'loading',
+            UPLOAD_CSV: {
+              target: 'uploading',
+              actions: 'storePendingFile',
+            },
           },
         },
 
         error: {
           on: {
             RETRY: 'loading',
+            UPLOAD_CSV: {
+              target: 'uploading',
+              actions: 'storePendingFile',
+            },
+          },
+        },
+
+        // CSV upload in flight — success refetches via `loading`, failure
+        // returns to `loaded` with the message in context.uploadError
+        uploading: {
+          invoke: {
+            src: 'uploadCsv',
+            input: ({ context }) => ({ file: context.pendingFile }),
+            onDone: {
+              target: 'loading',
+              actions: ({ context, event }) => {
+                context.lastUpload = event.output;
+                context.pendingFile = null;
+              },
+            },
+            onError: {
+              target: 'loaded',
+              actions: ({ context, event }) => {
+                context.uploadError =
+                  (event.error as Error)?.message || 'CSV upload failed';
+                context.pendingFile = null;
+              },
+            },
           },
         },
       },

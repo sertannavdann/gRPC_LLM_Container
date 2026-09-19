@@ -3,11 +3,12 @@
  *
  * Each adapter subclass defines required credential fields
  * and implements adapter-specific connection testing.
- * Credentials flow through Admin API — no .env file manipulation.
+ * Credentials are written to the dashboard credential store — no .env file manipulation.
  */
 
 import {
   AdapterUnlockBase,
+  DASHBOARD_SERVICE,
   FieldDefinition,
   ConnectionTestResult,
   CredentialConfig,
@@ -24,7 +25,7 @@ export class WeatherAdapterLock extends AdapterUnlockBase {
   getRequiredFields(): FieldDefinition[] {
     return [
       { name: 'api_key', label: 'OpenWeather API Key', type: 'password', required: true },
-      { name: 'base_url', label: 'Base URL (optional)', type: 'text', required: false },
+      { name: 'city', label: 'City (optional, e.g. Toronto,CA)', type: 'text', required: false },
     ];
   }
 
@@ -34,12 +35,13 @@ export class WeatherAdapterLock extends AdapterUnlockBase {
       return { success: false, message: 'OpenWeather API key is required' };
     }
 
-    const baseUrl = credentials.base_url || 'https://api.openweathermap.org/data/2.5';
+    // The adapter reads settings["city"]; probe the same city the user configured.
+    const city = credentials.city || 'Toronto,CA';
     const start = Date.now();
 
     try {
       const res = await fetch(
-        `${baseUrl}/weather?q=London&appid=${apiKey}&units=metric`,
+        `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${apiKey}&units=metric`,
         { signal: AbortSignal.timeout(10000) }
       );
 
@@ -78,13 +80,13 @@ export class CalendarAdapterLock extends AdapterUnlockBase {
 
   getRequiredFields(): FieldDefinition[] {
     return [
-      { name: 'oauth_token', label: 'Google OAuth2 Token', type: 'password', required: true },
+      { name: 'access_token', label: 'Google OAuth2 Access Token', type: 'password', required: true },
       { name: 'calendar_id', label: 'Calendar ID', type: 'text', required: true },
     ];
   }
 
   async testConnection(credentials: CredentialConfig): Promise<ConnectionTestResult> {
-    const token = credentials.oauth_token;
+    const token = credentials.access_token;
     if (!token) {
       return { success: false, message: 'Google OAuth2 token is required' };
     }
@@ -127,7 +129,8 @@ export class CalendarAdapterLock extends AdapterUnlockBase {
 
 /**
  * Finance adapter (CIBC CSV) unlock handler.
- * Supports CSV file path mode (local) or API mode (future).
+ * CIBC needs no auth: CSV exports are uploaded via POST /bank/upload on the
+ * dashboard (UI: /api/dashboard/finance/upload), so the adapter is never locked.
  */
 export class FinanceAdapterLock extends AdapterUnlockBase {
   constructor() {
@@ -135,24 +138,20 @@ export class FinanceAdapterLock extends AdapterUnlockBase {
   }
 
   getRequiredFields(): FieldDefinition[] {
-    return [
-      { name: 'csv_path', label: 'CSV File Path', type: 'text', required: true },
-    ];
+    return [];
   }
 
-  async testConnection(credentials: CredentialConfig): Promise<ConnectionTestResult> {
-    const csvPath = credentials.csv_path;
-    if (!csvPath) {
-      return { success: false, message: 'CSV file path is required' };
-    }
+  isLocked(): boolean {
+    return false;
+  }
 
+  async testConnection(): Promise<ConnectionTestResult> {
     // Finance adapter validates at the backend — we check if the dashboard
     // can serve bank data through the API proxy
     const start = Date.now();
 
     try {
-      const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:8001';
-      const res = await fetch(`${dashboardUrl}/bank/summary`, {
+      const res = await fetch(`${DASHBOARD_SERVICE}/bank/summary`, {
         signal: AbortSignal.timeout(10000),
       });
 

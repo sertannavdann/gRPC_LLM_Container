@@ -35,9 +35,11 @@ const DEFAULT_PREFS: UserPrefs = {
 
 // ── Admin API Base ──────────────────────────────────────────────────────────
 
+// Browser: same-origin keyed proxy (/api/admin/[...path]) — calls below append
+// '/admin/user/prefs', so the base is '/api'. SSR keeps the direct URL.
 const ADMIN_BASE =
   typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:8003`
+    ? '/api'
     : 'http://localhost:8003';
 
 // ── Hook ────────────────────────────────────────────────────────────────────

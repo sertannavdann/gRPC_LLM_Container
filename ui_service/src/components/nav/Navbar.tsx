@@ -1,7 +1,7 @@
 /**
  * Navbar Component
  *
- * Persistent top navigation bar with 6 page routes.
+ * Persistent top navigation bar with 5 page routes.
  * Uses Next.js Link for client-side routing with active page highlighting.
  * Framer Motion layout animation on the active indicator.
  * Responsive: hamburger menu on mobile, horizontal nav on desktop.
@@ -11,8 +11,9 @@
  *   Modules (/integrations) - module browser with lifecycle panel
  *   Finance (/finance) - financial data + charts
  *   Monitoring (/monitoring) - service health + P99 + agent runs
- *   Pipeline (/pipeline) - build job viewer
  *   Settings (/settings) - provider configuration with lock/unlock
+ *
+ * /pipeline is frozen (2026-09-18) and reachable by URL only — not listed here.
  */
 'use client';
 
@@ -26,7 +27,6 @@ import {
   Boxes,
   DollarSign,
   Activity,
-  Zap,
   Settings,
   Menu,
   X,
@@ -37,7 +37,6 @@ const NAV_ITEMS = [
   { href: '/integrations', label: 'Modules', icon: Boxes },
   { href: '/finance', label: 'Finance', icon: DollarSign },
   { href: '/monitoring', label: 'Monitoring', icon: Activity },
-  { href: '/pipeline', label: 'Pipeline', icon: Zap },
   { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 

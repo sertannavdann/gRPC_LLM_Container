@@ -91,6 +91,7 @@ export default function SettingsPage() {
   const [selectedProvider, setSelectedProvider] = useState('local');
   const [selectedModel, setSelectedModel] = useState('');
   const [showApiKeys, setShowApiKeys] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
     nvidia: '',
     perplexity: '',
@@ -285,6 +286,7 @@ export default function SettingsPage() {
   }
 
   return (
+    <div className="h-full overflow-auto">
     <div className="max-w-2xl mx-auto p-6 space-y-8">
       {/* Page header */}
       <div className="flex items-center gap-3">
@@ -444,8 +446,18 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* LIDM Delegation */}
+      {/* Advanced: LIDM Delegation (hidden by default) */}
       <section className="space-y-4">
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="flex items-center gap-2 text-sm text-primary hover:underline"
+        >
+          <Layers className="h-4 w-4" />
+          {showAdvanced ? 'Hide advanced' : 'Show advanced'}
+        </button>
+
+        {showAdvanced && (
+        <div className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Multi-Model Delegation (LIDM)</h2>
         <div className="p-4 border rounded-xl space-y-4">
           {/* Enable toggle */}
@@ -520,6 +532,8 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+        </div>
+        )}
       </section>
 
       {/* Current config summary */}
@@ -538,17 +552,17 @@ export default function SettingsPage() {
               <span className="text-muted-foreground">Model: </span>
               <span className="font-mono">{config.model}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground">LIDM: </span>
-              <span className={`font-mono ${config.delegationEnabled ? 'text-violet-400' : ''}`}>
-                {config.delegationEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
             {config.delegationEnabled && (
-              <div>
-                <span className="text-muted-foreground">Tiers: </span>
-                <span className="font-mono text-xs">Heavy + Standard</span>
-              </div>
+              <>
+                <div>
+                  <span className="text-muted-foreground">LIDM: </span>
+                  <span className="font-mono text-violet-400">Enabled</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Tiers: </span>
+                  <span className="font-mono text-xs">Heavy + Standard</span>
+                </div>
+              </>
             )}
           </div>
           <div className="flex flex-wrap gap-2">
@@ -695,6 +709,7 @@ export default function SettingsPage() {
           {(providerLocks[selectedProvider]?.locked ?? false) ? 'Provider Locked' : isBusy ? 'Applying...' : 'Save & Apply'}
         </button>
       </div>
+    </div>
     </div>
   );
 }

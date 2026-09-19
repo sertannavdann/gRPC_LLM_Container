@@ -910,7 +910,7 @@ clean-logs:
 # ============================================================================
 install-deps:
 	@printf '$(CYAN)Installing dependencies...$(RESET)\n'
-	@pip install grpcio-tools grpcio-health-checking
+	@pip install grpcio-tools grpcio-health-checking flake8
 	@cd ui_service && npm install
 	@printf '$(GREEN)✓ Dependencies installed$(RESET)\n'
 
@@ -937,6 +937,7 @@ check-deps:
 # ============================================================================
 lint:
 	@printf '$(CYAN)Running linters...$(RESET)\n'
+	@python -m flake8 --select=F821 orchestrator/ core/ tools/ dashboard_service/ || (printf '$(RED)✗ Undefined names (F821) — this class of bug disabled the sandbox at boot for months$(RESET)\n'; exit 1)
 	@python -m flake8 orchestrator/ core/ tools/ --max-line-length=120 || true
 	@cd ui_service && npm run lint 2>/dev/null || true
 	@printf '$(GREEN)✓ Lint complete$(RESET)\n'

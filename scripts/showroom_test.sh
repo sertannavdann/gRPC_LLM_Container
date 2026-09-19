@@ -13,6 +13,7 @@ BOLD='\033[1m'
 
 DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:8001}"
 ADMIN_URL="${ADMIN_URL:-http://localhost:8003}"
+UI_URL="${UI_URL:-http://localhost:5001}"
 PASS=0
 FAIL=0
 
@@ -129,6 +130,21 @@ printf "${BOLD}${YELLOW}▸ Adapter Data Flow${RESET}\n"
 check "Unified context" "$DASHBOARD_URL/context" '.user_id'
 check "Bank transactions" "$DASHBOARD_URL/bank/transactions?per_page=1" '.total'
 check "Bank summary" "$DASHBOARD_URL/bank/summary" '.group_by'
+echo ""
+
+# 5. UI proxy reachability (Next.js BFF at $UI_URL)
+printf "${BOLD}${YELLOW}▸ UI Proxy (ui_service)${RESET}\n"
+check "UI proxy: capabilities" "$UI_URL/api/admin/capabilities" '.config_version'
+# The proxy serves a synthetic fallback envelope (snapshot_source=ui_admin_proxy)
+# when the orchestrator is unreachable or rejects the key — that must not happen.
+printf "  %-45s " "UI proxy: capabilities are live"
+if echo "$resp" | grep -Eq '"snapshot_source" *: *"ui_admin_proxy"'; then
+  printf "${RED}FAIL${RESET} (fallback snapshot: ui_admin_proxy)\n"; FAIL=$((FAIL + 1))
+else
+  printf "${GREEN}OK${RESET}   live snapshot\n"; PASS=$((PASS + 1))
+fi
+check "UI proxy: modules" "$UI_URL/api/admin/modules" '.total | tostring + " modules"'
+check "UI proxy: dashboard adapters" "$UI_URL/api/dashboard/adapters" '.total_connected | tostring + " connected"'
 echo ""
 
 # Summary

@@ -3,10 +3,17 @@
  *
  * Mirrors the provider-lock pattern from Phase 4 for adapter connections.
  * Subclasses implement adapter-specific credential checking and connection testing.
- * Credentials flow through Admin API, not .env files.
+ *
+ * Reads: the orchestrator admin API module registry (GET /admin/modules) reports
+ * `has_credentials` per module_id — credential values are never readable.
+ * Writes: the dashboard credential store (POST/DELETE
+ * /admin/module-credentials/{category}/{platform}) is the single write path.
+ * Both services accept the same X-API-Key.
  */
 
-const ADMIN_API_BASE = process.env.ADMIN_API_URL || 'http://localhost:8003';
+const ADMIN_API_BASE = process.env.ADMIN_API_URL || 'http://orchestrator:8003';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || process.env.X_API_KEY || '';
+export const DASHBOARD_SERVICE = process.env.DASHBOARD_SERVICE_URL || 'http://dashboard:8001';
 
 export interface FieldDefinition {
   name: string;
@@ -33,9 +40,32 @@ export interface CredentialConfig {
 }
 
 /**
+ * One GET /admin/modules per call: the set of module_ids ("category/platform")
+ * that have stored credentials. Empty when the admin API is unreachable or
+ * rejects the key, so every credentialed adapter then reports as locked.
+ */
+export async function fetchCredentialedModuleIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    const res = await fetch(`${ADMIN_API_BASE}/admin/modules`, {
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': ADMIN_API_KEY },
+      signal: AbortSignal.timeout(5000),
+      cache: 'no-store',
+    });
+    if (!res.ok) return ids;
+    const data = await res.json();
+    for (const m of data?.modules || []) {
+      if (m?.module_id && m.has_credentials) ids.add(m.module_id);
+    }
+  } catch {
+    // Admin API unreachable — treat every credentialed adapter as locked
+  }
+  return ids;
+}
+
+/**
  * Base class for adapter unlock logic.
  * Each adapter subclass defines its required credential fields and connection test.
- * Credentials are read from Admin API module registry, not from .env or hardcoded values.
  */
 export abstract class AdapterUnlockBase {
   constructor(
@@ -82,35 +112,44 @@ export abstract class AdapterUnlockBase {
   }
 
   /**
-   * Fetch current credentials from Admin API module registry.
+   * Dashboard credential-store path: moduleId "category/platform" split on the first "/".
    */
-  async fetchCredentials(): Promise<CredentialConfig> {
+  private credentialPath(): string {
+    const idx = this.moduleId.indexOf('/');
+    const category = idx === -1 ? this.moduleId : this.moduleId.slice(0, idx);
+    const platform = idx === -1 ? '' : this.moduleId.slice(idx + 1);
+    return `${DASHBOARD_SERVICE}/admin/module-credentials/${encodeURIComponent(category)}/${encodeURIComponent(platform)}`;
+  }
+
+  /**
+   * Store credentials in the dashboard credential store.
+   * POST /admin/module-credentials/{category}/{platform}  body: { credentials }
+   */
+  async storeCredentials(credentials: Record<string, string>): Promise<boolean> {
     try {
-      const res = await fetch(
-        `${ADMIN_API_BASE}/admin/modules/${encodeURIComponent(this.moduleId)}/credentials`,
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-      if (!res.ok) return {};
-      const data = await res.json();
-      return data.credentials || data || {};
+      const res = await fetch(this.credentialPath(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': ADMIN_API_KEY },
+        body: JSON.stringify({ credentials }),
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.ok;
     } catch {
-      return {};
+      return false;
     }
   }
 
   /**
-   * Store credentials via Admin API.
+   * Remove credentials from the dashboard credential store.
+   * DELETE /admin/module-credentials/{category}/{platform}
    */
-  async storeCredentials(credentials: Record<string, string>): Promise<boolean> {
+  async deleteCredentials(): Promise<boolean> {
     try {
-      const res = await fetch(
-        `${ADMIN_API_BASE}/admin/modules/${encodeURIComponent(this.moduleId)}/credentials`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credentials }),
-        }
-      );
+      const res = await fetch(this.credentialPath(), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': ADMIN_API_KEY },
+        signal: AbortSignal.timeout(5000),
+      });
       return res.ok;
     } catch {
       return false;

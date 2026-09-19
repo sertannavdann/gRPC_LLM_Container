@@ -125,6 +125,9 @@ print_summary() {
 printf "${BOLD}${CYAN}NEXUS Release Verification Pipeline${RESET}\n"
 printf "Started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\n"
 
+# 0. Static gate: undefined names. Would have caught the sandbox NameError at boot.
+run_step "Lint (F821 undefined names)" "python -m flake8 --select=F821 orchestrator/ core/ tools/ dashboard_service/"
+
 # 1. Unit tests
 if [ -d "tests/unit" ]; then
   run_step "Unit Tests" "python -m pytest tests/unit/ -q --tb=line"

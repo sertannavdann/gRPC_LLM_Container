@@ -1,3 +1,5 @@
+// FROZEN 2026-09-18: removed from the navbar, reachable by URL (/pipeline) only.
+// Phase 9 (ECS context canvas) stopped at plan 09-09; 09-10 was not executed.
 /**
  * Pipeline Page — Hierarchical Tree
  *

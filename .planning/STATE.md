@@ -20,10 +20,10 @@ progress:
 
 ## Current Phase
 
-**Phase 6 (UX/UI Visual Expansion)** — **complete**. 6/6 plans executed (Wave 4 stabilization + adapter credential unification).
+**Phase 10 (Foundations)** — **in progress** (started 2026-09-18). Phase 9 (ECS Context-Substrate Canvas) frozen after 09-09; 09-10 not executed.
 
 **Progress**: Phase 5 complete (4/4 plans, 98+ new tests, zero regressions). Phase 6 complete (6/6 plans including Wave 4 runtime stability and adapter credential unification) with deterministic capability fallback, synchronization guards, and .env-based adapter key management shipped.
-**Current Focus**: Begin Phase 7 (Audit Trail) planning and execution.
+**Current Focus**: Phase 10 (Foundations) — runtime repair (UI reachability, credential persistence, finance CSV upload, settings, Pipeline frozen). Phase 9 frozen after 09-09; 09-10 not executed.
 
 ---
 
@@ -128,6 +128,8 @@ progress:
 |------|--------|---------|
 | Phase 6: UX/UI Visual Expansion | **Complete** (6/6 plans) | None |
 | Phase 7: Audit Trail | **Not started** — next phase | None |
+| Phase 9: ECS Context-Substrate Canvas | **Frozen** (9/10; 09-10 not executed) | Wave-7 checkpoint not approved |
+| Phase 10: Foundations | **In Progress** (2026-09-18) | None |
 | Pipeline UI drag-and-drop | Design phase | — |
 
 ---
