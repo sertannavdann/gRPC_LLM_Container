@@ -5,6 +5,7 @@ This registry bridges the old gRPC-based tool system with the new ADK-style
 function tools, providing a unified interface for tool registration and execution.
 """
 
+import functools
 import inspect
 import logging
 from typing import Dict, Any, Callable, List, Optional
@@ -100,8 +101,13 @@ class LocalToolRegistry:
             tool_name = name or f.__name__
             
             try:
-                # Extract schema from function
-                schema = self._extract_schema(f, tool_name, description)
+                # Tool instances (tools.base.BaseTool / CompositeTool) describe
+                # themselves. inspect.signature() on an instance only sees
+                # __call__(**kwargs), which used to export every tool as a
+                # single "kwargs" parameter and hid the required "action".
+                schema = self._schema_from_instance(f, tool_name, description)
+                if schema is None:
+                    schema = self._extract_schema(f, tool_name, description)
                 
                 # Register tool
                 self.tools[tool_name] = f
@@ -312,6 +318,51 @@ class LocalToolRegistry:
         
         return openai_tools
     
+    def _schema_from_instance(
+        self,
+        obj: Any,
+        name: str,
+        description: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Build a schema from a tool *instance* that exposes get_schema().
+
+        Returns None for plain functions/methods, for objects without
+        get_schema(), and when the instance schema declares no parameters
+        (the signature-based fallback is then no worse).
+        """
+        if inspect.isfunction(obj) or inspect.ismethod(obj) or isinstance(obj, functools.partial):
+            return None
+        get_schema = getattr(obj, "get_schema", None)
+        if not callable(get_schema):
+            return None
+        try:
+            raw = get_schema() or {}
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"get_schema() failed for tool '{name}': {e}")
+            return None
+
+        params = raw.get("parameters") or {}
+        if params.get("type") == "object" and isinstance(params.get("properties"), dict):
+            props = dict(params["properties"])
+            required = list(params.get("required") or [])
+        else:
+            # Legacy shape: {"param": {...}, ...}
+            props = {k: v for k, v in params.items() if isinstance(v, dict)}
+            required = ["action"] if "action" in props else []
+        if not props:
+            return None
+
+        return {
+            "name": name,
+            "description": description or raw.get("description") or getattr(obj, "description", "") or "",
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                "required": required,
+            },
+        }
+
     def _extract_schema(
         self,
         func: Callable,

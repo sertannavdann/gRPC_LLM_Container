@@ -128,6 +128,8 @@ services:
       - AUTH_DB_PATH=/app/data/api_keys.db
       - AUDIT_DB_PATH=/app/data/audit_events.db
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - MODULE_CREDENTIALS_DB=/app/data/module_credentials.db
+      - MODULE_ENCRYPTION_KEY=${MODULE_ENCRYPTION_KEY:-}
       # Adapter credentials (read by capability lock-state check)
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
       - CLASH_ROYALE_API_KEY=${CLASH_ROYALE_API_KEY:-}
@@ -184,10 +186,12 @@ services:
       # dashboard's own (different) /app/data.
       - AUDIT_DIR=/app/shared_data/audit
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - MODULE_CREDENTIALS_DB=/app/shared_data/module_credentials.db
+      - MODULE_ENCRYPTION_KEY=${MODULE_ENCRYPTION_KEY:-}
     volumes:
       - ./dashboard_service/data:/app/data
       - ./data:/app/shared_data
-      - ./dashboard_service/Bank:/app/dashboard_service/Bank:ro
+      - ./dashboard_service/Bank:/app/dashboard_service/Bank:rw
       - ./logs:/app/logs
       - ./modules:/app/modules:rw
     networks:
@@ -281,6 +285,7 @@ services:
       - CONVERSATIONS_DIR=/app/data/conversations
       - DASHBOARD_SERVICE_URL=http://dashboard:8001
       - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      - ADMIN_API_URL=http://orchestrator:8003
     volumes:
       - ./.env:/app/config/.env:rw
       - ./data/conversations:/app/data/conversations:rw

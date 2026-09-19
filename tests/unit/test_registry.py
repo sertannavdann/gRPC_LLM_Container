@@ -474,3 +474,74 @@ class TestRegistryLogging:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+class TestToolInstanceSchemas:
+    """
+    Registering tool *instances* must export their real parameters.
+
+    Regression: inspect.signature() on an instance only sees __call__(**kwargs),
+    so every tool was exported as a single "kwargs" parameter and the model
+    could not see that CompositeTools require an "action" (USAGE-LOG S2).
+    """
+
+    def test_composite_tool_instance_exports_action_enum(self, empty_tool_registry):
+        from tools.builtin.module_pipeline import ModulePipelineTool
+
+        registry = empty_tool_registry
+        tool = ModulePipelineTool()
+        registry.register(tool, name="module_pipeline", description=tool.description)
+
+        params = registry.schemas["module_pipeline"]["parameters"]
+        assert "kwargs" not in params["properties"]
+        assert set(params["properties"]["action"]["enum"]) == {
+            "build", "write_code", "repair", "validate", "install"
+        }
+        assert params["required"] == ["action"]
+
+        exported = {t["function"]["name"]: t for t in registry.to_openai_tools()}
+        assert exported["module_pipeline"]["function"]["parameters"]["required"] == ["action"]
+
+    def test_signature_carrying_alias_exports_legacy_parameters(self, empty_tool_registry):
+        """An alias wrapped with functools.wraps(legacy_fn) exposes the legacy signature."""
+        import functools
+        from tools.builtin.module_builder import build_module
+
+        registry = empty_tool_registry
+        seen = []
+
+        @functools.wraps(build_module)
+        def build_alias(**kwargs):
+            seen.append(kwargs)
+            return {"status": "success"}
+
+        registry.register(build_alias, name="build_module", description="Build a module")
+
+        params = registry.schemas["build_module"]["parameters"]
+        assert params["required"] == ["name", "category"]
+        assert {"platform", "description", "requires_api_key"} <= set(params["properties"])
+        assert "kwargs" not in params["properties"]
+
+        registry.tools["build_module"](name="Strava", category="fitness")
+        assert seen == [{"name": "Strava", "category": "fitness"}]
+
+    def test_plain_base_tool_instance_keeps_signature_fallback(self, empty_tool_registry):
+        """BaseTool.get_schema() declares no parameters -> the old signature path still applies."""
+        from tools.base import BaseTool
+
+        class Echo(BaseTool):
+            name = "echo"
+            description = "Echo"
+
+            def validate_input(self, **kwargs):
+                return kwargs
+
+            def execute_internal(self, request):
+                return {"status": "success", "echo": request}
+
+            def format_output(self, response):
+                return response
+
+        registry = empty_tool_registry
+        registry.register(Echo(), name="echo", description="Echo")
+        assert "kwargs" in registry.schemas["echo"]["parameters"]["properties"]

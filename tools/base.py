@@ -460,10 +460,29 @@ class CompositeTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
         actions = {}
         for name, strategy in self._strategies.items():
             actions[name] = {"description": strategy.description}
+        action_help = "; ".join(
+            f"{name}: {strategy.description}"
+            for name, strategy in self._strategies.items()
+            if strategy.description
+        )
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {"action": {"type": "string", "enum": list(self._strategies.keys())}},
+            # Proper JSON-schema object so registries and LLM function-calling
+            # see "action" as a required enum instead of an opaque kwargs blob.
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": list(self._strategies.keys()),
+                        "description": (
+                            f"Which action to run. {action_help}" if action_help else "Which action to run."
+                        ),
+                    }
+                },
+                "required": ["action"],
+            },
             "actions": actions,
         }
 

@@ -82,50 +82,33 @@ class UserContextTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
         try:
             categories = request.get("categories") or [request.get("category", "all")]
             destination = request.get("destination")
+            wanted = [c for c in categories if c and c != "all"]
 
-            # Try dashboard summary endpoint first
-            if not self._bridge.is_mock_mode() and "all" in categories:
-                result = self._fetch_summary_from_dashboard(destination=destination)
-                if result and result.get("summary"):
-                    return {
-                        "status": "success",
-                        "summary": result["summary"],
-                        "categories_retrieved": result.get("categories_retrieved", []),
-                        "alert_count": result.get("alert_count", 0),
-                        "timestamp": result.get("timestamp", datetime.now().isoformat()),
-                    }
-
-            # Fallback: fetch raw context and build summaries locally
-            context = None
+            # The dashboard owns the formatters (real totals, "No weather data
+            # available.", ...). There is deliberately no local fallback: a
+            # placeholder line ("FINANCE: ... available") once reached the
+            # model and it invented the numbers. Unavailable is an error the
+            # model has to report, not a blank it may fill.
+            result = None
             if not self._bridge.is_mock_mode():
-                fetch_categories = None if "all" in categories else categories
-                context = self._bridge.fetch(categories=fetch_categories)
-                if context:
-                    logger.debug("Using real context from dashboard")
-
-            if not context:
-                logger.debug("No context available — returning empty summary")
+                result = self._fetch_summary_from_dashboard(
+                    destination=destination, categories=wanted or None
+                )
+            if not result or not isinstance(result.get("summary"), str):
                 return {
-                    "status": "success",
-                    "summary": "No context data available.",
-                    "categories_retrieved": [],
-                    "alert_count": 0,
-                    "timestamp": datetime.now().isoformat(),
+                    "status": "error",
+                    "error": (
+                        "Context service unavailable: finance, weather and calendar "
+                        "data cannot be retrieved right now."
+                    ),
                 }
-
-            # Try dashboard formatters
-            try:
-                from dashboard_service.formatters import build_full_summary
-                result = build_full_summary(context, destination=destination)
-            except ImportError:
-                result = self._build_fallback_summary(context, categories, destination)
 
             return {
                 "status": "success",
-                "summary": result.get("summary", ""),
+                "summary": result["summary"],
                 "categories_retrieved": result.get("categories_retrieved", []),
                 "alert_count": result.get("alert_count", 0),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": result.get("timestamp", datetime.now().isoformat()),
             }
 
         except Exception as e:
@@ -133,13 +116,15 @@ class UserContextTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
             return {"status": "error", "error": f"Failed to retrieve user context: {str(e)}"}
 
     def _fetch_summary_from_dashboard(
-        self, destination: Optional[str] = None
+        self, destination: Optional[str] = None, categories: Optional[List[str]] = None
     ) -> Optional[Dict[str, Any]]:
         """Fetch pre-built summary from dashboard formatters endpoint."""
         try:
-            params: Dict[str, str] = {}
+            params: Dict[str, Any] = {}
             if destination:
                 params["destination"] = destination
+            if categories:
+                params["categories"] = list(categories)
             resp = requests.get(
                 f"{self._bridge.dashboard_url}/context/summary/default",
                 params=params,
@@ -152,24 +137,6 @@ class UserContextTool(BaseTool[Dict[str, Any], Dict[str, Any]]):
             logger.warning(f"Dashboard summary endpoint unreachable: {e}")
         return None
 
-    @staticmethod
-    def _build_fallback_summary(
-        context: dict, categories: List[str], destination: Optional[str]
-    ) -> Dict[str, Any]:
-        """Minimal inline summary when dashboard_service.formatters unavailable."""
-        parts = []
-        cats = []
-        for cat in ["calendar", "finance", "health", "navigation", "weather", "gaming"]:
-            if "all" in categories or cat in categories:
-                data = context.get(cat)
-                if data:
-                    cats.append(cat)
-                    parts.append(f"{cat.upper()}: data available")
-        return {
-            "summary": "\n".join(parts) if parts else "No context data available.",
-            "categories_retrieved": cats,
-            "alert_count": 0,
-        }
 
     # ── Commute / Navigation (absorbs get_commute_time) ──────────────
 

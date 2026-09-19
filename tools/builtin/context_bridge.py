@@ -16,6 +16,15 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+def _has_content(data: Any) -> bool:
+    """True when a payload carries any real value, not just empty containers/None."""
+    if isinstance(data, dict):
+        return any(_has_content(v) for v in data.values())
+    if isinstance(data, (list, tuple, set)):
+        return any(_has_content(v) for v in data)
+    return data is not None and data != ""
+
+
 class ContextBridge:
     """
     Service object injected into tools that need context data.
@@ -127,7 +136,10 @@ class ContextBridge:
         result: Dict[str, Any] = {}
 
         for category, data in raw.items():
-            if not data:
+            if not _has_content(data):
+                # An unconfigured adapter returns {"current": None, "forecasts": []}:
+                # truthy, but empty. Treat it as absent so nothing downstream
+                # reports data that does not exist.
                 continue
             adapter_cls = adapter_map.get(category)
             if adapter_cls:

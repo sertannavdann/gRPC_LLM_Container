@@ -73,17 +73,18 @@ from tools.builtin.web_tools import WebTool
 from tools.builtin.knowledge_search import KnowledgeSearchTool
 from tools.builtin.knowledge_store import KnowledgeStoreTool
 from tools.builtin.math_solver import MathSolverTool
-from tools.builtin.code_executor import CodeExecutorTool
+from tools.builtin.code_executor import CodeExecutorTool, set_sandbox_client
 from tools.builtin.module_pipeline import ModulePipelineTool
 from tools.builtin.module_admin import ModuleAdminTool
 # Legacy imports still needed by module_builder/installer internals
 from tools.builtin.module_builder import set_llm_gateway
-from tools.builtin.module_validator import set_sandbox_client as set_validator_sandbox
 from tools.builtin.module_installer import set_installer_deps
 from tools.builtin.module_manager import (
     set_module_loader, set_module_registry, set_credential_store,
 )
 from shared.modules.registry import ModuleRegistry
+from shared.modules.credentials import CredentialStore
+from orchestrator.tool_registration import register_agent_tools
 
 # Module system for dynamic adapter loading
 from shared.modules.loader import ModuleLoader
@@ -446,9 +447,13 @@ class LLMEngineWrapper:
         logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
         logger.debug(f"has_tool_results={has_tool_results} (messages count: {len(messages)})")
 
-        # If we have tool results, use plain-text synthesis instead of JSON
-        # This is far more reliable across model sizes
-        if has_tool_results:
+        # With tool results in hand we normally switch to plain-text synthesis
+        # (far more reliable across model sizes). Two cases cannot be finished
+        # yet: a single failed tool call (the model gets one retry with the
+        # error in context) and the module build chain (build -> write_code ->
+        # validate has to run inside one user turn). The graph bounds this
+        # loop with its retry budget.
+        if has_tool_results and not self._should_continue_tool_loop(messages):
             return self._synthesize_with_results(messages, conversation, temperature, max_tokens)
 
         # Track multi-turn context
@@ -470,6 +475,7 @@ Instructions:
 - To use a tool, respond with ONLY valid JSON in this exact format: {{"type": "tool_call", "tool": "tool_name", "arguments": {{"param_name": "actual_value_from_query"}}}}
 - To answer directly without tools, respond with ONLY valid JSON: {{"type": "answer", "content": "your answer here"}}
 - IMPORTANT: Extract actual values from the user's question - do NOT use parameter names as values
+- If the conversation already contains Tool Results, build on them: call the next tool the task needs, or answer. Never repeat a call that already succeeded. If a tool returned an ERROR, fix the arguments and call it again once.
 - For example, if user asks "how long to the office?", use {{"type": "tool_call", "tool": "get_commute_time", "arguments": {{"destination": "office"}}}}
 - If user asks "what's my schedule?", use {{"type": "tool_call", "tool": "get_user_context", "arguments": {{"categories": ["calendar"]}}}}
 - If no tool is needed, provide a direct answer
@@ -545,6 +551,23 @@ Your response (JSON only):"""
             }
         }
     
+    # Tools whose SUCCESS means the build chain must keep going in this turn
+    # (validate_module success ends the turn: that is the human approval gate).
+    _CONTINUE_AFTER_SUCCESS = frozenset({"build_module", "write_module_code"})
+
+    def _should_continue_tool_loop(self, messages: list) -> bool:
+        """Offer the model another tool call instead of synthesising?"""
+        tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+        if not tool_msgs:
+            return False
+        last = tool_msgs[-1]
+        is_error = " ERROR]:" in str(last.content or "")
+        error_count = sum(1 for m in tool_msgs if " ERROR]:" in str(m.content or ""))
+        if is_error:
+            # Exactly one retry. A second failure is reported honestly.
+            return error_count == 1
+        return (getattr(last, "name", None) or "") in self._CONTINUE_AFTER_SUCCESS
+
     def _synthesize_with_results(self, messages: list, conversation: str, temperature: float, max_tokens: int) -> dict:
         """
         Synthesize a final answer from tool results using plain-text output.
@@ -577,6 +600,8 @@ Tool results:
 
 Using the tool results above, provide a clear, complete, and helpful answer to the user's question.
 Be direct and specific — include relevant numbers, times, and details from the tool results.
+Only state facts that appear in the tool results. If a tool result reports an error, or says data is unavailable, missing, or not configured, say so plainly.
+Never invent, estimate, or assume numbers, events, weather, or balances that are not in the tool results.
 Do NOT mention that tools were used. Just answer naturally.
 
 Answer:"""
@@ -692,14 +717,23 @@ Answer:"""
     
     def _format_tools_description(self, tools: list) -> str:
         """Format tools as readable list for LLM prompt."""
-        lines = []
+        lines = ["(parameters marked * are required; name(a|b) lists the allowed values)"]
         for i, tool in enumerate(tools, 1):
             func = tool.get("function", {})
             name = func.get("name", "unknown")
             desc = func.get("description", "No description")
-            params = func.get("parameters", {}).get("properties", {})
-            
-            param_list = ", ".join(params.keys()) if params else "none"
+            parameters = func.get("parameters", {}) or {}
+            params = parameters.get("properties", {}) or {}
+            required = set(parameters.get("required", []) or [])
+
+            rendered = []
+            for pname, spec in params.items():
+                spec = spec if isinstance(spec, dict) else {}
+                label = f"{pname}*" if pname in required else pname
+                if spec.get("enum"):
+                    label += "(" + "|".join(str(v) for v in spec["enum"]) + ")"
+                rendered.append(label)
+            param_list = ", ".join(rendered) if rendered else "none"
             lines.append(f"{i}. {name}: {desc}")
             lines.append(f"   Parameters: {param_list}")
         
@@ -911,18 +945,21 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         # Initialize LLM provider based on config
         self.llm_client = self._initialize_provider()
         
-        # Initialize Sandbox Client
+        # Initialize Sandbox Client. Only the client construction is guarded:
+        # a programming error in the wiring below must surface, not be logged
+        # as an infrastructure warning (that hid a NameError for months).
         try:
             self.sandbox_client = SandboxClient(
                 host=self.config.sandbox_host,
                 port=self.config.sandbox_port
             )
-            # Wire sandbox client to code_executor tool
-            set_sandbox_client(self.sandbox_client)
-            logger.info(f"Sandbox client connected to {self.config.sandbox_host}:{self.config.sandbox_port}")
         except Exception as e:
             logger.warning(f"Sandbox client initialization failed: {e}. Code execution disabled.")
             self.sandbox_client = None
+        if self.sandbox_client is not None:
+            # Wire sandbox client to the code_executor tool
+            set_sandbox_client(self.sandbox_client)
+            logger.info(f"Sandbox client connected to {self.config.sandbox_host}:{self.config.sandbox_port}")
         
         # NOTE: Registry/Worker mesh disabled - can be re-enabled when needed
         # Registry and Worker services removed in cleanup
@@ -1007,15 +1044,18 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
         self.module_registry = ModuleRegistry(
             db_path=os.getenv("MODULE_REGISTRY_DB", "data/module_registry.db")
         )
-        self.credential_store = None
+        # Encrypted credential store. The dashboard opens the SAME SQLite file
+        # (MODULE_CREDENTIALS_DB points both services at ./data on the host),
+        # so credentials entered in the UI are visible to the installer here.
+        self.credential_store = CredentialStore(
+            db_path=os.getenv("MODULE_CREDENTIALS_DB", "data/module_credentials.db")
+        )
 
         # Wire legacy module infrastructure (needed by module_builder/installer internals)
         set_module_loader(self.module_loader)
         set_module_registry(self.module_registry)
-        set_credential_store(None)
-        set_installer_deps(self.module_loader, self.module_registry, None)
-        if self.sandbox_client:
-            set_validator_sandbox(self.sandbox_client)
+        set_credential_store(self.credential_store)
+        set_installer_deps(self.module_loader, self.module_registry, self.credential_store)
 
         # ── Shared audit store (REQ-011) — single sink for every mutation
         # path: DevModeAuditLog dual-write, @audit_action decorated Admin
@@ -1065,6 +1105,7 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             modules_dir=str(modules_dir),
             module_loader=self.module_loader,
             module_registry=self.module_registry,
+            credential_store=self.credential_store,
             audit_store=self.audit_store,
         )
         _module_admin_tool = ModuleAdminTool(
@@ -1076,33 +1117,18 @@ class OrchestratorService(agent_pb2_grpc.AgentServiceServicer):
             audit_store=self.audit_store,
         )
 
-        # ── Register 8 primary tools ────────────────────────────────
-        self.tool_registry.register(_user_context_tool, name="user_context", description=_user_context_tool.description)
-        self.tool_registry.register(_web_tool, name="web", description=_web_tool.description)
-        self.tool_registry.register(_knowledge_search_tool, name="search_knowledge", description=_knowledge_search_tool.description)
-        self.tool_registry.register(_knowledge_store_tool, name="store_knowledge", description=_knowledge_store_tool.description)
-        self.tool_registry.register(_math_tool, name="math_solver", description=_math_tool.description)
-        self.tool_registry.register(_code_executor_tool, name="execute_code", description=_code_executor_tool.description)
-        self.tool_registry.register(_module_pipeline_tool, name="module_pipeline", description=_module_pipeline_tool.description)
-        self.tool_registry.register(_module_admin_tool, name="module_admin", description=_module_admin_tool.description)
-
-        # ── Backward-compat aliases (remove after stable) ───────────
-        self.tool_registry.register(_user_context_tool, name="get_user_context", description="Get user context data")
-        self.tool_registry.register(_user_context_tool, name="get_daily_briefing", description="Get daily briefing")
-        self.tool_registry.register(_user_context_tool, name="get_commute_time", description="Get commute time")
-        self.tool_registry.register(_user_context_tool, name="query_finance", description="Query finance data")
-        self.tool_registry.register(_web_tool, name="web_search", description="Search the web")
-        self.tool_registry.register(_web_tool, name="load_web_page", description="Load web page content")
-        self.tool_registry.register(_module_pipeline_tool, name="build_module", description="Build a module")
-        self.tool_registry.register(_module_pipeline_tool, name="write_module_code", description="Write module code")
-        self.tool_registry.register(_module_pipeline_tool, name="repair_module", description="Repair module code")
-        self.tool_registry.register(_module_pipeline_tool, name="validate_module", description="Validate a module")
-        self.tool_registry.register(_module_pipeline_tool, name="install_module", description="Install a module")
-        self.tool_registry.register(_module_admin_tool, name="list_modules", description="List modules")
-        self.tool_registry.register(_module_admin_tool, name="enable_module", description="Enable a module")
-        self.tool_registry.register(_module_admin_tool, name="disable_module", description="Disable a module")
-        self.tool_registry.register(_module_admin_tool, name="store_module_credentials", description="Store module credentials")
-        self.tool_registry.register(_module_admin_tool, name="uninstall_module", description="Uninstall a module")
+        # ── Tool registration (see orchestrator/tool_registration.py) ─
+        register_agent_tools(
+            self.tool_registry,
+            user_context_tool=_user_context_tool,
+            web_tool=_web_tool,
+            knowledge_search_tool=_knowledge_search_tool,
+            knowledge_store_tool=_knowledge_store_tool,
+            math_tool=_math_tool,
+            code_executor_tool=_code_executor_tool,
+            module_pipeline_tool=_module_pipeline_tool,
+            module_admin_tool=_module_admin_tool,
+        )
         self.tool_registry.register(_module_admin_tool, name="create_draft", description="Create a draft")
         self.tool_registry.register(_module_admin_tool, name="edit_draft", description="Edit a draft")
         self.tool_registry.register(_module_admin_tool, name="diff_draft", description="Diff a draft")
