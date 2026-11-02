@@ -24,6 +24,21 @@ message GenerateResponse {
   string token = 1;
   bool is_final = 2;
   bool is_valid_json = 3;
+  string finish_reason = 4;          // final chunk only: "stop" | "length"
+  Usage usage = 5;                   // final chunk only: exact counts and server-side timings
+}
+
+// Measured by the LLM service itself, so clients need not estimate tokens or
+// subtract gRPC/Python overhead. Token counts come from the model's tokenizer.
+message Usage {
+  int32 prompt_tokens = 1;           // prompt after tokenization, incl. BOS
+  int32 completion_tokens = 2;       // generated tokens, excluding the end-of-text token
+  float tokens_per_sec = 3;          // decode: (completion_tokens - 1) / decode time
+  int32 cached_prompt_tokens = 4;    // prompt prefix reused from the KV cache, not recomputed
+  float queue_ms = 5;                // waiting for the engine (another request was running)
+  float prefill_ms = 6;              // engine start -> first token sampled
+  float decode_ms = 7;               // first token -> last token
+  float prefill_tokens_per_sec = 8;  // (prompt_tokens - cached_prompt_tokens) / prefill time
 }
 
 // Phase 2: Batch generation for self-consistency scoring
@@ -52,6 +67,8 @@ message GetActiveModelResponse {
   repeated string capabilities = 5;
   string tier = 6;
   string backend = 7;
+  string device = 8;   // cpu | metal | cuda (what actually runs the model)
+  string engine = 9;   // llamacpp | mlx
 }
 
 message ListModelsRequest {}

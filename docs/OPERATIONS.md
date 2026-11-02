@@ -177,6 +177,89 @@ grep "Module" logs/debug.log | grep "enabled"
 
 ## Performance Tuning
 
+### Host-native LLM Tiers on macOS (Metal)
+
+Docker Desktop and `apple/container` cannot pass Metal or the Neural Engine into a
+Linux container, so the `llm_service` containers only ever use the CPU. On Apple
+Silicon the LLM tiers run as native processes instead, and the containers reach
+them through `host.docker.internal`. Linux, Windows and CI hosts keep the Docker
+CPU tiers unchanged.
+
+| Tier | Port | Engine | Model | Env file |
+|------|------|--------|-------|----------|
+| heavy | 50051 | llama.cpp on Metal | `Qwen2.5-14B-Instruct-Q4_K_M.gguf`, 16K ctx, q8_0 KV | `config/llm/heavy.env` |
+| standard (default) | 50061 | MLX | `mlx-community/Qwen2.5-3B-Instruct-4bit`, 8K ctx | `config/llm/standard-mlx.env` |
+| standard (alternative) | 50061 | llama.cpp on Metal | `qwen2.5-3b-instruct-q5_k_m.gguf` | `config/llm/standard.env` |
+
+**One-time setup**
+
+```bash
+make llm-venv        # uv venv + llama-cpp-python built with Metal + mlx-lm (5-10 min)
+```
+
+Model weights live in `llm_service/models.nosync/` (the `llm_service/models`
+symlink points there). The `.nosync` suffix keeps multi-GB files out of iCloud.
+MLX models are cached under `llm_service/models.nosync/hf`, which the supervisor
+exports as `HF_HOME`. Download them with:
+
+```bash
+hf download bartowski/Qwen2.5-14B-Instruct-GGUF Qwen2.5-14B-Instruct-Q4_K_M.gguf --local-dir llm_service/models.nosync
+hf download Qwen/Qwen2.5-3B-Instruct-GGUF qwen2.5-3b-instruct-q5_k_m.gguf --local-dir llm_service/models.nosync
+hf download Qwen/Qwen2.5-0.5B-Instruct-GGUF qwen2.5-0.5b-instruct-q5_k_m.gguf --local-dir llm_service/models.nosync
+HF_HOME="$PWD/llm_service/models.nosync/hf" hf download mlx-community/Qwen2.5-3B-Instruct-4bit
+```
+
+**Switching the stack to host tiers.** `.env` selects the compose override:
+
+```bash
+COMPOSE_FILE=docker-compose.yaml:docker-compose.host-llm.yaml
+```
+
+The override moves both `llm_service` containers into the `cpu-fallback` profile
+and points the orchestrator at `host.docker.internal:50051` / `:50061`.
+`config/routing_config.json` tier endpoints use `${LLM_HEAVY_HOST:-...}`
+templates, so the routing config follows the same variables.
+
+**Daily use**
+
+```bash
+make llm-up                      # start tiers, wait for SERVING, recreate orchestrator
+make llm-status                  # health, model, engine, device per tier
+make llm-logs TIER=heavy         # logs/llm/heavy.log
+make llm-bench PORT=50051        # add SUSTAIN=300 for thermal check, POWER=1 for watts (sudo)
+make llm-stability TIER=heavy    # health, accounting, concurrency, soak, RSS, overflow; SOAK=60 LONG_CTX=1
+make llm-stability-all           # same for every tier in LLM_TIERS; exits 1 on the first failure
+make llm-down
+LLM_TIERS="heavy standard" make llm-up   # llama.cpp standard tier instead of MLX
+```
+
+`make lidm-up` delegates to `make llm-up` when the override is active.
+`grpcurl -plaintext localhost:50051 llm.LLMService/GetActiveModel` reports
+`device` (`metal`, `cpu`, `cuda`) and `engine` (`llamacpp`, `mlx`).
+
+**Going back to the CPU containers** (or on Linux/CI): remove the `COMPOSE_FILE`
+line from `.env`, or run them alongside with
+`docker compose --profile cpu-fallback up -d llm_service`. Stop the host tiers
+first, since both bind ports 50051 and 50061.
+
+**Notes**
+
+- The services report `NOT_SERVING` until the model is loaded. Compose health
+  checks allow a 180 s start period; the supervisor waits up to 300 s.
+- The supervisor never reads the root `.env`. There `LLM_HOST` is the address the
+  orchestrator dials; in `config/llm/*.env` it is the address the server binds.
+- With full Metal offload, `LLM_THREADS` only affects tokenization and sampling.
+  The supervisor defaults it to the performance-core count.
+- `LLM_KV_CACHE_TYPE=q8_0` requires `LLM_FLASH_ATTN=1`; config validation enforces it.
+- On first start, macOS may ask whether Python may accept incoming connections. Allow it,
+  or containers cannot reach the tiers.
+- A future CUDA image can reuse the same code: build with
+  `--build-arg CMAKE_ARGS=-DGGML_CUDA=on` and set `LLM_DEVICE=cuda`.
+- The tracked `llm_service/models` symlink points at `models.nosync`. On a Linux host,
+  create that directory (or replace the symlink) before mounting models into the container.
+
+Measured numbers are in [BENCHMARKS.md](BENCHMARKS.md).
+
 ### LIDM Tier Thresholds
 
 **Location**: `config/routing_config.json`
@@ -298,7 +381,7 @@ make docker-restart
 
 ### LLM Models
 
-**Location**: `llm_service/models/`
+**Location**: `llm_service/models/` (symlink to `llm_service/models.nosync/`, kept out of iCloud and git)
 
 **Backup** (large files, use selective backup):
 ```bash

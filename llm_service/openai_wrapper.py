@@ -88,7 +88,7 @@ class GRPCClient:
         
         try:
             async for response in self._stub.Generate(request):
-                yield response.text
+                yield response.token
         except grpc.aio.AioRpcError as e:
             logger.error(f"gRPC error: {e.code()} - {e.details()}")
             raise

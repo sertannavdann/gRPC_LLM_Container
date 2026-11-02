@@ -45,7 +45,7 @@ from shared.modules.approval import approve_module, reject_module
 from shared.modules.manifest import ModuleManifest
 
 from .config_manager import ConfigManager
-from .routing_config import CategoryRouting, RoutingConfig
+from .routing_config import CategoryRouting, RoutingConfig, expand_env
 try:
     from tools.builtin.chart_validator import validate_chart, ChartValidationResult
     _HAS_CHART_VALIDATOR = True
@@ -639,7 +639,7 @@ def get_providers():
     tiers = {}
     for name, tier in config.tiers.items():
         tiers[name] = {
-            "endpoint": tier.endpoint,
+            "endpoint": expand_env(tier.endpoint),
             "models": lidm_tier_models.get(name, []),
             "enabled": tier.enabled,
         }

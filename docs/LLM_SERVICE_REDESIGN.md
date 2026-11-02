@@ -1,6 +1,6 @@
 # LLM Service Redesign: Heterogeneous Inference on Apple Silicon
 
-Status: proposal (NEXUS branch)
+Status: steps 1 and 4 shipped, step 5 started (NEXUS branch, 2026-10). See §8.
 Scope: `llm_service/`, `shared/proto/llm.proto`, `shared/clients/llm_client.py`, LIDM tier wiring
 Target hardware: M4 Max, 36 GB unified memory (40-core GPU, 16-core Neural Engine)
 
@@ -23,7 +23,7 @@ That shape is sound. The problems are in where it runs and what it assumes.
 | # | Finding | Evidence | Consequence |
 |---|---------|----------|-------------|
 | F1 | **Inference runs CPU-only inside the Docker Linux VM.** `Llama(...)` is constructed without `n_gpu_layers`; the image is `python:3.11-slim` on x86/arm Linux. Docker Desktop on macOS exposes neither Metal nor the Neural Engine to containers. | `llm_service/llm_service.py` `ModelManager._load`, `llm_service/Dockerfile` | The M4 Max GPU and NPU are idle. The compose comment "3B model within 7.6GiB Docker RAM" is the ceiling this imposes. |
-| F2 | **The committed `llama-cli` binary is dead weight.** It is a 50 KB arm64 Mach-O stub dynamically linked against `@rpath/libllama.dylib`, `libggml-metal.dylib`, `libggml-blas.dylib`, none of which are in the repo. It is also a chat CLI, not a server, and `.gitignore` already lists `llm_service/llama/`. | `strings llm_service/llama/llama-cli`, `git ls-files` | Cannot run standalone; nothing references it. Remove from git. |
+| F2 | **~~The committed `llama-cli` binary is dead weight.~~** Correction: it was already removed from git in 5c34440; only an untracked, gitignored local copy remains. It is a 50 KB arm64 Mach-O stub dynamically linked against `@rpath/libllama.dylib`, `libggml-metal.dylib`, `libggml-blas.dylib`, none of which are in the repo. It is also a chat CLI, not a server, and `.gitignore` already lists `llm_service/llama/`. | `strings llm_service/llama/llama-cli`, `git ls-files` | Cannot run standalone; nothing references it. Remove from git. |
 | F3 | **Two backends, two servicers, duplicated logic.** `airllm_service.py` re-implements the servicer, majority vote, and health with different clamps (`num_samples` cap 5 vs 10) and fake word-level streaming. AirLLM is CUDA-only and disabled in compose. | `llm_service/airllm_service.py`, `docker-compose.yaml` (commented `llm_service_airllm`) | No backend seam exists, so adding MLX or Core ML means a third copy. |
 | F4 | **Prompt formatting is the client's job, and clients disagree.** `LocalProvider._format_messages` emits `System:/User:/Assistant:` lines; `openai_wrapper.format_chat_prompt` emits ChatML; the orchestrator has its own `_format_messages`. The server receives a raw string and never applies the model's chat template. | `shared/providers/local_provider.py`, `llm_service/openai_wrapper.py` | Instruct models are driven off-template. Quality and JSON adherence suffer, and switching models means auditing every caller. |
 | F5 | **`GenerateBatch` is k sequential full generations under one lock.** Self-consistency with k=5 costs 5x wall-clock and holds every other tier caller. | `LLMServiceServicer.GenerateBatch` | Fine for a 0.5B router; unusable on the heavy tier. Batched sampling from a shared prefill is the fix (MLX and llama.cpp both support it). |
@@ -322,3 +322,46 @@ Open:
   (best coding/JSON in the current registry). The registry can carry both; compose picks.
 - Whether to keep `GenerateBatch` as an RPC or fold it into `Generate` with `n>1` once
   `sample_n` exists.
+
+---
+
+## 8. Implementation status (2026-10)
+
+Shipped (steps 1 and 4, plus the start of step 5):
+
+- **Engine seam.** `llm_service/engines/` holds `base.py`, `llamacpp.py`, and `mlx_engine.py`.
+  The servicer only calls `engine.stream()` / `engine.complete()`; `LLM_ENGINE` selects one.
+  This is a lighter form of the §4.2 backend protocol: no templating, no `sample_n` yet.
+- **Metal for llama.cpp.** `LLM_DEVICE` / `LLM_GPU_LAYERS` resolve to `n_gpu_layers`, plus
+  `LLM_FLASH_ATTN`, `LLM_KV_CACHE_TYPE`, `LLM_N_BATCH`, `LLM_N_UBATCH`, `LLM_MLOCK`.
+- **MLX engine.** `mlx-community/Qwen2.5-3B-Instruct-4bit` is the default standard tier on macOS.
+- **Native host tiers.** `scripts/llm_supervisor.sh` with `config/llm/<tier>.env`;
+  `make llm-venv | llm-up | llm-down | llm-status | llm-logs | llm-bench`.
+- **Compose switch.** `docker-compose.host-llm.yaml`, enabled by `COMPOSE_FILE` in `.env`,
+  profiles the Docker tiers as `cpu-fallback`. The orchestrator's `depends_on: llm_service`
+  is `required: false`, because Compose v5 rejects a hard dependency on a profiled service.
+- **Proto.** `GetActiveModelResponse` gained `device = 8` and `engine = 9`, so
+  `make lidm-status` / `llm-status` read labels from the running process (F7).
+- **Health.** `NOT_SERVING` until the model is loaded; load failure exits 1 (F8).
+- **Usage (from §4.3).** The final `GenerateResponse` carries `finish_reason` and `Usage`:
+  exact prompt/completion tokens, KV-cache reuse, and queue/prefill/decode timings
+  measured in the engine. `Usage` extends the §4.3 sketch with fields 4-8.
+  `LocalProvider` and `openai_wrapper` still count tokens with `len(text.split())`;
+  switching them to `Usage` is part of step 3.
+- **Cleanup.** `openai_wrapper` streams `.token` (F7); compose uses `LLM_CTX_SIZE` (F7);
+  `switch_model` removed (F9).
+
+Finding added during implementation:
+
+- **F10. `config/routing_config.json` overrode the tier env vars.** `get_lidm_endpoints()`
+  prefers the dynamic config's tier endpoints, which were hard-coded container names. Setting
+  `LLM_HEAVY_HOST` alone did not move the pool. Endpoints are now `${LLM_HEAVY_HOST:-llm_service:50051}`
+  templates, expanded when read so a save through the admin API keeps the template.
+
+Still open: server-side chat templating and proto `messages` (step 3), batched `sample_n`
+(step 7), the Core ML / ANE utility tier (step 6). The ANE experiments in the sibling
+`ANE:GPU:CPU` project measured the ANE at about 6x slower than the GPU on a 4B model,
+so step 6 is only worth it for bounded background work on power grounds.
+
+Benchmarks: [BENCHMARKS.md](BENCHMARKS.md).
+

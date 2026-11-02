@@ -7,8 +7,31 @@ Defines type-safe, validated config for LIDM routing:
 - Performance constraint thresholds
 """
 
+import os
+import re
+
 from pydantic import BaseModel, Field
 from typing import Dict, Optional
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(value: str) -> str:
+    """
+    Expand ``${VAR}`` and ``${VAR:-default}`` references, compose-style.
+
+    Used for tier endpoints so one routing_config.json serves both the Docker
+    CPU tiers (``llm_service:50051``) and host-native Metal tiers
+    (``host.docker.internal:50051``) chosen by LLM_HEAVY_HOST / LLM_STANDARD_HOST.
+    An unset or empty variable falls back to the default.
+    """
+    def _sub(match: "re.Match[str]") -> str:
+        current = os.environ.get(match.group(1))
+        if current:
+            return current
+        return match.group(2) or ""
+
+    return _ENV_REF.sub(_sub, value)
 
 
 class CategoryRouting(BaseModel):
@@ -77,6 +100,8 @@ class RoutingConfig(BaseModel):
         """Return tier→'host:port' mapping from enabled tiers."""
         endpoints = {}
         for name, tier_cfg in self.tiers.items():
-            if tier_cfg.enabled and tier_cfg.endpoint:
-                endpoints[name] = tier_cfg.endpoint
+            # Expand at read time so saving the config keeps the ${...} template.
+            endpoint = expand_env(tier_cfg.endpoint) if tier_cfg.endpoint else ""
+            if tier_cfg.enabled and endpoint:
+                endpoints[name] = endpoint
         return endpoints

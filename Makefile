@@ -34,6 +34,12 @@ PORT_LLM_AIRLLM := 50062
 PORT_CHROMA := 50052
 PORT_ORCHESTRATOR := 50054
 PORT_SANDBOX := 50057
+
+# Host-native LLM tiers (macOS Metal). Enabled when .env selects the override.
+LLM_VENV := llm_service/.venv
+LLM_TIERS ?= heavy standard-mlx
+LLM_SUP := LLM_TIERS="$(LLM_TIERS)" bash scripts/llm_supervisor.sh
+HOST_LLM := $(shell grep -qs '^COMPOSE_FILE=.*host-llm' $(ENV_FILE) && echo 1)
 PORT_UI := 3000
 
 # Colors for output (use printf for ANSI support on macOS)
@@ -61,6 +67,7 @@ BOLD := \033[1m
         fix-grafana fix-ui fix-dashboard fix-all rebuild-no-llm \
         open-all open-settings open-integrations \
         lidm-up lidm-status lidm-list-models airllm-up airllm-logs test-lidm \
+        llm-venv llm-up llm-down llm-restart llm-status llm-logs llm-bench llm-stability llm-stability-all \
         showroom showroom-fresh open-pipeline open-nexus-dashboard nexus-demo \
         gsd-import gsd-validate gsd-progress
 
@@ -170,6 +177,15 @@ help:
 	@printf '  $(CYAN)make open-all$(RESET)           - Open UI, Dashboard, Grafana in browser\n'
 	@printf '  $(CYAN)make open-settings$(RESET)      - Open Settings page in browser\n'
 	@printf '  $(CYAN)make open-integrations$(RESET)  - Open Integrations page in browser\n'
+	@echo ""
+	@printf '$(BOLD)$(GREEN)⚡ Host-native LLM tiers (macOS Metal):$(RESET)\n'
+	@printf '  $(CYAN)make llm-venv$(RESET)            - Build llm_service/.venv (llama.cpp with Metal + MLX)\n'
+	@printf '  $(CYAN)make llm-up$(RESET)              - Start tiers ($(LLM_TIERS)) and repoint the orchestrator\n'
+	@printf '  $(CYAN)make llm-down$(RESET)            - Stop host tiers\n'
+	@printf '  $(CYAN)make llm-status$(RESET)          - Health, model, engine and device per tier\n'
+	@printf '  $(CYAN)make llm-logs TIER=heavy$(RESET) - Tail a tier log\n'
+	@printf '  $(CYAN)make llm-bench PORT=50051$(RESET) - Benchmark a tier (SUSTAIN=300 POWER=1)\n'
+	@printf '  $(CYAN)make llm-stability TIER=heavy$(RESET) - Stability checks on a tier (SOAK=60 LONG_CTX=1); -all for every tier\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)🧠 LIDM (Local Inference Delegation):$(RESET)\n'
 	@printf '  $(CYAN)make lidm-up$(RESET)             - Start all LIDM services (heavy + standard)\n'
@@ -314,7 +330,7 @@ status:
 	@printf '$(BOLD) ┌─────────────────────────────────────────────────────────────────┐$(RESET)\n'
 	@printf '$(BOLD) │ 🔌 gRPC Health Probes                                          │$(RESET)\n'
 	@printf '$(BOLD) └─────────────────────────────────────────────────────────────────┘$(RESET)\n'
-	@for pair in "llm_service:$(PORT_LLM)" "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
+	@for pair in $(if $(HOST_LLM),,"llm_service:$(PORT_LLM)") "chroma_service:$(PORT_CHROMA)" "orchestrator:$(PORT_ORCHESTRATOR)" "sandbox_service:$(PORT_SANDBOX)"; do \
 		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
 		if $(DOCKER_CMD) exec $$SVC grpc_health_probe -addr=localhost:$$PORT -connect-timeout=2s >/dev/null 2>&1; then \
 			printf '  $(GREEN)●$(RESET) %-22s $(GREEN)healthy$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
@@ -324,6 +340,10 @@ status:
 			printf '  $(RED)○$(RESET) %-22s $(RED)unreachable$(RESET)  :%s\n' "$$SVC" "$$PORT"; \
 		fi; \
 	done
+	@if [ -n "$(HOST_LLM)" ] || ls logs/llm/*.pid >/dev/null 2>&1; then \
+		printf '  $(BOLD)Host LLM tiers (Metal):$(RESET)\n'; \
+		$(LLM_SUP) status; \
+	fi
 	@for pair in "ui_service:5001" "dashboard_service:8001" "bridge_service:8100"; do \
 		SVC=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
 		if curl -sf http://localhost:$$PORT/health > /dev/null 2>&1 || curl -sf http://localhost:$$PORT > /dev/null 2>&1; then \
@@ -627,7 +647,7 @@ query:
 	@printf '$(CYAN)Querying agent...$(RESET)\n'
 	@grpcurl -plaintext -d '{"user_query": "$(Q)", "debug_mode": true}' \
 		localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
-		jq -r '.finalAnswer // .error // "No response"' 2>/dev/null || \
+		jq -r '.final_answer // .finalAnswer // .error // "No response"' 2>/dev/null || \
 		echo "$(RED)Error: Could not connect to orchestrator$(RESET)"
 
 # Interactive chat mode
@@ -645,7 +665,7 @@ chat:
 		echo "$(CYAN)Agent:$(RESET)"; \
 		grpcurl -plaintext -d "{\"user_query\": \"$$input\"}" \
 			localhost:$(PORT_ORCHESTRATOR) agent.AgentService/QueryAgent 2>/dev/null | \
-			jq -r '.finalAnswer // .error // "No response"' 2>/dev/null || \
+			jq -r '.final_answer // .finalAnswer // .error // "No response"' 2>/dev/null || \
 			echo "$(RED)Error connecting$(RESET)"; \
 		echo ""; \
 	done
@@ -1202,20 +1222,24 @@ open-integrations:
 
 # Start all LIDM services (heavy + standard LLM instances + orchestrator)
 lidm-up:
+ifeq ($(HOST_LLM),1)
+	@$(MAKE) --no-print-directory llm-up
+else
 	@printf '$(CYAN)Starting LIDM services (multi-instance LLM)...$(RESET)\n'
-	@$(COMPOSE_CMD) up -d llm_service llm_service_standard orchestrator
+	@$(COMPOSE_CMD) --profile lidm up -d llm_service llm_service_standard orchestrator
 	@printf '$(GREEN)✓ LIDM services started (heavy :50051, standard :50061)$(RESET)\n'
+endif
 
 # Show active models across all LIDM instances
 lidm-status:
 	@printf '$(BOLD)$(CYAN)LIDM Instance Status:$(RESET)\n'
 	@echo "─────────────────────────────────────────"
-	@printf '  $(BOLD)Heavy$(RESET) (Mistral-24B :50051):  '
-	@grpcurl -plaintext localhost:50051 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "unreachable"
-	@printf '  $(BOLD)Standard$(RESET) (Qwen-14B :50061): '
-	@grpcurl -plaintext localhost:50061 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "unreachable"
-	@printf '  $(BOLD)Ultra$(RESET) (AirLLM 70B :50062):  '
-	@grpcurl -plaintext localhost:50062 llm.LLMService/GetActiveModel 2>/dev/null | jq -r '.modelName // "unreachable"' || echo "not running (use: make airllm-up)"
+	@for pair in "Heavy:$(PORT_LLM)" "Standard:$(PORT_LLM_STANDARD)" "Ultra:$(PORT_LLM_AIRLLM)"; do \
+		NAME=$$(echo "$$pair" | cut -d: -f1); PORT=$$(echo "$$pair" | cut -d: -f2); \
+		INFO=$$(grpcurl -plaintext -max-time 3 localhost:$$PORT llm.LLMService/GetActiveModel 2>/dev/null | \
+			jq -r '"\((.model_name // .modelName)) tier=\(.tier) engine=\(.engine // "n/a") device=\(.device // "n/a") ctx=\((.context_window // .contextWindow))"' 2>/dev/null); \
+		printf '  $(BOLD)%-9s$(RESET) :%s  %s\n' "$$NAME" "$$PORT" "$${INFO:-unreachable}"; \
+	done
 
 # List models with capabilities per instance
 lidm-list-models:
@@ -1226,6 +1250,69 @@ lidm-list-models:
 	@echo ""
 	@printf '$(BOLD)Standard Instance (:50061):$(RESET)\n'
 	@grpcurl -plaintext localhost:50061 llm.LLMService/ListModels 2>/dev/null | jq '.' || echo "  unreachable"
+
+# ============================================================================
+# HOST-NATIVE LLM TIERS (macOS Metal / MLX)
+# ============================================================================
+# Docker Desktop cannot pass Metal into containers, so on Apple Silicon the
+# LLM tiers run as native processes and containers reach them through
+# host.docker.internal (see docker-compose.host-llm.yaml).
+
+llm-venv:
+	@command -v uv >/dev/null || { printf '$(RED)✗ uv not found (brew install uv)$(RESET)\n'; exit 1; }
+	@printf '$(CYAN)Building $(LLM_VENV) (llama.cpp source build with Metal, 5-10 min)...$(RESET)\n'
+	@uv venv $(LLM_VENV) --python 3.12 --allow-existing
+	@CMAKE_ARGS="-DGGML_METAL=on" CC=clang CXX=clang++ uv pip install --python $(LLM_VENV)/bin/python \
+		-r llm_service/requirements.txt -r llm_service/requirements-mlx.txt
+	@$(LLM_VENV)/bin/python -c "import llama_cpp; print('llama-cpp-python', llama_cpp.__version__, 'gpu_offload', llama_cpp.llama_supports_gpu_offload())" 2>/dev/null
+	@printf '$(GREEN)✓ $(LLM_VENV) ready$(RESET)\n'
+
+llm-up:
+	@[ -x $(LLM_VENV)/bin/python ] || { printf '$(RED)✗ No $(LLM_VENV). Run: make llm-venv$(RESET)\n'; exit 1; }
+	@[ -n "$(HOST_LLM)" ] || printf '$(YELLOW)⚠ .env has no COMPOSE_FILE=...host-llm line; the orchestrator will still dial the Docker tiers$(RESET)\n'
+	@if $(DOCKER_CMD) info >/dev/null 2>&1; then \
+		$(DOCKER_CMD) stop llm_service llm_service_standard >/dev/null 2>&1 || true; \
+	fi
+	@printf '$(CYAN)Starting host LLM tiers: $(LLM_TIERS)$(RESET)\n'
+	@$(LLM_SUP) start
+	@if $(DOCKER_CMD) info >/dev/null 2>&1; then \
+		printf '$(CYAN)Recreating orchestrator against host tiers...$(RESET)\n'; \
+		$(COMPOSE_CMD) up -d orchestrator; \
+	else \
+		printf '$(YELLOW)Docker is not running; start it and run make up$(RESET)\n'; \
+	fi
+
+llm-down:
+	@$(LLM_SUP) stop $$(ls logs/llm/*.pid 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.pid$$//')
+
+llm-restart: llm-down llm-up
+
+llm-status:
+	@$(LLM_SUP) status
+
+TIER ?= heavy
+llm-logs:
+	@$(LLM_SUP) logs $(TIER)
+
+PORT ?= $(PORT_LLM)
+SUSTAIN ?= 0
+POWER ?= 0
+llm-bench:
+	@if [ "$(POWER)" = "1" ]; then sudo -v; fi
+	@$(LLM_VENV)/bin/python scripts/llm_bench.py --addr localhost:$(PORT) --sustain $(SUSTAIN) \
+		$(if $(filter 1,$(POWER)),--power) --json logs/llm/bench-$(PORT)-$$(date +%Y%m%d-%H%M%S).json
+
+# Stability checks for one host tier: health, exact accounting, serialised
+# concurrency, a soak with a degradation limit, RSS growth, context overflow.
+SOAK ?= 60
+LONG_CTX ?= 0
+llm-stability:
+	@PORT=$$(grep '^LLM_PORT=' config/llm/$(TIER).env | cut -d= -f2); \
+	$(LLM_VENV)/bin/python scripts/llm_stability.py --addr localhost:$$PORT --pidfile logs/llm/$(TIER).pid \
+		--soak $(SOAK) $(if $(filter 1,$(LONG_CTX)),--long-ctx) --json logs/llm/stability-$(TIER).json
+
+llm-stability-all:
+	@for t in $(LLM_TIERS); do $(MAKE) --no-print-directory llm-stability TIER=$$t || exit 1; echo; done
 
 # Start AirLLM service (optional, requires NVIDIA GPU)
 airllm-up:

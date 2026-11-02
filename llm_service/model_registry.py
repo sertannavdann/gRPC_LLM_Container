@@ -29,7 +29,7 @@ class ModelSpec:
     description: str = ""
     capabilities: Tuple[str, ...] = ()
     tier: str = "standard"  # heavy, standard, light, micro, ultra
-    backend: str = "llama-cpp"  # llama-cpp, airllm
+    backend: str = "llama-cpp"  # llama-cpp, mlx, airllm
 
 
 # ── Known models ──────────────────────────────────────────────────────
@@ -66,6 +66,18 @@ MODEL_SPECS: Dict[str, ModelSpec] = {
         capabilities=("routing", "classification", "fast_response"),
         tier="light",
         backend="llama-cpp",
+    ),
+    # MLX model (Hugging Face id mlx-community/Qwen2.5-3B-Instruct-4bit; keyed by its last segment)
+    "Qwen2.5-3B-Instruct-4bit": ModelSpec(
+        name="Qwen2.5-3B-Instruct",
+        context_window=32_768,
+        recommended_ctx=8192,
+        max_tokens=1024,
+        temperature=0.7,
+        description="Qwen 2.5 3B MLX 4-bit – measured 163 tok/s decode on M4 Max GPU",
+        capabilities=("routing", "classification", "fast_response"),
+        tier="standard",
+        backend="mlx",
     ),
     "qwen2.5-0.5b-instruct-q5_k_m.gguf": ModelSpec(
         name="Qwen2.5-0.5B-Instruct",

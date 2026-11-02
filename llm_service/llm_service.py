@@ -1,15 +1,20 @@
-#llm_service.py
+"""
+LLM gRPC service.
+
+Serves one model through a pluggable engine (llama.cpp or MLX). Run it
+inside Docker for the CPU fallback, or natively on macOS for Metal:
+
+    python -m llm_service.llm_service          # from the repo root (host)
+    python llm_service.py                      # inside the container
+"""
 import grpc
 import logging
 import sys
 import os
-import threading
 from concurrent import futures
 import json
 from json.decoder import JSONDecodeError
 from pathlib import Path
-
-from llama_cpp import Llama, LlamaGrammar
 
 try:
     from . import llm_pb2
@@ -26,9 +31,14 @@ except ImportError:
 
 # Import model registry for introspection RPCs
 try:
-    from .model_registry import resolve_model_spec, MODEL_SPECS, list_all_models
+    from .model_registry import resolve_model_spec, list_all_models
 except ImportError:
-    from model_registry import resolve_model_spec, MODEL_SPECS, list_all_models
+    from model_registry import resolve_model_spec, list_all_models
+
+try:
+    from .engines import create_engine, GenParams, GenStats
+except ImportError:
+    from engines import create_engine, GenParams, GenStats
 
 # Import self-consistency from core (consolidated logic)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -50,142 +60,65 @@ logger = logging.getLogger("llm_service")
 CONFIG = get_config()
 CONFIG.log_config()
 
-# =============================================================================
-# CONCURRENCY MANAGEMENT
-# =============================================================================
-# llama-cpp-python is NOT thread-safe for concurrent inference on a single
-# model instance. We use a threading.Lock to serialize all inference requests.
-# This prevents GGML_ASSERT crashes and thread pool check failures.
-# See: https://github.com/ggml-org/llama.cpp/discussions/499
-# =============================================================================
-_inference_lock = threading.Lock()
+SERVICE_NAME = "llm.LLMService"
 
-JSON_GRAMMAR = r'''
-root ::= object
-value ::= object | array | string | number | "true" | "false" | "null"
-object ::= "{" ws ( string ws ":" ws value (ws "," ws string ws ":" ws value)* )? ws "}"
-array ::= "[" ws ( value (ws "," ws value)* )? ws "]"
-string ::= "\"" [^"\\\n]* "\""
-number ::= "-"? ( "0" | [1-9] [0-9]* ) ( "." [0-9]+ )? ( [eE] [-+]? [0-9]+ )?
-ws ::= [ \t\n]*
-'''
+# One engine per process. Each engine serialises inference with its own lock,
+# because neither llama.cpp nor MLX is safe for concurrent generation.
+_engine = create_engine(CONFIG)
 
 
-class ModelManager:
-    """
-    Manages LLM model lifecycle: load, switch, and introspection.
-
-    Replaces the old @lru_cache load_model() approach with explicit
-    state management and thread-safe model switching.
-    """
-
-    def __init__(self, config):
-        self._config = config
-        self._model = None
-        self._model_path = config.model_path
-        self._lock = threading.Lock()
-
-    def get_model(self) -> Llama:
-        """Get the currently loaded model, loading it if necessary."""
-        if self._model is None:
-            with self._lock:
-                if self._model is None:
-                    self._load()
-        return self._model
-
-    def _load(self):
-        """Load model from the current model path."""
-        logger.info("Loading model from %s", self._model_path)
-        self._model = Llama(
-            model_path=self._model_path,
-            n_ctx=self._config.n_ctx,
-            n_threads=self._config.n_threads,
-            n_batch=self._config.n_batch,
-            verbose=self._config.verbose,
-        )
-        logger.info("Model loaded successfully: %s", Path(self._model_path).name)
-
-    def switch_model(self, new_model_path: str):
-        """
-        Switch to a different model. Acquires inference lock to block
-        all concurrent inference during the switch (~10-30s).
-        """
-        with _inference_lock:
-            with self._lock:
-                logger.info("Switching model from %s to %s",
-                            Path(self._model_path).name,
-                            Path(new_model_path).name)
-                # Release old model
-                del self._model
-                self._model = None
-                self._model_path = new_model_path
-                self._config.model_path = new_model_path
-                self._load()
-
-    @property
-    def active_model_path(self) -> str:
-        return self._model_path
-
-    @property
-    def active_model_filename(self) -> str:
-        return Path(self._model_path).name
+def _usage(stats: "GenStats") -> "llm_pb2.Usage":
+    return llm_pb2.Usage(
+        prompt_tokens=stats.prompt_tokens,
+        completion_tokens=stats.completion_tokens,
+        tokens_per_sec=stats.tokens_per_sec,
+        cached_prompt_tokens=stats.cached_prompt_tokens,
+        queue_ms=stats.queue_ms,
+        prefill_ms=stats.prefill_ms,
+        decode_ms=stats.decode_ms,
+        prefill_tokens_per_sec=stats.prefill_tokens_per_sec,
+    )
 
 
-class HealthServicer(health.HealthServicer):
-    def Check(self, request, context):
-        return health_pb2.HealthCheckResponse(
-            status=health_pb2.HealthCheckResponse.SERVING
-        )
-
-
-# Global model manager
-_model_manager = ModelManager(CONFIG)
+def _params(request) -> "GenParams":
+    return GenParams(
+        max_tokens=min(request.max_tokens or CONFIG.max_tokens, CONFIG.max_tokens),
+        temperature=max(0.1, min(request.temperature, 1.0)),
+        json_mode=request.response_format == "json",
+    )
 
 
 class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
     def Generate(self, request, context):
+        stats = GenStats()  # t_request = now, before waiting for the engine
         try:
-            llm = _model_manager.get_model()
-            gen_config = {
-                "max_tokens": min(request.max_tokens, CONFIG.max_tokens),
-                "temperature": max(0.1, min(request.temperature, 1.0)),
-                "stream": True
-            }
+            params = _params(request)
+            output_buffer = ""
+            json_valid = True
+            for token in _engine.stream(request.prompt, params, stats):
+                output_buffer += token
 
-            # Only add grammar if response_format is "json"
-            if request.response_format == "json":
-                gen_config["grammar"] = self._get_json_grammar()
-
-            # Acquire inference lock to prevent concurrent access to llama model
-            # llama-cpp-python is NOT thread-safe for concurrent inference
-            with _inference_lock:
-                # Generation loop with JSON validation
-                output_buffer = ""
-                json_valid = True
-                for output in llm(request.prompt, **gen_config):
-                    token = output["choices"][0]["text"]
-                    output_buffer += token
-
-
-                    # Validate JSON incrementally
-                    if request.response_format == "json":
-                        try:
-                            json.loads(output_buffer)
-                            json_valid = True
-                        except JSONDecodeError:
-                            json_valid = False
-
-                    yield llm_pb2.GenerateResponse(
-                        token=token,
-                        is_final=False,
-                        is_valid_json=json_valid
-                    )
+                # Validate JSON incrementally
+                if params.json_mode:
+                    try:
+                        json.loads(output_buffer)
+                        json_valid = True
+                    except JSONDecodeError:
+                        json_valid = False
 
                 yield llm_pb2.GenerateResponse(
-                    token="",
-                    is_final=True,
+                    token=token,
+                    is_final=False,
                     is_valid_json=json_valid
                 )
+
+            yield llm_pb2.GenerateResponse(
+                token="",
+                is_final=True,
+                is_valid_json=json_valid,
+                finish_reason=stats.finish_reason,
+                usage=_usage(stats),
+            )
 
         except Exception as e:
             import traceback
@@ -203,27 +136,14 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
         Returns all responses plus majority voting metrics.
         """
         try:
-            llm = _model_manager.get_model()
+            params = _params(request)
             num_samples = max(1, min(request.num_samples, 10))  # Clamp 1-10
             responses = []
 
-            gen_config = {
-                "max_tokens": min(request.max_tokens, CONFIG.max_tokens),
-                "temperature": max(0.1, min(request.temperature, 1.0)),
-                "stream": False  # Non-streaming for batch
-            }
-
-            if request.response_format == "json":
-                gen_config["grammar"] = self._get_json_grammar()
-
-            # Acquire inference lock - llama-cpp-python is NOT thread-safe
-            with _inference_lock:
-                # Generate k samples sequentially (single model instance)
-                for i in range(num_samples):
-                    logger.info(f"Generating sample {i+1}/{num_samples}")
-                    output = llm(request.prompt, **gen_config)
-                    text = output["choices"][0]["text"].strip()
-                    responses.append(text)
+            # Generate k samples sequentially (single model instance)
+            for i in range(num_samples):
+                logger.info(f"Generating sample {i+1}/{num_samples}")
+                responses.append(_engine.complete(request.prompt, params).strip())
 
             # Compute self-consistency via consolidated module
             if compute_self_consistency is not None:
@@ -251,30 +171,34 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
             )
 
     def GetActiveModel(self, request, context):
-        """Return information about the currently loaded model."""
-        filename = _model_manager.active_model_filename
-        spec = resolve_model_spec(_model_manager.active_model_path)
+        """Return information about the loaded model and what is running it."""
+        filename = Path(CONFIG.model_path).name
+        spec = resolve_model_spec(CONFIG.model_path)
+        common = dict(
+            model_filename=filename,
+            device=_engine.effective_device,
+            engine=_engine.name,
+        )
 
         if spec:
             return llm_pb2.GetActiveModelResponse(
                 model_name=spec.name,
-                model_filename=filename,
-                context_window=spec.context_window,
-                max_tokens=spec.max_tokens,
-                capabilities=list(spec.capabilities),
-                tier=spec.tier,
-                backend=spec.backend,
-            )
-        else:
-            return llm_pb2.GetActiveModelResponse(
-                model_name=filename,
-                model_filename=filename,
                 context_window=CONFIG.n_ctx,
                 max_tokens=CONFIG.max_tokens,
-                capabilities=[],
-                tier="unknown",
-                backend="llama-cpp",
+                capabilities=list(spec.capabilities),
+                tier=CONFIG.tier or spec.tier,
+                backend=spec.backend,
+                **common,
             )
+        return llm_pb2.GetActiveModelResponse(
+            model_name=filename,
+            context_window=CONFIG.n_ctx,
+            max_tokens=CONFIG.max_tokens,
+            capabilities=[],
+            tier=CONFIG.tier or "unknown",
+            backend=_engine.name,
+            **common,
+        )
 
     def ListModels(self, request, context):
         """Return all known models from the registry."""
@@ -291,7 +215,7 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
 
         return llm_pb2.ListModelsResponse(
             models=models,
-            active_model=_model_manager.active_model_filename,
+            active_model=Path(CONFIG.model_path).name,
         )
 
     def _compute_majority_vote_fallback(self, responses: list) -> tuple:
@@ -333,14 +257,21 @@ class LLMServiceServicer(llm_pb2_grpc.LLMServiceServicer):
         consistency_score = count / len(responses)
         return majority_answer, count, consistency_score
 
-    def _get_json_grammar(self):
-        """Build LlamaGrammar from the module-level JSON_GRAMMAR constant."""
-        return LlamaGrammar.from_string(JSON_GRAMMAR)
+
+def _set_health(servicer, status) -> None:
+    servicer.set("", status)
+    servicer.set(SERVICE_NAME, status)
+
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=CONFIG.max_workers))
     llm_pb2_grpc.add_LLMServiceServicer_to_server(LLMServiceServicer(), server)
-    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
+
+    # Health reports NOT_SERVING until the model is resident, so compose
+    # healthchecks and the host supervisor never route to a loading model.
+    health_servicer = health.HealthServicer()
+    _set_health(health_servicer, health_pb2.HealthCheckResponse.NOT_SERVING)
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
     reflection.enable_server_reflection([
         llm_pb2.DESCRIPTOR.services_by_name['LLMService'].full_name,
@@ -349,15 +280,24 @@ def serve():
     ], server)
 
     server.add_insecure_port(f"{CONFIG.host}:{CONFIG.port}")
-    logger.info(f"LLM Service operational on {CONFIG.host}:{CONFIG.port}")
     server.start()
+    logger.info(f"LLM Service listening on {CONFIG.host}:{CONFIG.port} (loading model...)")
 
-    # Eagerly preload the model so the first request doesn't block for 30-120s
-    logger.info("Preloading model...")
-    _model_manager.get_model()
-    logger.info("Model preloaded, ready for requests")
+    try:
+        _engine.load()
+    except Exception:
+        logger.exception("Model load failed; shutting down")
+        server.stop(0)
+        sys.exit(1)
+
+    _set_health(health_servicer, health_pb2.HealthCheckResponse.SERVING)
+    logger.info(
+        "Model ready: %s engine=%s device=%s tier=%s",
+        Path(CONFIG.model_path).name, _engine.name, _engine.effective_device, CONFIG.tier or "(registry)",
+    )
 
     server.wait_for_termination()
+
 
 if __name__ == "__main__":
     serve()

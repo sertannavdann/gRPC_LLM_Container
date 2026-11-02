@@ -118,9 +118,16 @@ def test_environment():
             capture_output=True, timeout=10,
         )
         llm_logs = logs_result.stderr.decode() + logs_result.stdout.decode()
+        source = "llm_service"
+        if not llm_logs.strip():
+            # Host-native Metal tiers (make llm-up) log to logs/llm/<tier>.log
+            host_log = Path(__file__).resolve().parents[2] / "logs" / "llm" / "heavy.log"
+            if host_log.exists():
+                llm_logs = "\n".join(host_log.read_text(errors="replace").splitlines()[-40:])
+                source = "host heavy"
         for line in llm_logs.splitlines():
             if any(kw in line.lower() for kw in ["model", "loaded", "registry", "preload", "gguf", "ctx="]):
-                logging.info("  [llm_service] %s", line.strip())
+                logging.info("  [%s] %s", source, line.strip())
     except Exception:
         pass
 

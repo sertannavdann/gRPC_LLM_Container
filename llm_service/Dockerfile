@@ -14,6 +14,10 @@ ENV CC=clang CXX=clang++
 WORKDIR /app
 
 COPY llm_service/requirements.txt .
+
+# Empty for the CPU image. A CUDA build passes --build-arg CMAKE_ARGS=-DGGML_CUDA=on
+ARG CMAKE_ARGS=""
+ENV CMAKE_ARGS=$CMAKE_ARGS
 RUN pip install --upgrade pip && \
     pip install --default-timeout=100 --no-cache-dir -r requirements.txt
 
@@ -30,6 +34,7 @@ RUN rm -rf ./proto
 COPY llm_service/llm_service.py .
 COPY llm_service/config.py .
 COPY llm_service/model_registry.py .
+COPY llm_service/engines/ ./engines/
 
 EXPOSE 50051
 CMD ["python", "llm_service.py"]

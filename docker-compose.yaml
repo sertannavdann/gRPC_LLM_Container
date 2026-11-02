@@ -10,7 +10,9 @@ services:
     environment:
       - LLM_MODEL_PATH=./models/qwen2.5-3b-instruct-q5_k_m.gguf
       - LLM_CTX_SIZE=4096
-      # 3B model: fast inference (~2-3s) within 7.6GiB Docker RAM
+      - LLM_DEVICE=cpu
+      # CPU fallback for Linux/CI/Windows. On macOS the tiers run natively on
+      # Metal instead: see docker-compose.host-llm.yaml and `make llm-up`.
     volumes:
       - ./llm_service/models:/app/models
     networks:
@@ -20,6 +22,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 180s
 
   # LIDM: Standard-tier LLM instance (Qwen-0.5B ultra-light for simple queries)
   # Start with: docker compose --profile lidm up -d  (or: make lidm-up)
@@ -32,7 +35,8 @@ services:
       - "50061:50051"
     environment:
       - LLM_MODEL_PATH=./models/qwen2.5-0.5b-instruct-q5_k_m.gguf
-      - N_CTX=4096
+      - LLM_CTX_SIZE=4096
+      - LLM_DEVICE=cpu
     volumes:
       - ./llm_service/models:/app/models
       - ./logs:/app/logs
@@ -45,6 +49,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 180s
 
   chroma_service:
     build:
@@ -73,21 +78,28 @@ services:
       - "8003:8003"   # Admin API for dynamic routing config
       - "8890:8888"   # Prometheus metrics endpoint (internal 8888 -> external 8890)
     depends_on:
-      - llm_service
-      - chroma_service
-      - sandbox_service
-      - otel-collector
+      # Optional so the orchestrator still starts when the LLM tiers run on
+      # the host (docker-compose.host-llm.yaml puts llm_service in a profile).
+      llm_service:
+        condition: service_started
+        required: false
+      chroma_service:
+        condition: service_started
+      sandbox_service:
+        condition: service_started
+      otel-collector:
+        condition: service_started
     env_file:
       - .env
     environment:
       - ORCHESTRATOR_HOST=0.0.0.0
       - ORCHESTRATOR_PORT=50054
-      - LLM_HOST=llm_service
-      - LLM_PORT=50051
+      - LLM_HOST=${LLM_HOST:-llm_service}
+      - LLM_PORT=${LLM_PORT:-50051}
       # LIDM: Multi-instance LLM routing
       - ENABLE_DELEGATION=${ENABLE_DELEGATION:-false}
-      - LLM_HEAVY_HOST=llm_service:50051
-      - LLM_STANDARD_HOST=llm_service_standard:50051
+      - LLM_HEAVY_HOST=${LLM_HEAVY_HOST:-llm_service:50051}
+      - LLM_STANDARD_HOST=${LLM_STANDARD_HOST:-llm_service_standard:50051}
       - LLM_ULTRA_HOST=${LLM_ULTRA_HOST:-}
       - CHROMA_HOST=chroma_service
       - CHROMA_PORT=50052

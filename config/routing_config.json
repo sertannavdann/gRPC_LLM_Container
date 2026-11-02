@@ -56,13 +56,13 @@
   },
   "tiers": {
     "heavy": {
-      "endpoint": "llm_service:50051",
+      "endpoint": "${LLM_HEAVY_HOST:-llm_service:50051}",
       "max_concurrent_requests": 10,
       "priority": 1,
       "enabled": true
     },
     "standard": {
-      "endpoint": "llm_service_standard:50051",
+      "endpoint": "${LLM_STANDARD_HOST:-llm_service_standard:50051}",
       "max_concurrent_requests": 10,
       "priority": 2,
       "enabled": true
@@ -78,7 +78,7 @@
     "local": {
       "models": [
         "qwen2.5-3b-instruct-q5_k_m",
-        "Qwen2.5-14B-Instruct-Q4_K",
+        "Qwen2.5-14B-Instruct-Q4_K_M",
         "Mistral-Small-24B-Instruct-2501.Q8_0",
         "qwen2.5-0.5b-instruct-q5_k_m"
       ],
