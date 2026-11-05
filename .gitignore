@@ -127,3 +127,7 @@ data/conversations/**
 
 # Host-native LLM tier pid files, logs and benchmark JSON
 logs/llm/
+
+# pruned 2026-11-05: leftovers of the full tree stay ignored until git clean -fdx
+.venv/
+.env

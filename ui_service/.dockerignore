@@ -1,3 +1,0 @@
-# NOT USED. The compose build context for ui_service is the repo root, so
-# Docker never reads this file. The effective ignore list lives in
-# ui_service/Dockerfile.dockerignore (paths relative to the repo root).
