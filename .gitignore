@@ -72,6 +72,7 @@ testing_tool/tests/__pycache__/
 # ignore llm_service/llama and llm_service/models directories
 llm_service/llama/
 llm_service/models/
+llm_service/models.nosync/
 *.gguf
 
 # Generated protobufs (regenerate via `make proto-gen`)
@@ -88,6 +89,16 @@ ui_service/node_modules/
 ui_service/build/
 ui_service/.env.local
 
+# Ignore spike experiment dependencies/artifacts (source + README are kept)
+.planning/spikes/*/node_modules/
+.planning/spikes/*/evidence/
+.planning/spikes/*/dist/
+
+# Playwright E2E artifacts (REQ-018)
+ui_service/test-results/
+ui_service/playwright-report/
+ui_service/blob-report/
+
 # Ignore dashboard service data
 dashboard_service/data/
 dashboard_service/logs/
@@ -102,7 +113,7 @@ config/.env
 # Ignore conversation data
 ui_servicedata/conversations/
 data/logs/
-
+data/
 # Bank data (real financial data - local only)
 dashboard_service/Bank/*.csv
 
@@ -110,3 +121,13 @@ dashboard_service/Bank/*.csv
 **.ipynb
 
 data/conversations/**
+
+/.claude
+.planning/spikes/*/*.tsbuildinfo
+
+# Host-native LLM tier pid files, logs and benchmark JSON
+logs/llm/
+
+# pruned 2026-11-05: leftovers of the full tree stay ignored until git clean -fdx
+.venv/
+.env

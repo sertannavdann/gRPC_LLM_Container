@@ -1,23 +1,19 @@
 import grpc
 import logging
+import os
+import sys
+from pathlib import Path
 from typing import Iterator, Optional, Dict, Tuple
 from .base_client import BaseClient
 
-# Try local import first (when used as a service), fall back to shared/generated
+# Stubs come from the sibling llm-tiers package. Editable installs are unreliable inside iCloud Drive
+# (macOS re-flags .pth files hidden and CPython skips them), so fall back to the checkout path.
 try:
-    from llm_service import llm_pb2
-    from llm_service import llm_pb2_grpc
+    from llm_tiers import llm_pb2, llm_pb2_grpc
 except ModuleNotFoundError:
-    try:
-        # Import from shared/generated as fallback
-        from shared.generated import llm_pb2, llm_pb2_grpc
-    except ModuleNotFoundError:
-        # Last resort: try relative import
-        import sys
-        import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'generated'))
-        import llm_pb2
-        import llm_pb2_grpc
+    _tiers = Path(os.environ.get("LLM_TIERS_ROOT") or Path(__file__).resolve().parents[3] / "llm-tiers")
+    sys.path.append(str(_tiers))
+    from llm_tiers import llm_pb2, llm_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -83,42 +79,6 @@ class LLMClient(BaseClient):
             )
             yield error
 
-    def generate_batch(
-        self,
-        prompt: str,
-        num_samples: int = 5,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-        response_format: str = ""
-    ) -> dict:
-        """
-        Generate k samples for self-consistency scoring (Agent0 Phase 2).
-        """
-        try:
-            response = self.stub.GenerateBatch(
-                llm_pb2.GenerateBatchRequest(
-                    prompt=prompt,
-                    num_samples=min(num_samples, 10),
-                    max_tokens=min(max_tokens, 2048),
-                    temperature=temperature,
-                    response_format=response_format
-                ),
-                timeout=120  # Longer timeout for batch generation
-            )
-            return {
-                "responses": list(response.responses),
-                "self_consistency_score": response.self_consistency_score,
-                "majority_answer": response.majority_answer,
-                "majority_count": response.majority_count
-            }
-        except grpc.RpcError as e:
-            logger.error(f"Batch generation failed: {e.code().name}")
-            return {
-                "responses": [],
-                "self_consistency_score": 0.0,
-                "majority_answer": f"LLM Service Error: {e.details()}",
-                "majority_count": 0
-            }
 
     def get_active_model(self) -> dict:
         """Get information about the currently loaded model on this instance."""
@@ -139,31 +99,6 @@ class LLMClient(BaseClient):
         except grpc.RpcError as e:
             logger.error(f"GetActiveModel failed: {e.code().name}")
             return {"error": str(e.details())}
-
-    def list_models(self) -> dict:
-        """List all known models from the registry."""
-        try:
-            response = self.stub.ListModels(
-                llm_pb2.ListModelsRequest(),
-                timeout=5,
-            )
-            models = []
-            for m in response.models:
-                models.append({
-                    "filename": m.filename,
-                    "name": m.name,
-                    "context_window": m.context_window,
-                    "recommended_ctx": m.recommended_ctx,
-                    "capabilities": list(m.capabilities),
-                    "tier": m.tier,
-                })
-            return {
-                "models": models,
-                "active_model": response.active_model,
-            }
-        except grpc.RpcError as e:
-            logger.error(f"ListModels failed: {e.code().name}")
-            return {"models": [], "active_model": "", "error": str(e.details())}
 
 
 class LLMClientPool:
