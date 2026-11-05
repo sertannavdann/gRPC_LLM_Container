@@ -3,10 +3,11 @@ import logging
 from typing import Iterator, Optional, Dict, Tuple
 from .base_client import BaseClient
 
-# Try local import first (when used as a service), fall back to shared/generated
+# The stubs come from the llm-tiers package (../llm-tiers, installed editable); shared/generated is
+# the fallback for the Docker image, which has no sibling checkout.
 try:
-    from llm_service import llm_pb2
-    from llm_service import llm_pb2_grpc
+    from llm_tiers import llm_pb2
+    from llm_tiers import llm_pb2_grpc
 except ModuleNotFoundError:
     try:
         # Import from shared/generated as fallback

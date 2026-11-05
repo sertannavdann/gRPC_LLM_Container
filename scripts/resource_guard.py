@@ -70,7 +70,7 @@ THRESHOLDS = {
 
 # Model caches to measure. GUARD_MODEL_DIRS (colon-separated) adds more.
 MODEL_DIRS = [
-    ROOT / "llm_service" / "models.nosync",
+    ROOT.parent / "models.nosync",
     ROOT.parent.parent / "ANE:GPU:CPU" / "cache.nosync",
     HOME / ".cache" / "huggingface",
     HOME / ".cache" / "llama.cpp",
@@ -319,7 +319,7 @@ def llm_processes() -> list[tuple[int, str]]:
     found = []
     for line in out.splitlines():
         pid, _, cmd = line.strip().partition(" ")
-        if "llm_service.llm_service" in cmd or cmd.endswith("llm_service.py"):
+        if "-m llm_tiers" in cmd or "llm_service.llm_service" in cmd:
             found.append((int(pid), cmd))
     return found
 

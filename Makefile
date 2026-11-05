@@ -35,10 +35,11 @@ PORT_CHROMA := 50052
 PORT_ORCHESTRATOR := 50054
 PORT_SANDBOX := 50057
 
-# Host-native LLM tiers (macOS Metal). Enabled when .env selects the override.
-LLM_VENV := llm_service/.venv
+# Host-native LLM tiers (macOS Metal) live in the sibling llm-tiers package; its venv runs them.
+LLM_TIERS_DIR := ../llm-tiers
+LLM_VENV := $(abspath $(LLM_TIERS_DIR)/.venv)
 LLM_TIERS ?= heavy standard-mlx
-LLM_SUP := LLM_TIERS="$(LLM_TIERS)" bash scripts/llm_supervisor.sh
+LLM_SUP := LLM_TIERS="$(LLM_TIERS)" LLM_VENV="$(LLM_VENV)" bash $(LLM_TIERS_DIR)/bin/llm_supervisor.sh
 HOST_LLM := $(shell grep -qs '^COMPOSE_FILE=.*host-llm' $(ENV_FILE) && echo 1)
 PORT_UI := 3000
 
@@ -179,7 +180,7 @@ help:
 	@printf '  $(CYAN)make open-integrations$(RESET)  - Open Integrations page in browser\n'
 	@echo ""
 	@printf '$(BOLD)$(GREEN)⚡ Host-native LLM tiers (macOS Metal):$(RESET)\n'
-	@printf '  $(CYAN)make llm-venv$(RESET)            - Build llm_service/.venv (llama.cpp with Metal + MLX)\n'
+	@printf '  $(CYAN)make llm-venv$(RESET)            - Build ../llm-tiers/.venv (llama.cpp with Metal + MLX)\n'
 	@printf '  $(CYAN)make llm-up$(RESET)              - Start tiers ($(LLM_TIERS)) and repoint the orchestrator\n'
 	@printf '  $(CYAN)make llm-down$(RESET)            - Stop host tiers\n'
 	@printf '  $(CYAN)make llm-status$(RESET)          - Health, model, engine and device per tier\n'
@@ -748,13 +749,8 @@ proto-gen-chroma:
 	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' chroma_service/*_pb2_grpc.py
 
 proto-gen-llm:
-	@printf '$(CYAN)Generating llm protobuf stubs...$(RESET)\n'
-	@python -m grpc_tools.protoc \
-		-I$(PROTO_DIR) \
-		--python_out=llm_service \
-		--grpc_python_out=llm_service \
-		$(PROTO_DIR)/llm.proto
-	@sed -i '' 's/^import \(.*\)_pb2 as/from . import \1_pb2 as/' llm_service/*_pb2_grpc.py
+	@$(MAKE) --no-print-directory -C $(LLM_TIERS_DIR) proto
+	@cp $(LLM_TIERS_DIR)/proto/llm.proto $(PROTO_DIR)/llm.proto
 
 proto-gen-shared:
 	@mkdir -p shared/generated
@@ -1259,13 +1255,7 @@ lidm-list-models:
 # host.docker.internal (see docker-compose.host-llm.yaml).
 
 llm-venv:
-	@command -v uv >/dev/null || { printf '$(RED)✗ uv not found (brew install uv)$(RESET)\n'; exit 1; }
-	@printf '$(CYAN)Building $(LLM_VENV) (llama.cpp source build with Metal, 5-10 min)...$(RESET)\n'
-	@uv venv $(LLM_VENV) --python 3.12 --allow-existing
-	@CMAKE_ARGS="-DGGML_METAL=on" CC=clang CXX=clang++ uv pip install --python $(LLM_VENV)/bin/python \
-		-r llm_service/requirements.txt -r llm_service/requirements-mlx.txt
-	@$(LLM_VENV)/bin/python -c "import llama_cpp; print('llama-cpp-python', llama_cpp.__version__, 'gpu_offload', llama_cpp.llama_supports_gpu_offload())" 2>/dev/null
-	@printf '$(GREEN)✓ $(LLM_VENV) ready$(RESET)\n'
+	@$(MAKE) --no-print-directory -C $(LLM_TIERS_DIR) venv
 
 llm-up:
 	@[ -x $(LLM_VENV)/bin/python ] || { printf '$(RED)✗ No $(LLM_VENV). Run: make llm-venv$(RESET)\n'; exit 1; }
@@ -1283,7 +1273,7 @@ llm-up:
 	fi
 
 llm-down:
-	@$(LLM_SUP) stop $$(ls logs/llm/*.pid 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.pid$$//')
+	@$(LLM_SUP) stop $$(ls $(LLM_TIERS_DIR)/logs/*.pid 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.pid$$//')
 
 llm-restart: llm-down llm-up
 
@@ -1298,21 +1288,17 @@ PORT ?= $(PORT_LLM)
 SUSTAIN ?= 0
 POWER ?= 0
 llm-bench:
-	@if [ "$(POWER)" = "1" ]; then sudo -v; fi
-	@$(LLM_VENV)/bin/python scripts/llm_bench.py --addr localhost:$(PORT) --sustain $(SUSTAIN) \
-		$(if $(filter 1,$(POWER)),--power) --json logs/llm/bench-$(PORT)-$$(date +%Y%m%d-%H%M%S).json
+	@$(MAKE) --no-print-directory -C $(LLM_TIERS_DIR) bench PORT=$(PORT)
 
 # Stability checks for one host tier: health, exact accounting, serialised
 # concurrency, a soak with a degradation limit, RSS growth, context overflow.
 SOAK ?= 60
 LONG_CTX ?= 0
 llm-stability:
-	@PORT=$$(grep '^LLM_PORT=' config/llm/$(TIER).env | cut -d= -f2); \
-	$(LLM_VENV)/bin/python scripts/llm_stability.py --addr localhost:$$PORT --pidfile logs/llm/$(TIER).pid \
-		--soak $(SOAK) $(if $(filter 1,$(LONG_CTX)),--long-ctx) --json logs/llm/stability-$(TIER).json
+	@$(MAKE) --no-print-directory -C $(LLM_TIERS_DIR) stability TIER=$(TIER) SOAK=$(SOAK) LONG_CTX=$(LONG_CTX)
 
 llm-stability-all:
-	@for t in $(LLM_TIERS); do $(MAKE) --no-print-directory llm-stability TIER=$$t || exit 1; echo; done
+	@$(MAKE) --no-print-directory -C $(LLM_TIERS_DIR) stability-all LLM_TIERS="$(LLM_TIERS)"
 
 # Start AirLLM service (optional, requires NVIDIA GPU)
 airllm-up:

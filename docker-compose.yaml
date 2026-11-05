@@ -2,19 +2,18 @@ services:
 
   llm_service:
     build:
-      context: .
-      dockerfile: llm_service/Dockerfile
+      context: ../llm-tiers          # the runtime is the sibling llm-tiers package
     container_name: llm_service
     ports:
       - "50051:50051"
     environment:
-      - LLM_MODEL_PATH=./models/qwen2.5-3b-instruct-q5_k_m.gguf
+      - LLM_MODEL_PATH=/models/qwen2.5-3b-instruct-q5_k_m.gguf
       - LLM_CTX_SIZE=4096
       - LLM_DEVICE=cpu
       # CPU fallback for Linux/CI/Windows. On macOS the tiers run natively on
       # Metal instead: see docker-compose.host-llm.yaml and `make llm-up`.
     volumes:
-      - ./llm_service/models:/app/models
+      - ../models.nosync:/models
     networks:
       - rag_net
     healthcheck:
@@ -28,17 +27,16 @@ services:
   # Start with: docker compose --profile lidm up -d  (or: make lidm-up)
   llm_service_standard:
     build:
-      context: .
-      dockerfile: llm_service/Dockerfile
+      context: ../llm-tiers
     container_name: llm_service_standard
     ports:
       - "50061:50051"
     environment:
-      - LLM_MODEL_PATH=./models/qwen2.5-0.5b-instruct-q5_k_m.gguf
+      - LLM_MODEL_PATH=/models/qwen2.5-0.5b-instruct-q5_k_m.gguf
       - LLM_CTX_SIZE=4096
       - LLM_DEVICE=cpu
     volumes:
-      - ./llm_service/models:/app/models
+      - ../models.nosync:/models
       - ./logs:/app/logs
     networks:
       - rag_net
