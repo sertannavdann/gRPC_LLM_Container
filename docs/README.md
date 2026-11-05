@@ -12,6 +12,9 @@ Welcome to the gRPC LLM Agent Framework (NEXUS) documentation.
 - [API Reference](./API-REFERENCE.md) - REST and gRPC APIs
 - [Glossary](./GLOSSARY.md) - Terms and concepts
 
+## Related projects
+- NEXUS Voice (phone interface, nexusd) design lives in `../nexus-voice/docs/` — `RESEARCH.md`, `V1_PLAN.md`, `CONSOLIDATION_PLAN.md`, `VALUE_AUDIT.md`.
+
 ## Planning
 - [Roadmap](./ROADMAP.md) - What's done and what's next
 - [Known Issues](./KNOWN-ISSUES.md) - Current limitations
